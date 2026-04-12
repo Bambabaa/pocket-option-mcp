@@ -7,6 +7,7 @@ import { registerOrderTools } from './tools/orders.js';
 import { registerValidationTools } from './tools/validation.js';
 import { registerPerformanceTools } from './tools/performance.js';
 import { registerIntelligenceTools } from './tools/intelligence.js';
+import { registerAnalysisTools } from './tools/analysis.js';
 
 const server = new McpServer(
   {
@@ -15,7 +16,7 @@ const server = new McpServer(
     description: 'MCP server for Pocket Option trading bot — read live data, enqueue trades, analyze performance',
   },
   {
-    instructions: `Pocket Option MCP — 27 tools for reading and controlling a live Pocket Option trading bot.
+    instructions: `Pocket Option MCP — 31 tools for reading, analyzing, and controlling a live Pocket Option trading bot.
 
 DATABASE MODEL:
 - Bot DB (readonly): candles, prices, indicators, signals, orders_queue, trades_ordered, qualification data
@@ -35,6 +36,12 @@ Intelligence (agentic — one call replaces many):
 - po_scan_all → scan ALL assets at once: price, signal, streak, win rate, score — ranked
 - po_recommend → "what should I trade right now?" — ranked list with confidence scores
 - po_risk_check → "is this trade safe?" — checks qualification, streak, recent performance
+
+Analysis & Backtesting (AI research — find the edge):
+- po_replay_signal → reconstruct ALL gate values for a historical signal (RSI, K crash, MA gaps, etc.)
+- po_find_edge → analyze ALL historical trades: win rate by RSI range, stoch range, MA gap, hour, asset, direction
+- po_optimize_gates → grid search: what RSI/K-crash/D thresholds would produce the best win rate?
+- po_simulate → replay historical candles with custom MODE D params — "what if I used RSI < 35 instead of 40?"
 
 Reading market data:
 - po_candles → OHLC bars. Use summary=true unless you need individual bars
@@ -71,6 +78,8 @@ CONTEXT TIPS:
 - Use po_scan_all instead of calling po_prices + po_signals + po_asset_streaks individually
 - Use po_recommend to get ranked trade suggestions before manually placing trades
 - Use po_risk_check before po_trade to avoid bad entries
+- Use po_find_edge to discover what conditions produce the best win rates
+- Use po_optimize_gates to find better gate thresholds than the current defaults
 - Use summary=true on po_candles to save context
 - po_rolling_summary days=0 gives all-time stats
 - po_trade writes to MCP DB only — bot DB is never modified by this server`,
@@ -84,6 +93,7 @@ registerOrderTools(server);
 registerValidationTools(server);
 registerPerformanceTools(server);
 registerIntelligenceTools(server);
+registerAnalysisTools(server);
 
 process.stderr.write('pocket-option-mcp | Connects to pocket-option-bot.js via SQLite.\n');
 process.stderr.write(`Bot DB: ${process.env.PO_DB_PATH || 'data/trading_data.db (default)'}\n\n`);

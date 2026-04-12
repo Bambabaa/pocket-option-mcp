@@ -5,7 +5,7 @@ import * as core from '../core/intelligence.js';
 export function registerIntelligenceTools(server) {
   server.tool(
     'po_scan_all',
-    'Scan ALL tracked assets in one call. Returns every asset scored by: qualification status, fresh signals, win streak, recent win rate, and recent P/L. Sorted by score descending. Replaces calling po_prices + po_signals + po_indicators + po_asset_streaks individually.',
+    'Scan ALL tracked assets and score them by KT video2 strategy precision. Evaluates 7 indicator layers in real-time: MA cross, gap expansion, SMA alignment, slope harmony, RSI strength, RSI ignition, stochastic trigger. Returns ranked list with layer-by-layer breakdown. NOT based on luck/streaks — based on how cleanly indicators align right now.',
     {},
     async () => {
       try { return jsonResult(core.scanAllAssets()); }
@@ -15,24 +15,23 @@ export function registerIntelligenceTools(server) {
 
   server.tool(
     'po_recommend',
-    'Get ranked trade recommendations right now. Scans all assets and returns only those that are qualified, have a fresh signal, meet win rate and streak thresholds. Returns ranked list with confidence scores and reasons.',
+    'Get ranked trade recommendations based on indicator precision. Only includes assets where the 7 KT video2 layers are aligned (MA cross, SMA stack, RSI zone, stochastic cross, etc.) AND recent win rate meets threshold. Returns ranked list with precision scores and layer details.',
     {
-      min_win_rate: z.coerce.number().min(0).max(100).optional().default(60).describe('Minimum recent win rate % (default 60)'),
-      min_streak: z.coerce.number().min(0).optional().default(2).describe('Minimum consecutive wins streak (default 2)'),
-      max_signal_age_sec: z.coerce.number().min(10).max(600).optional().default(120).describe('Max age of signal in seconds to consider "fresh" (default 120)'),
+      min_precision_score: z.coerce.number().min(0).max(100).optional().default(50).describe('Minimum precision score 0-100 (default 50)'),
+      min_win_rate: z.coerce.number().min(0).max(100).optional().default(55).describe('Minimum recent win rate % (default 55)'),
     },
-    async ({ min_win_rate, min_streak, max_signal_age_sec }) => {
-      try { return jsonResult(core.recommendTrades(min_win_rate, min_streak, max_signal_age_sec)); }
+    async ({ min_precision_score, min_win_rate }) => {
+      try { return jsonResult(core.recommendTrades(min_precision_score, min_win_rate)); }
       catch (err) { return jsonResult({ success: false, error: err.message }, true); }
     }
   );
 
   server.tool(
     'po_risk_check',
-    'Check the risk level before trading an asset. Evaluates: qualification status, current streak, recent win rate, matching signal, consecutive losses. Returns a score 0-100 and verdict: GOOD / CAUTION / RISKY / AVOID.',
+    'Check the risk level before trading an asset. Evaluates: current indicator precision score (7 layers), direction alignment, recent win rate, consecutive losses. Returns a score 0-100 and verdict: GOOD / CAUTION / RISKY / AVOID.',
     {
       asset: z.string().describe('Asset symbol to check, e.g. EURUSD_otc'),
-      direction: z.enum(['CALL', 'PUT']).optional().describe('Trade direction to check against latest signal'),
+      direction: z.enum(['CALL', 'PUT']).optional().describe('Trade direction to check against precision score direction'),
     },
     async ({ asset, direction }) => {
       try { return jsonResult(core.riskCheck(asset, direction || null)); }

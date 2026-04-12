@@ -99,6 +99,16 @@ export async function scanAllAssets() {
     const qualMap = {};
     for (const q of qualified) qualMap[q.asset] = q;
 
+    // Also fetch latest candle close price per asset (needed for precision scoring)
+    const latestCandles = await all(
+        `SELECT c.asset, c.close
+         FROM candles c
+         INNER JOIN (SELECT asset, MAX(timestamp) as max_ts FROM candles GROUP BY asset) latest
+           ON c.asset = latest.asset AND c.timestamp = latest.max_ts`
+    );
+    const closeMap = {};
+    for (const c of latestCandles) closeMap[c.asset] = c.close;
+
     // Build scored entries
     const scored = [];
     for (const t of trackedRows) {
