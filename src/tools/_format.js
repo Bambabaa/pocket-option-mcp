@@ -1,10 +1,11 @@
 /**
  * Shared MCP response formatting helper.
- * All tool files use this instead of manually constructing MCP responses.
+ * Accepts a value or a Promise — always resolves before serialising.
  */
-export function jsonResult(obj, isError = false) {
+export async function jsonResult(obj, isError = false) {
+  const data = await obj;
   return {
-    content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
     ...(isError && { isError: true }),
   };
 }

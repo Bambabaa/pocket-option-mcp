@@ -1,6 +1,3 @@
 node_modules/
-screenshots/
-scripts/current.pine
-temp_*
+data/
 *.log
-discovery-log.json
