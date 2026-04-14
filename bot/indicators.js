@@ -702,7 +702,7 @@ class Indicators {
     _generateSignalsKTVideo2(indicators, settings, signals) {
         const ma6 = indicators.ma6;
         const ma14 = indicators.ma14;
-        const ma50 = indicators.ma50;
+        // const ma50 = indicators.ma50; //NOT CURRENTLY IN USE
         const rsi = indicators.rsi_5;
         const stochK = indicators.stochastic_k;
         const stochD = indicators.stochastic_d;
@@ -712,7 +712,7 @@ class Indicators {
         const bb = indicators.bollingerKT;
         const asset = indicators.asset || null;
 
-        if (ma6 == null || ma14 == null || ma50 == null || rsi == null || !candle) return false;
+        if (ma6 == null || ma14 == null || rsi == null || !candle) return false;
 
         const minPayout = settings?.minPayout ?? 70;
         if (indicators.payout != null && indicators.payout < minPayout) return false;
@@ -722,6 +722,7 @@ class Indicators {
         const isGreen = closePrice > openPrice;
         const isRed = closePrice < openPrice;
         const bps = closePrice / 10000;
+        const maxGap = bps * 5.0;
         const currentGap = Math.abs(ma6 - ma14);
         const candleTs = candle[0];
 
@@ -792,21 +793,11 @@ class Indicators {
         // 3-bar lookback: crash within 3-4 bars, RSI stayed <45, no premature bullish cross
         // ═════════════════════════════════════════════════════════════════════
         if (!streakBlocked && rsi < 80) {
-            const isTrendConfirmed = (ma6 < ma14 && ma14 < ma50);
-            const maxGap = isTrendConfirmed ? (bps * 2.0) : (bps * 3.0);
-
             const kCrash = k_1 != null && stochK != null ? k_1 - stochK : null;
             const kFlashCrash = kCrash != null && kCrash > 20;
             const kOversold = stochK != null && stochK < 30;
             const kWasMid = k_1 != null && k_1 >= 50;
             const rsiDown = rsi < 45;
-
-            // Exhaustion / Blowoff filter: Reject if current candle is outlier size or RSI < 10
-            const avgBodySize = history.length >= 5 
-                ? history.slice(0, 5).reduce((sum, h) => sum + Math.abs(h.candle[2] - h.candle[1]), 0) / 5
-                : bps * 5;
-            const isBlowoff = Math.abs(closePrice - openPrice) > avgBodySize * 4;
-            const isExhausted = rsi < 15;
 
             // 3-bar lookback for CALL reversal confirmation
             let lookbackOk = false;
@@ -830,9 +821,8 @@ class Indicators {
             const kWasMidRelaxed = k_1 != null && k_1 >= 40;
             const lookbackRelaxed = (kCrashRelaxed || kDeepOversold) && rsiDown;
 
-            if (!isBlowoff && !isExhausted && currentGap <= maxGap && (
-                (kFlashCrash && kOversold && kWasMid && rsiDown && priceNearLowerBB && bbStable && lookbackOk) ||
-                (kCrashRelaxed && kOversold && kWasMidRelaxed && rsiDown && bbStable && lookbackRelaxed))) {
+            if ((kFlashCrash && kOversold && kWasMid && rsiDown && priceNearLowerBB && bbStable && lookbackOk) ||
+                (kCrashRelaxed && kOversold && kWasMidRelaxed && rsiDown && bbStable && lookbackRelaxed)) {
 
                 const candleHour = new Date(candleTs * 1000).getUTCHours();
                 signals.direction = 'CALL'; signals.strategyUsed = 'video2';
@@ -852,9 +842,6 @@ class Indicators {
         // 3-bar lookback: RSI >70 for 2-3 bars, Stoch overbought, no early bullish cross
         // ═════════════════════════════════════════════════════════════════════
         if (!streakBlocked && isRed) {
-            const isTrendConfirmed = (ma6 > ma14 && ma14 > ma50);
-            const maxGap = isTrendConfirmed ? (bps * 2.0) : (bps * 3.0);
-
             const rsiWasOverbought1 = rsi_1 != null && rsi_1 > 70;
             const rsiWasOverbought2 = rsi_2 != null && rsi_2 > 70;
             const notFastDrop = rsi_1 == null || !(rsi_1 >= 75 && rsi_1 < 80);
@@ -864,15 +851,7 @@ class Indicators {
                 stochK != null && stochK >= 55 && stochK < 80;
             const dLaggingHigh = stochD != null && stochD >= 75;
             const kdSpread = stochK != null && stochD != null ? stochK - stochD : null;
-            
-            // 1-bar tolerance for crossover: either currently cross or was crossed last bar
-            const kBelowD = kdSpread != null && kdSpread < -1; // current bar
-            const kWasBelowD = (k_1 != null && d_1 != null && k_1 < d_1); // previous bar
-            const stochCrossValid = kBelowD || kWasBelowD;
-
-            // Exhaustion filter for PUT
-            const isBlowoff = history.length >= 5 && Math.abs(closePrice - openPrice) > (history.slice(0, 5).reduce((sum, h) => sum + Math.abs(h.candle[2] - h.candle[1]), 0) / 5) * 4;
-            const isExhausted = rsi > 85;
+            const kBelowD = kdSpread != null && kdSpread < -3;
 
             // 3-bar lookback for PUT reversal confirmation
             let lookbackOk = false;
@@ -896,15 +875,14 @@ class Indicators {
             const kExitingOBRelaxed = k_1 != null && k_1 > 60 && kFalling &&
                 stochK != null && stochK >= 50 && stochK < 80;
             const dLaggingRelaxed = stochD != null && stochD >= 70;
-            const kdSpreadRelaxed = kdSpread != null && kdSpread < -1;
+            const kdSpreadRelaxed = kdSpread != null && kdSpread < -2;
 
-            if (!isBlowoff && !isExhausted && currentGap <= maxGap && (
-                (rsiWasOverbought1 && rsiWasOverbought2 && notFastDrop &&
+            if ((rsiWasOverbought1 && rsiWasOverbought2 && notFastDrop &&
                 rsiInReversal && closeAboveMid &&
-                kExitingOB && dLaggingHigh && stochCrossValid &&
+                kExitingOB && dLaggingHigh && kBelowD &&
                 lookbackOk) ||
                 (rsiWasHigh1 && rsiWasHigh2 && rsiInReversalRelaxed &&
-                    closeAboveMid && kExitingOBRelaxed && dLaggingRelaxed && kdSpreadRelaxed))) {
+                    closeAboveMid && kExitingOBRelaxed && dLaggingRelaxed && kdSpreadRelaxed)) {
 
                 const candleHour = new Date(candleTs * 1000).getUTCHours();
                 signals.direction = 'PUT'; signals.strategyUsed = 'video2';
