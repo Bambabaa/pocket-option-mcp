@@ -55,7 +55,7 @@ export function registerOrderTools(server) {
 
   server.tool(
     'po_trade',
-    'Enqueue a manual CALL or PUT trade into the MCP\'s own database. The bot\'s execution worker reads this and places the order on Pocket Option. Nothing is written to the bot\'s DB.',
+    'Enqueue a manual CALL or PUT trade into the MCP\'s own database. The bot\'s execution worker reads this and places the order on Pocket Option. Nothing is written to the bot\'s DB. NOTE: if the asset is blocked via po_block_asset, the order will be picked up but immediately set to SKIPPED — check po_asset_volatility or po_mcp_orders to confirm execution.',
     {
       asset: z.string().describe('Asset symbol, e.g. EURUSD_otc'),
       direction: z.enum(['CALL', 'PUT']).describe('Trade direction'),

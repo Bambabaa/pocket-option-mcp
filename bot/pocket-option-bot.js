@@ -50,6 +50,19 @@ function mcpDbRun(sql, params = []) {
     });
 }
 
+async function isAssetBlocked(asset) {
+    const now = Math.floor(Date.now() / 1000);
+    const rows = await mcpDbAll(
+        `SELECT reason FROM asset_controls
+         WHERE active = 1
+           AND (asset = ? OR asset = 'ALL')
+           AND (expires_at IS NULL OR expires_at > ?)
+         LIMIT 1`,
+        [asset, now]
+    );
+    return rows[0] || null;
+}
+
 async function runMcpOrdersWorker(page) {
     const exec = STATE.SETTINGS.execution;
     if (!exec?.enabled) return; // Only run when live execution is on
@@ -91,6 +104,18 @@ async function runMcpOrdersWorker(page) {
             if (!claim.changes) continue; // Another process claimed it first
         } catch (e) {
             console.log(`[MCP-WORKER] Could not claim order ${row.id}: ${e.message}`);
+            continue;
+        }
+
+        // Asset block check — respects asset_controls written by Claude/agents.
+        // Runs after claim so the row is owned; writes final SKIPPED status if blocked.
+        const blockEntry = await isAssetBlocked(row.asset);
+        if (blockEntry) {
+            log(`[BLOCK] MCP order ${row.id} skipped — ${row.asset} is blocked: ${blockEntry.reason}`, 'yellow');
+            await mcpDbRun(
+                `UPDATE mcp_orders SET status = 'SKIPPED', status_reason = ?, updated_at = strftime('%s','now') WHERE id = ?`,
+                [`asset-blocked: ${blockEntry.reason}`, row.id]
+            );
             continue;
         }
 
@@ -232,8 +257,9 @@ function convertToUTC6(timestamp) {
         timestamp *= 1000;
     }
 
-    // Pocket Option WebSocket timestamps are ~4 hours behind actual UTC time.
-    const OFFSET_SECONDS = 4 * 3600; // 4 hours = 14400
+    // Pocket Option WebSocket timestamps are already UTC.
+    // Offset set to 0 — no conversion needed.
+    const OFFSET_SECONDS = 0;
     const offsetMs = OFFSET_SECONDS * 1000;
 
     // Adjust date with offset
@@ -368,7 +394,7 @@ const STATE = {
         executeInlineWithBot: true,
         tradeAmount: 500,
 
-        // Validation loop: runs every N seconds to fill qualification_outcomes + streak + qualified_assets
+        // Validation loop: runs every N seconds to fill signal_outcomes for analysis
         enableValidationLoop: true,         // Master switch for the validation loop
         validationLoopIntervalMs: 60000,    // How often to run (ms) — every 60s by default
         lookAheadSeconds: 60,               // Option expiry to determine WIN/LOSS from candle close data
@@ -543,7 +569,8 @@ async function processWebSocketMessage(payload, page) {
             // Process history data
             if (data.history && Array.isArray(data.history)) {
                 for (const [tstamp, value] of data.history) {
-                    const timestamp = parseInt(parseFloat(tstamp));
+                    const rawTimestamp = parseInt(parseFloat(tstamp));
+                    const timestamp = convertToUTC6(rawTimestamp);  // Convert to UTC
                     const candle = [timestamp, value, value, value, value];
 
                     // Update candle based on value
@@ -581,7 +608,7 @@ async function processWebSocketMessage(payload, page) {
                 try {
                     await database.insertCandle(
                         data.asset,
-                        convertToUTC6(candle[0]), // timestamp converted to UTC-6
+                        candle[0], // timestamp converted to UTC-6
                         open,
                         high,
                         low,
@@ -607,7 +634,7 @@ async function processWebSocketMessage(payload, page) {
                     // Store indicators in database (convert timestamp to UTC-6)
                     const lastCandle = candles[candles.length - 1];
                     try {
-                        await database.insertIndicators(data.asset, convertToUTC6(lastCandle[0]), indicatorData);
+                        await database.insertIndicators(data.asset, lastCandle[0], indicatorData);
                         log(`   ✅ Indicators stored for ${data.asset}`, 'green');
                     } catch (error) {
                         // Log error but don't spam console - only log if it's not a duplicate
@@ -622,7 +649,7 @@ async function processWebSocketMessage(payload, page) {
                         indicatorData.signals.direction !== 'NEUTRAL' &&
                         (indicatorData.signals.direction === 'CALL' || indicatorData.signals.direction === 'PUT')) {
                         try {
-                            await database.insertSignal(data.asset, convertToUTC6(lastCandle[0]), {
+                            await database.insertSignal(data.asset, lastCandle[0], {
                                 ...indicatorData.signals
                             });
                             log(`   ✅ Signal stored for ${data.asset}: ${indicatorData.signals.direction}`, 'green');
@@ -639,10 +666,10 @@ async function processWebSocketMessage(payload, page) {
                             const reasons = signals.reasons || [];
 
                             // Find a reason that indicates why no signal (e.g. condition not met)
-                            const failureReason = reasons.find(r => r && (r.includes('No pure') || r.includes('❌')));
+                            const failureReason = reasons.find(r => r && (r.includes('No pure') || r.includes('❌') || r.includes('No Strategy')));
 
                             if (failureReason) {
-                                log(`   ${failureReason}`, 'red');
+                                log(`   ${failureReason} | ${data.asset} | dir=${signals.direction}`, 'red');
                             } else if (reasons.length > 0) {
                                 // Show all reasons if no clear failure
                                 log(`   ℹ️  Signal not stored for ${data.asset}: direction=${signals.direction}`, 'yellow');
@@ -653,7 +680,7 @@ async function processWebSocketMessage(payload, page) {
                                     }
                                 });
                             } else {
-                                log(`   ℹ️  Signal not stored for ${data.asset}: direction=${signals.direction}`, 'yellow');
+                                log(`   ℹ️  Signal not stored for ${data.asset}: direction=${signals.direction} (no reasons given)`, 'yellow');
                             }
                         }
                     }
@@ -738,7 +765,7 @@ async function processWebSocketMessage(payload, page) {
                     try {
                         await database.insertCandle(
                             asset,
-                            convertToUTC6(STATE.CURRENT_CANDLE_START[asset]),
+                            STATE.CURRENT_CANDLE_START[asset],
                             currentCandle.open,
                             currentCandle.high,
                             currentCandle.low,
@@ -776,7 +803,7 @@ async function processWebSocketMessage(payload, page) {
                         STATE.INDICATORS[asset] = indicatorData;
 
                         try {
-                            await database.insertIndicators(asset, convertToUTC6(STATE.CURRENT_CANDLE_START[asset]), indicatorData);
+                            await database.insertIndicators(asset, STATE.CURRENT_CANDLE_START[asset], indicatorData);
                             if (DEBUG_OHLC) {
                                 log(`✅ Indicators stored for ${asset} on candle finalize`, 'green');
                             }
@@ -794,41 +821,42 @@ async function processWebSocketMessage(payload, page) {
                             (indicatorData.signals.direction === 'CALL' || indicatorData.signals.direction === 'PUT')) {
                             try {
                                 const finalSignals = indicatorData.signals;
-                                const signalTimestamp = convertToUTC6(STATE.CURRENT_CANDLE_START[asset]);
+                                const signalTimestamp = STATE.CURRENT_CANDLE_START[asset];
                                 const insertResult = await database.insertSignal(asset, signalTimestamp, {
                                     ...finalSignals
                                 });
 
-                                // Enqueue for executor: qualified assets only (or test bypass). Inline execute when enabled.
+                                // Enqueue ALL signals directly — no qualification gate.
+                                // The validation loop still runs separately for analysis (signal_outcomes).
                                 if (insertResult?.id || finalSignals) {
-                                    // Use the retrieved id or the inserted id
                                     const sigId = insertResult?.id || (await database.get('SELECT id FROM signals WHERE asset = ? AND timestamp = ?', [asset, signalTimestamp])).id;
-                                    const qualified = await database.isAssetQualified(asset);
                                     const inFlight = await database.hasAssetInFlightLiveOrder(asset);
-                                    const useQualification = STATE.SETTINGS.useQualifiedAssetsLayer;
-                                    const isTestMode = STATE.SETTINGS.enqueueAllSignalsForTesting === true;
-                                    const shouldEnqueue = isTestMode || !useQualification || qualified;
-                                    const enqueue = shouldEnqueue && !inFlight;
-                                    if (enqueue && sigId) {
+                                    if (!inFlight && sigId) {
                                         const enqResultId = await database.enqueueOrder(sigId, asset, finalSignals.direction, signalTimestamp);
                                         const exec = STATE.SETTINGS.execution;
                                         const isLiveExecution = exec?.enabled === true;
                                         if (STATE.SETTINGS.executeInlineWithBot && isLiveExecution && enqResultId) {
                                             const shouldExecute = !(await database.hasOrderedTradeForOrder(enqResultId));
                                             if (shouldExecute) {
+                                                const blockEntry = await isAssetBlocked(asset);
+                                                if (blockEntry) {
+                                                    log(`[BLOCK] Skipping ${asset}: ${blockEntry.reason}`, 'yellow');
+                                                    await database.updateOrderStatus(enqResultId, 'SKIPPED', `asset-blocked: ${blockEntry.reason}`);
+                                                } else {
                                                 const order = { id: enqResultId, signal_id: sigId, asset, direction: finalSignals.direction, signal_timestamp: signalTimestamp };
                                                 executionQueue.push({
                                                     database,
                                                     order,
                                                     config: {
                                                         tradeAmount: STATE.SETTINGS.tradeAmount || 1,
-                                                        skipQualifiedGate: !STATE.SETTINGS.useQualifiedAssetsLayer || STATE.SETTINGS.enqueueAllSignalsForTesting === true,
+                                                        skipQualifiedGate: true,
                                                         riskMax: null,
                                                         execution: STATE.SETTINGS.execution,
                                                         requireLiveExecution: true
                                                     }
                                                 });
                                                 runExecutionWorker(page);
+                                                } // end !blockEntry
                                             }
                                         }
                                     }
@@ -859,7 +887,7 @@ async function processWebSocketMessage(payload, page) {
             // Start or update current in-memory candle
             // NOTE: Candles are only stored in database when period completes (fully closed)
             if (isNewPeriod || !currentCandle) {
-                STATE.CURRENT_CANDLE_START[asset] = periodStart;
+                STATE.CURRENT_CANDLE_START[asset] = convertToUTC6(periodStart);  // Store as UTC
                 STATE.CURRENT_CANDLE[asset] = {
                     open: currentValue,
                     high: currentValue,
@@ -1084,7 +1112,7 @@ async function main() {
             setInterval(runResultSync, resultSyncMs);
         }, STATE.SETTINGS.execution?.resultSyncFirstDelayMs ?? 25000);
 
-        // Validation loop: periodically validate signals past expiry → qualification_outcomes + streak + qualified_assets
+        // Validation loop: periodically validate signals past expiry → signal_outcomes
         if (STATE.SETTINGS.enableValidationLoop) {
             const intervalMs = STATE.SETTINGS.validationLoopIntervalMs || 60000;
             const lookAhead = STATE.SETTINGS.lookAheadSeconds || 60;
@@ -1131,6 +1159,7 @@ async function main() {
                 if (page && !page.isClosed()) await runMcpOrdersWorker(page);
             } catch (e) { /* swallow — must not crash the bot */ }
         }, 5000);
+
 
         // Setup WebSocket interception
         await interceptWebSocket(page);

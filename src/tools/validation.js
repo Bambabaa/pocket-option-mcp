@@ -5,7 +5,7 @@ import * as core from '../core/validation.js';
 export function registerValidationTools(server) {
   server.tool(
     'po_pending_signals',
-    'Get signals that have passed their expiry window but haven\'t been validated yet (no entry in qualification_outcomes).',
+    'Get signals that have passed their expiry window but haven\'t been validated yet (no entry in signal_outcomes).',
     {
       look_ahead_seconds: z.coerce.number().optional().default(60).describe('Option expiry window in seconds (default 60)'),
       limit: z.coerce.number().min(1).max(200).optional().default(50),
@@ -18,7 +18,7 @@ export function registerValidationTools(server) {
 
   server.tool(
     'po_validation_stats',
-    'Get signal validation statistics — win rate, P/L, and per-asset breakdown from qualification_outcomes.',
+    'Get signal validation statistics — win rate, P/L, and per-asset breakdown from signal_outcomes.',
     {
       asset: z.string().optional().describe('Filter by asset (omit for aggregate stats)'),
     },

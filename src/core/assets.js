@@ -16,8 +16,8 @@ export async function getAssetStreaks(asset = null) {
   return { count: rows.length, streaks: rows };
 }
 
-export async function getQualificationOutcomes(asset = null, limit = 50) {
-  let sql = 'SELECT * FROM qualification_outcomes WHERE 1=1';
+export async function getSignalOutcomes(asset = null, limit = 50) {
+  let sql = 'SELECT * FROM signal_outcomes WHERE 1=1';
   const params = [];
   if (asset) { sql += ' AND asset = ?'; params.push(asset); }
   sql += ' ORDER BY signal_timestamp DESC LIMIT ?';

@@ -1,18 +1,15 @@
 /**
  * validate-signals.js — Determ Bot Signal Validator
  *
- * Shared validation: signals → qualification_outcomes + streak + qualified_assets
- * Ported from ML_MODEL/validate-signals-to-trades.js with determ-specific table names
- * (signals, candles, prices — no _ml suffix).
+ * Validates signals past expiry by looking up entry/exit candles,
+ * computing WIN/LOSS, and writing to signal_outcomes for analysis.
+ *
+ * Does NOT write asset_streaks, qualified_assets, or assets_trades.
+ * Those tables have been removed — the MODE D gates ARE the qualification.
  *
  * Used by:
- *  - pocket-option-bot.js  (integrated validation loop every N seconds)
+ *  - pocket-option-bot.js  (validation loop every N seconds)
  *  - scripts/paper-trading-tracker.js (batch post-run validation)
- *
- * Does NOT enqueue or write trades_ordered. Those are exclusively written by:
- *  - order-executor.js (live PO result sync → insertOrderedTradeClosed)
- *
- * See ML_MODEL/TRADES_VALIDATION_AND_BLOCKLIST.md §6 Three-Layer Design.
  */
 
 'use strict';
@@ -22,35 +19,19 @@ const PRICE_TOLERANCE = 5;
 
 /**
  * Validate a single signal: lookup entry/exit candle, compute result,
- * write qualification_outcomes + streak + qualified_assets.
+ * write signal_outcomes for analysis.
  *
  * @param {object} database     - TradingDatabase instance (initialized)
  * @param {object} signal       - Row from signals table: { id, asset, timestamp, direction }
  * @param {number} lookAheadSeconds - Option expiry (e.g. 60)
  * @param {number} tradeAmount  - Stake for P/L calculation
  * @param {number} [payoutRate] - Win payout multiplier (default 0.92)
- * @param {object} [options]
- * @param {boolean} [options.writeQualification=true]     - Write to qualification_outcomes + streak + qualified_assets
- * @param {number}  [options.minConsecutiveWinsForTrading=2] - Wins needed to qualify an asset
- * @returns {Promise<object|null>} { result, exitPrice, exitTimestamp, profitLoss, newStreak, qualified,
- *                                   wasQualifiedBefore, isQualifiedAfter, shouldEnqueue }
+ * @returns {Promise<object|null>} { result, exitPrice, exitTimestamp, profitLoss }
  *                                 or { skipped: true, reason: string }
  */
-async function validateOneSignal(database, signal, lookAheadSeconds, tradeAmount, payoutRate = DEFAULT_PAYOUT_RATE, options = {}) {
-    const {
-        writeQualification = true,
-        minConsecutiveWinsForTrading = 2
-    } = options;
-
+async function validateOneSignal(database, signal, lookAheadSeconds, tradeAmount, payoutRate = DEFAULT_PAYOUT_RATE) {
     // Normalize timestamp to seconds (DB stores seconds; signal.timestamp may be ms)
     const signalTsSeconds = signal.timestamp > 1e12 ? Math.floor(signal.timestamp / 1000) : signal.timestamp;
-
-    // Capture qualification state BEFORE applying this outcome.
-    // assets_trades only records outcomes where the asset was ALREADY qualified
-    // (i.e. the 3rd+ signal while on a streak, not the trade that created the streak).
-    const wasQualifiedBefore = writeQualification
-        ? await database.isAssetQualified(signal.asset)
-        : false;
 
     // --- Entry candle ---
     const entryCandle = await database.get(
@@ -101,42 +82,14 @@ async function validateOneSignal(database, signal, lookAheadSeconds, tradeAmount
         ? (tradeAmount * payoutRate)
         : (result === 'LOSS' ? -tradeAmount : 0);
 
-    let newStreak = 0;
-    let qualified = false;
+    // Write to signal_outcomes for analysis
+    await database.insertSignalOutcome(
+        signal.asset, signalTsSeconds, signal.id || null,
+        signal.direction, entryPrice,
+        exitTimestamp, exitPrice, result, profitLoss
+    );
 
-    if (writeQualification) {
-        // Layer 1: qualification_outcomes (every signal validated, track streak)
-        await database.insertQualificationOutcome(
-            signal.asset, signalTsSeconds, signal.id || null,
-            signal.direction, entryPrice,
-            exitTimestamp, exitPrice, result, profitLoss
-        );
-
-        // Layer 2: streak → qualified_assets
-        newStreak = await database.updateAssetStreakAfterOutcome(signal.asset, result, signalTsSeconds);
-        if (newStreak >= minConsecutiveWinsForTrading) {
-            await database.addQualifiedAsset(signal.asset, newStreak);
-            qualified = true;
-        } else if (result !== 'WIN') {
-            await database.removeQualifiedAsset(signal.asset);
-        }
-
-        // Layer 3: assets_trades — only when asset was ALREADY qualified before this outcome.
-        // The trade that CREATES the streak is NOT written here; only trades taken while
-        // the asset is already on the qualified list are written (3rd+, etc.).
-        if (wasQualifiedBefore) {
-            await database.insertAssetsTrade(
-                signal.asset, signalTsSeconds, signal.id || null,
-                signal.direction, entryPrice,
-                exitTimestamp, exitPrice, result, profitLoss
-            );
-        }
-    }
-
-    const isQualifiedAfter = writeQualification ? await database.isAssetQualified(signal.asset) : wasQualifiedBefore;
-    const shouldEnqueue = wasQualifiedBefore; // metadata only; enqueue happens at signal-generation time
-
-    return { result, exitPrice, exitTimestamp, profitLoss, newStreak, qualified, wasQualifiedBefore, isQualifiedAfter, shouldEnqueue };
+    return { result, exitPrice, exitTimestamp, profitLoss };
 }
 
 /** @returns {boolean} true if outcome is a skip (no row written) */
@@ -145,14 +98,12 @@ function isSkipOutcome(out) {
 }
 
 /**
- * Find signals past expiry without a qualification outcome, validate each, update qualification chain.
+ * Find signals past expiry without a qualification outcome, validate each.
  *
  * @param {object} database          - TradingDatabase instance
  * @param {number} lookAheadSeconds  - Option expiry (e.g. 60)
  * @param {number} tradeAmount       - Stake for P/L
  * @param {object} [options]
- * @param {boolean} [options.writeQualification=true]
- * @param {number}  [options.minConsecutiveWinsForTrading=2]
  * @param {number}  [options.payoutRate]
  * @param {boolean} [options.logNoPending=true]
  * @param {number}  [options.referenceNowSeconds]  - Override "now" with data time (backfill)
@@ -178,7 +129,7 @@ async function validatePendingSignals(database, lookAheadSeconds, tradeAmount, o
         if (typeof database.getPendingSignalsDiagnostics === 'function') {
             const diag = await database.getPendingSignalsDiagnostics(lookAheadSeconds, nowSeconds);
             console.log('[Validation] No pending signals. Diagnostics: CALL/PUT signals=' + diag.totalCallPut +
-                ', with qualification_outcome=' + diag.withOutcome +
+                ', with signal_outcome=' + diag.withOutcome +
                 ', past expiry (ts<=' + diag.expiryCutoff + ')=' + diag.pastExpiry +
                 ', pending=' + diag.pending +
                 (diag.sampleTimestamp != null ? ', latest signal ts=' + diag.sampleTimestamp : '') +
@@ -196,7 +147,7 @@ async function validatePendingSignals(database, lookAheadSeconds, tradeAmount, o
     }
 
     for (const signal of signals) {
-        const out = await validateOneSignal(database, signal, lookAheadSeconds, tradeAmount, payoutRate, options);
+        const out = await validateOneSignal(database, signal, lookAheadSeconds, tradeAmount, payoutRate);
         if (isSkipOutcome(out)) {
             skipped++;
             if (out.reason) skipReasons[out.reason] = (skipReasons[out.reason] || 0) + 1;

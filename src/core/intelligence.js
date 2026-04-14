@@ -21,11 +21,11 @@ import { mcpAll, mcpGet } from '../mcp-db.js';
 const LAYER_WEIGHTS = {
     maCross: 20,       // MA6 crossed MA14 (fresh or recent) — Layer 3
     gapExpansion: 15,  // Gap between MA6-MA14 expanding — Layer 4
-    smaAlignment: 15,  // ma6 > ma14 > ma50 or reverse — Layer 5
+    bbPosition: 15,    // Price position relative to BB bands — confirms signal direction
     slopeHarmony: 15,  // Both MAs rising/falling together — Layer 6
     rsiStrength: 15,   // RSI in signal zone, not exhausted — Layer 7
     rsiIgnition: 10,   // RSI just crossed 50 line — Layer 8
-    stochTrigger: 10,  // Stochastic K/D crossover — Layer 9
+    stochTrigger: 10,  // Stochastic K/D crossover (v2 5,3,3) — Layer 9
 };
 
 // ─── scanAllAssets() ─────────────────────────────────────────────────────────
@@ -73,8 +73,6 @@ export async function scanAllAssets() {
             );
             return { asset, trades: rows };
         })),
-        all('SELECT asset, consecutive_wins, last_result FROM asset_streaks'),
-        all('SELECT asset, consecutive_wins as qual_wins FROM qualified_assets'),
     ]);
 
     // Index lookups
@@ -92,12 +90,6 @@ export async function scanAllAssets() {
 
     const tradeMap = {};
     for (const t of recentTrades) tradeMap[t.asset] = t.trades;
-
-    const streakMap = {};
-    for (const s of streaks) streakMap[s.asset] = s;
-
-    const qualMap = {};
-    for (const q of qualified) qualMap[q.asset] = q;
 
     // Also fetch latest candle close price per asset (needed for precision scoring)
     const latestCandles = await all(
@@ -117,8 +109,6 @@ export async function scanAllAssets() {
         const recentSignals = signalMap[asset] || [];
         const ind = indMap[asset] || null;
         const trades = tradeMap[asset] || [];
-        const streak = streakMap[asset] || { consecutive_wins: 0, last_result: null };
-        const qual = qualMap[asset] || null;
 
         // Compute precision score from indicator layers
         const precision = ind ? scorePrecision(ind) : { score: 0, layers: {}, direction: null };
@@ -141,10 +131,6 @@ export async function scanAllAssets() {
             layer_details: precision.layers,
             price: price ? price.price : null,
             price_age_sec: price ? nowSec - price.timestamp : null,
-            streak: streak.consecutive_wins,
-            last_result: streak.last_result,
-            qualified: !!qual,
-            qual_wins: qual ? qual.qual_wins : 0,
             recent_signal: freshSignal ? {
                 direction: freshSignal.direction,
                 age_sec: nowSec - freshSignal.timestamp,
@@ -167,7 +153,6 @@ export async function scanAllAssets() {
         total_assets: scored.length,
         assets_with_signals: Object.keys(signalMap).length,
         assets_with_precision: scored.filter(a => a.has_indicators && a.precision_score > 0).length,
-        qualified_count: qualified.length,
         top_5: scored.slice(0, 5).map(s => `${s.asset} (${s.precision_direction || 'neutral'}, score ${s.precision_score})`),
         assets: scored,
     };
@@ -184,16 +169,19 @@ function scorePrecision(ind) {
     let direction = null;
 
     // Extract indicator values
+    // NOTE: ma1=MA6, ma3=MA14. ma2=MA50 is NOT used in MODE D signals.
     const ma6 = ind.ma6 ?? ind.ma1;
     const ma14 = ind.ma3;
-    const ma50 = ind.ma2;
     const rsi = ind.rsi_5;
-    const stochK = ind.stochastic_k;
-    const stochD = ind.stochastic_d;
-    const stochPrevD = ind.stochastic_prevD;
+    // MODE D uses stochastic_k_v2/stochastic_d_v2 (5,3,3 periods), NOT stochastic_k/d (13,3,3)
+    const stochK = ind.stochastic_k_v2;
+    const stochD = ind.stochastic_d_v2;
+    const bbUpper = ind.bb_upper;
+    const bbMiddle = ind.bb_middle;
+    const bbLower = ind.bb_lower;
 
     // Need minimum data
-    if (ma6 == null || ma14 == null || ma50 == null || rsi == null) {
+    if (ma6 == null || ma14 == null || rsi == null) {
         return { score: 0, layers: {}, direction: null };
     }
 
@@ -238,51 +226,55 @@ function scorePrecision(ind) {
         layers.gapExpansion = `too_tight (${gapBps.toFixed(1)} bps)`;
     }
 
-    // ─── Layer 3: SMA Alignment (Layer 5 in bot) ─────────────────────────
-    // CALL: ma6 > ma14 > ma50  |  PUT: ma6 < ma14 < ma50
-    const alignedUp = (ma6 > ma14) && (ma14 > ma50);
-    const alignedDown = (ma6 < ma14) && (ma14 < ma50);
+    // ─── Layer 3: BB Position ─────────────────────────────────────────────
+    // CALL signal: price near or below BB lower band (oversold, bounce candidate)
+    // PUT signal: price near or above BB upper band (overbought, reversal candidate)
+    // Also checks BB width as a volatility filter — MODE D's bbStable gate
+    if (bbUpper != null && bbMiddle != null && bbLower != null && bbMiddle > 0 && closePrice != null) {
+        const bbWidth = bbUpper - bbLower;
+        const bbWidthBps = (bbWidth / bbMiddle) * 10000;
+        const pctB = bbWidth > 0 ? (closePrice - bbLower) / bbWidth : 0.5; // 0=at lower, 1=at upper
 
-    if (alignedUp) {
-        layers.smaAlignment = 'bullish_stack';
-        score += LAYER_WEIGHTS.smaAlignment;
-    } else if (alignedDown) {
-        layers.smaAlignment = 'bearish_stack';
-        score += LAYER_WEIGHTS.smaAlignment;
-    } else {
-        // Partial alignment: ma6 vs ma14 agrees but ma14 vs ma50 doesn't
-        const ma14Above50 = ma14 > ma50;
-        if (maCrossUp && ma14Above50) {
-            layers.smaAlignment = 'partial_bullish';
-            score += LAYER_WEIGHTS.smaAlignment * 0.5;
-        } else if (maCrossDown && !ma14Above50) {
-            layers.smaAlignment = 'partial_bearish';
-            score += LAYER_WEIGHTS.smaAlignment * 0.5;
+        if (bbWidthBps < 2) {
+            layers.bbPosition = `flat (${bbWidthBps.toFixed(1)} bps) — MODE D gates unreliable`;
+            // No score for flat assets — this is the volatility filter
+        } else if (pctB <= 0.25 && maCrossDown) {
+            // Price at/below lower BB AND bearish MA cross — CALL bounce setup
+            layers.bbPosition = `near_lower_bb (${(pctB * 100).toFixed(0)}%B, ${bbWidthBps.toFixed(1)} bps)`;
+            score += LAYER_WEIGHTS.bbPosition;
+        } else if (pctB >= 0.75 && maCrossUp) {
+            // Price at/above upper BB AND bullish MA cross — PUT reversal setup
+            layers.bbPosition = `near_upper_bb (${(pctB * 100).toFixed(0)}%B, ${bbWidthBps.toFixed(1)} bps)`;
+            score += LAYER_WEIGHTS.bbPosition;
+        } else if (bbWidthBps >= 5) {
+            // Adequate volatility, neutral position
+            layers.bbPosition = `mid_band (${(pctB * 100).toFixed(0)}%B, ${bbWidthBps.toFixed(1)} bps)`;
+            score += LAYER_WEIGHTS.bbPosition * 0.3;
         } else {
-            layers.smaAlignment = 'misaligned';
+            layers.bbPosition = `low_vol (${bbWidthBps.toFixed(1)} bps)`;
         }
+    } else {
+        layers.bbPosition = 'no_data';
     }
 
     // ─── Layer 4: Slope Harmony (Layer 6 in bot) ─────────────────────────
-    // We can't compute slopes from a single row, but we can infer from
-    // the relationship between current price and the MAs
-    const priceAboveMa6 = closePrice > ma6;
-    const priceAboveMa14 = closePrice > ma14;
-    const priceAboveMa50 = closePrice > ma50;
+    // Infer from price position relative to MA6 and MA14.
+    // If price is above both MAs (MA6 > MA14) → likely rising slopes
+    // If price is below both MAs (MA6 < MA14) → likely falling slopes
+    const priceAboveMa6 = closePrice != null && closePrice > ma6;
+    const priceAboveMa14 = closePrice != null && closePrice > ma14;
 
-    // If price is above all MAs and MAs are stacked up → slopes likely rising
-    // If price is below all MAs and MAs are stacked down → slopes likely falling
-    if (priceAboveMa6 && priceAboveMa14 && priceAboveMa50 && maCrossUp) {
-        layers.slopeHarmony = 'price_above_all';
+    if (priceAboveMa6 && priceAboveMa14 && maCrossUp) {
+        layers.slopeHarmony = 'price_above_ma6_ma14';
         score += LAYER_WEIGHTS.slopeHarmony;
-    } else if (!priceAboveMa6 && !priceAboveMa14 && !priceAboveMa50 && maCrossDown) {
-        layers.slopeHarmony = 'price_below_all';
+    } else if (!priceAboveMa6 && !priceAboveMa14 && maCrossDown) {
+        layers.slopeHarmony = 'price_below_ma6_ma14';
         score += LAYER_WEIGHTS.slopeHarmony;
-    } else if (priceAboveMa50 && maCrossUp) {
-        layers.slopeHarmony = 'price_above_ma50';
+    } else if (priceAboveMa14 && maCrossUp) {
+        layers.slopeHarmony = 'price_above_ma14';
         score += LAYER_WEIGHTS.slopeHarmony * 0.5;
-    } else if (!priceAboveMa50 && maCrossDown) {
-        layers.slopeHarmony = 'price_below_ma50';
+    } else if (!priceAboveMa14 && maCrossDown) {
+        layers.slopeHarmony = 'price_below_ma14';
         score += LAYER_WEIGHTS.slopeHarmony * 0.5;
     } else {
         layers.slopeHarmony = 'mixed';
@@ -345,10 +337,10 @@ function scorePrecision(ind) {
     }
 
     // Determine overall direction from the layers
-    const callLayers = [layers.maCross, layers.smaAlignment, layers.rsiStrength, layers.stochTrigger]
-        .filter(l => l && (l.startsWith('bullish') || l.startsWith('CALL'))).length;
-    const putLayers = [layers.maCross, layers.smaAlignment, layers.rsiStrength, layers.stochTrigger]
-        .filter(l => l && (l.startsWith('bearish') || l.startsWith('PUT'))).length;
+    const callLayers = [layers.maCross, layers.bbPosition, layers.rsiStrength, layers.stochTrigger]
+        .filter(l => l && (l.startsWith('bullish') || l.startsWith('CALL') || l.startsWith('near_lower'))).length;
+    const putLayers = [layers.maCross, layers.bbPosition, layers.rsiStrength, layers.stochTrigger]
+        .filter(l => l && (l.startsWith('bearish') || l.startsWith('PUT') || l.startsWith('near_upper'))).length;
 
     if (callLayers > putLayers) direction = 'CALL';
     else if (putLayers > callLayers) direction = 'PUT';
@@ -409,8 +401,8 @@ function buildReasons(a) {
     if (ld.maCross && (ld.maCross === 'CALL' || ld.maCross === 'PUT')) {
         reasons.push(`MA cross ${ld.maCross} confirmed`);
     }
-    if (ld.smaAlignment && ld.smaAlignment.includes('stack')) {
-        reasons.push(`Full MA stack aligned (${ld.smaAlignment})`);
+    if (ld.bbPosition && (ld.bbPosition.includes('near_upper') || ld.bbPosition.includes('near_lower'))) {
+        reasons.push(`Price at BB band (${ld.bbPosition})`);
     }
     if (ld.rsiStrength && !ld.rsiStrength.includes('neutral') && !ld.rsiStrength.includes('exhausted')) {
         reasons.push(`RSI in signal zone (${ld.rsiStrength})`);
@@ -420,9 +412,6 @@ function buildReasons(a) {
     }
     if (ld.gapExpansion && ld.gapExpansion.includes('wide')) {
         reasons.push(`MA gap wide (${ld.gapExpansion})`);
-    }
-    if (a.qualified) {
-        reasons.push(`Qualified (${a.qual_wins} consecutive wins)`);
     }
     return reasons;
 }
@@ -481,9 +470,9 @@ export async function riskCheck(asset, direction = null) {
         score -= 20;
     }
 
-    if (ld.smaAlignment === 'misaligned') {
-        warnings.push('MAs are misaligned — market may be choppy');
-        score -= 15;
+    if (ld.bbPosition && ld.bbPosition.includes('flat')) {
+        warnings.push(`Asset is flat/low-volatility — ${ld.bbPosition}`);
+        score -= 25;
     }
 
     if (ld.rsiStrength && ld.rsiStrength.includes('exhausted')) {

@@ -45,6 +45,34 @@ async function initSchema(db) {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_mcp_orders_status ON mcp_orders(status, created_at)`,
     `CREATE INDEX IF NOT EXISTS idx_mcp_orders_asset  ON mcp_orders(asset)`,
+
+    // Asset block controls — written by Claude/agents, read by bot before enqueuing
+    `CREATE TABLE IF NOT EXISTS asset_controls (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      asset      TEXT NOT NULL,
+      action     TEXT NOT NULL DEFAULT 'BLOCK',
+      reason     TEXT,
+      source     TEXT,
+      expires_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      active     INTEGER NOT NULL DEFAULT 1
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_asset_controls_asset  ON asset_controls(asset, active)`,
+
+    // Agent decision audit trail
+    `CREATE TABLE IF NOT EXISTS agent_session_log (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent      TEXT NOT NULL,
+      action     TEXT NOT NULL,
+      asset      TEXT,
+      direction  TEXT,
+      score      REAL,
+      verdict    TEXT,
+      reasoning  TEXT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_agent_log_agent     ON agent_session_log(agent, created_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_agent_log_created   ON agent_session_log(created_at)`,
   ];
   for (const s of stmts) await run(db, s);
 }

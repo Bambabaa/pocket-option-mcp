@@ -184,16 +184,6 @@ async function executeOneOrder(database, order, config = {}) {
         }
     }
 
-    // Gate: qualified assets (unless skipped for testing)
-    if (!skipQualifiedGate) {
-        const qualified = await database.isAssetQualified(order.asset);
-        if (!qualified) {
-            console.log(`   [EXEC] SKIP order ${order.id} ${order.asset} ${order.direction}: asset not in qualified_assets`);
-            await database.updateOrderStatus(order.id, 'SKIPPED', 'asset not in qualified_assets');
-            return 'SKIPPED';
-        }
-    }
-
     // Gate: risk_score (optional)
     if (riskMax != null) {
         const signal = await database.getSignalById(order.signal_id);
@@ -1169,17 +1159,9 @@ async function syncLiveTradeResultsFromDOM(page, database, options = {}) {
                 if (exitCandle) finalExitPrice = exitCandle.close;
             }
 
-            await database.insertOrderedTradeClosedAndUpdateQualificationChain(order, {
-                entryTs,
-                entryPrice: finalEntryPrice,
-                amount,
-                notes,
-                exitTimestamp: exitTs,
-                exitPrice: finalExitPrice,
-                result,
-                profitLoss,
-                payout: parsed.payout ?? null
-            }, minConsecutive);
+            await database.insertOrderedTradeClosed(order.id, order.signal_id, order.asset,
+                entryTs, order.direction, amount, finalEntryPrice,
+                exitTs, finalExitPrice, result, profitLoss, parsed.payout ?? null, notes);
             const plStr = profitLoss != null ? `$${profitLoss >= 0 ? '+' : ''}${profitLoss.toFixed(2)}` : '';
             console.log(`   [RESULT-SYNC] ✅ Matched order ${order.id} ${order.asset} ${order.direction} → ${parsed.result || 'UNKNOWN'} ${plStr} (written to trades_ordered)`);
             synced++;

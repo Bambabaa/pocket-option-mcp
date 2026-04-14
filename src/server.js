@@ -8,6 +8,7 @@ import { registerValidationTools } from './tools/validation.js';
 import { registerPerformanceTools } from './tools/performance.js';
 import { registerIntelligenceTools } from './tools/intelligence.js';
 import { registerAnalysisTools } from './tools/analysis.js';
+import { registerAgentTools } from './tools/agent-tools.js';
 
 const server = new McpServer(
   {
@@ -16,7 +17,7 @@ const server = new McpServer(
     description: 'MCP server for Pocket Option trading bot — read live data, enqueue trades, analyze performance',
   },
   {
-    instructions: `Pocket Option MCP — 31 tools for reading, analyzing, and controlling a live Pocket Option trading bot.
+    instructions: `Pocket Option MCP — 38 tools for reading, analyzing, and controlling a live Pocket Option trading bot.
 
 DATABASE MODEL:
 - Bot DB (readonly): candles, prices, indicators, signals, orders_queue, trades_ordered, qualification data
@@ -69,9 +70,19 @@ Qualification layer:
 - po_qualified_assets → assets currently on the bot's trading allow-list
 - po_asset_streaks → current win streak per asset
 - po_streak_leaderboard → rank assets by consecutive wins
-- po_qualification_outcomes → full signal validation history
+- po_signal_outcomes → signal validation history (entry/exit price, WIN/LOSS)
 - po_asset_trades → trade outcomes for qualified assets only
 - po_validation_stats → aggregate win rate from validation history
+
+Multi-agent system (autonomous trading pipeline):
+- /auto-trade skill → spawns Scanner → Analyst → Executor agents in sequence
+- po_signal_context → full indicator + candle + signal snapshot for one asset (one call, for Analyst agent)
+- po_drawdown_check → session safety gate: today P/L, consecutive losses, bot liveness (for Executor agent)
+- po_session_log_write → agent writes a decision to the audit trail (scanner/analyst/executor/orchestrator)
+- po_session_log_read → read the full agent decision history — what was scanned, approved, placed, blocked
+- po_block_asset → block an asset from being traded (writes to asset_controls; bot checks before every order)
+- po_unblock_asset → remove an active block so the bot can trade that asset again
+- po_asset_volatility → rank all assets by BB width bps — find flat/pegged assets to block, identify best setups
 
 CONTEXT TIPS:
 - Always call po_health first to confirm the bot is running
@@ -94,6 +105,7 @@ registerValidationTools(server);
 registerPerformanceTools(server);
 registerIntelligenceTools(server);
 registerAnalysisTools(server);
+registerAgentTools(server);
 
 process.stderr.write('pocket-option-mcp | Connects to pocket-option-bot.js via SQLite.\n');
 process.stderr.write(`Bot DB: ${process.env.PO_DB_PATH || 'data/trading_data.db (default)'}\n\n`);

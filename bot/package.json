@@ -1,0 +1,7 @@
+{
+  "type": "commonjs",
+  "dependencies": {
+    "puppeteer": "^24.40.0",
+    "sqlite3": "^6.0.1"
+  }
+}

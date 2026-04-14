@@ -15,7 +15,6 @@ const path = require('path');
 /**
  * OTC vs non-OTC: WebSocket can send CADCHF or CADCHF_otc for same pair.
  * Returns [asset, alternate] for lookup (e.g. [CADCHF, CADCHF_otc] or [CADCHF_otc, CADCHF]).
- * Used by isAssetQualified, removeQualifiedAsset to treat both as same instrument.
  */
 function getAssetOtcVariants(asset) {
     if (!asset || typeof asset !== 'string') return [asset];
@@ -159,8 +158,8 @@ class TradingDatabase {
                 UNIQUE(date)
             )`,
 
-            // 7. Qualification outcomes - every validated signal (pending layer) for streak computation
-            `CREATE TABLE IF NOT EXISTS qualification_outcomes (
+            // 7. Signal outcomes — every validated signal (validation loop writes here for analysis)
+            `CREATE TABLE IF NOT EXISTS signal_outcomes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset TEXT NOT NULL,
                 signal_timestamp INTEGER NOT NULL,
@@ -176,8 +175,8 @@ class TradingDatabase {
                 UNIQUE(asset, signal_timestamp)
             )`,
 
-            // Migration: add updated_at to qualification_outcomes if missing (safe, idempotent)
-            `ALTER TABLE qualification_outcomes ADD COLUMN updated_at INTEGER`,
+            // Migration: add updated_at to signal_outcomes if missing (safe, idempotent)
+            `ALTER TABLE signal_outcomes ADD COLUMN updated_at INTEGER`,
 
             // KT indicators remodel: add columns for cascade (video1 → video2 → video3)
             `ALTER TABLE indicators ADD COLUMN keltner_upper REAL`,
@@ -197,40 +196,7 @@ class TradingDatabase {
             `ALTER TABLE indicators ADD COLUMN stochastic_k_v2 REAL`,
             `ALTER TABLE indicators ADD COLUMN stochastic_d_v2 REAL`,
 
-            // 8. Qualified assets - allow-list of assets with 2-3 consecutive wins (actual trading assets)
-            `CREATE TABLE IF NOT EXISTS qualified_assets (
-                asset TEXT PRIMARY KEY,
-                consecutive_wins INTEGER NOT NULL DEFAULT 0,
-                qualified_since INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )`,
-
-            // 9. Per-asset streak - current consecutive wins for qualification rule
-            `CREATE TABLE IF NOT EXISTS asset_streaks (
-                asset TEXT PRIMARY KEY,
-                consecutive_wins INTEGER NOT NULL DEFAULT 0,
-                last_result TEXT,
-                last_result_timestamp INTEGER,
-                updated_at INTEGER NOT NULL
-            )`,
-
-            // 10. Assets trades - validated outcomes for qualified assets only
-            `CREATE TABLE IF NOT EXISTS assets_trades (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                asset TEXT NOT NULL,
-                signal_timestamp INTEGER NOT NULL,
-                signal_id INTEGER,
-                direction TEXT NOT NULL,
-                entry_price REAL NOT NULL,
-                exit_timestamp INTEGER,
-                exit_price REAL,
-                result TEXT,
-                profit_loss REAL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(asset, signal_timestamp)
-            )`,
-
-            // 11. Orders queue - two-process executor: bot enqueues, executor claims and executes
+            // 8. Orders queue - two-process executor: bot enqueues, executor claims and executes
             `CREATE TABLE IF NOT EXISTS orders_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 signal_id INTEGER NOT NULL,
@@ -277,10 +243,8 @@ class TradingDatabase {
             'CREATE INDEX IF NOT EXISTS idx_trades_asset ON trades(asset)',
             'CREATE INDEX IF NOT EXISTS idx_trades_result ON trades(result)',
             'CREATE INDEX IF NOT EXISTS idx_performance_date ON performance(date DESC)',
-            'CREATE INDEX IF NOT EXISTS idx_qualification_outcomes_asset ON qualification_outcomes(asset)',
-            'CREATE INDEX IF NOT EXISTS idx_qualification_outcomes_signal_ts ON qualification_outcomes(signal_timestamp DESC)',
-            'CREATE INDEX IF NOT EXISTS idx_assets_trades_asset ON assets_trades(asset)',
-            'CREATE INDEX IF NOT EXISTS idx_assets_trades_signal_ts ON assets_trades(signal_timestamp DESC)',
+            'CREATE INDEX IF NOT EXISTS idx_signal_outcomes_asset ON signal_outcomes(asset)',
+            'CREATE INDEX IF NOT EXISTS idx_signal_outcomes_signal_ts ON signal_outcomes(signal_timestamp DESC)',
             'CREATE INDEX IF NOT EXISTS idx_orders_queue_status_created ON orders_queue(status, created_at)',
             'CREATE INDEX IF NOT EXISTS idx_trades_ordered_order_id ON trades_ordered(order_id)',
             'CREATE INDEX IF NOT EXISTS idx_trades_ordered_signal_id ON trades_ordered(signal_id)',
@@ -1171,7 +1135,7 @@ class TradingDatabase {
     // ==================== VALIDATION LAYER (pending signals) ====================
 
     /**
-     * Find signals past expiry that don't yet have a qualification_outcome.
+     * Find signals past expiry that don't yet have a signal_outcome.
      * Excludes assets with an in-flight live order (EXECUTED but no trades_ordered yet).
      * @param {number} lookAheadSeconds - Option expiry (e.g. 60)
      * @param {number} nowSeconds       - Reference "now" in seconds
@@ -1188,7 +1152,7 @@ class TradingDatabase {
             inFlightSubquery += ` AND (oq.last_update_at IS NULL OR oq.last_update_at >= datetime('now', '-${hours} hours'))`;
         }
         const sql = `SELECT s.* FROM signals s
-                     LEFT JOIN qualification_outcomes q ON s.asset = q.asset AND s.timestamp = q.signal_timestamp
+                     LEFT JOIN signal_outcomes q ON s.asset = q.asset AND s.timestamp = q.signal_timestamp
                      WHERE q.id IS NULL AND s.direction != 'NEUTRAL'
                      AND (s.timestamp <= ? OR (s.timestamp > 10000000000 AND s.timestamp / 1000 <= ?))
                      AND s.asset NOT IN (${inFlightSubquery})
@@ -1206,7 +1170,7 @@ class TradingDatabase {
         ).then(r => (r && r.c != null) ? r.c : 0);
         const withOutcome = await this.get(
             `SELECT COUNT(*) as c FROM signals s
-             INNER JOIN qualification_outcomes q ON s.asset = q.asset AND s.timestamp = q.signal_timestamp
+             INNER JOIN signal_outcomes q ON s.asset = q.asset AND s.timestamp = q.signal_timestamp
              WHERE s.direction IN ('CALL', 'PUT')`
         ).then(r => (r && r.c != null) ? r.c : 0);
         const pastExpiry = await this.get(
@@ -1216,7 +1180,7 @@ class TradingDatabase {
         ).then(r => (r && r.c != null) ? r.c : 0);
         const pending = await this.get(
             `SELECT COUNT(*) as c FROM signals s
-             LEFT JOIN qualification_outcomes q ON s.asset = q.asset AND s.timestamp = q.signal_timestamp
+             LEFT JOIN signal_outcomes q ON s.asset = q.asset AND s.timestamp = q.signal_timestamp
              WHERE q.id IS NULL AND s.direction != 'NEUTRAL'
              AND (s.timestamp <= ? OR (s.timestamp > 10000000000 AND s.timestamp / 1000 <= ?))`,
             [expiryCutoff, expiryCutoff]
@@ -1238,26 +1202,6 @@ class TradingDatabase {
             `SELECT MAX(timestamp) as ts FROM signals WHERE direction IN ('CALL', 'PUT')`
         );
         return row && row.ts != null ? row.ts : null;
-    }
-
-    /**
-     * Check if asset is in qualified_assets (has met min consecutive wins for trading).\n     * Used by executor to filter out unqualified signals.
-     */
-    async isAssetQualified(asset) {
-        if (!asset) return false;
-
-        let targetNorm = asset.toLowerCase();
-        let targetBase = targetNorm;
-        let targetOtced = targetNorm;
-
-        if (targetNorm.endsWith('_otc')) {
-            targetBase = targetNorm.replace('_otc', '');
-        } else {
-            targetOtced = targetNorm + '_otc';
-        }
-
-        const row = await this.get(`SELECT asset FROM qualified_assets WHERE LOWER(asset) IN (?, ?, ?, ?)`, [asset.toLowerCase(), targetNorm, targetBase, targetOtced]);
-        return !!row;
     }
 
     /**
@@ -1295,111 +1239,25 @@ class TradingDatabase {
     }
 
     /**
-     * Insert or update a qualification outcome (pending layer validated signal).
+     * Insert or update a signal outcome (validation loop writes here for analysis).
      * INSERT OR IGNORE so first write wins, then UPDATE only fills in non-null result fields.
-     * This prevents a 30s duplicate signal from overwriting the first entry with a null result.
      */
-    async insertQualificationOutcome(asset, signalTimestamp, signalId, direction, entryPrice, exitTimestamp, exitPrice, result, profitLoss) {
+    async insertSignalOutcome(asset, signalTimestamp, signalId, direction, entryPrice, exitTimestamp, exitPrice, result, profitLoss) {
         const now = Math.floor(Date.now() / 1000);
-        // First write wins — IGNORE on duplicate (same asset+signal_timestamp)
         await this.run(
-            `INSERT OR IGNORE INTO qualification_outcomes
+            `INSERT OR IGNORE INTO signal_outcomes
              (asset, signal_timestamp, signal_id, direction, entry_price, updated_at)
              VALUES (?, ?, ?, ?, ?, ?)`,
             [asset, signalTimestamp, signalId, direction, entryPrice, now]
         );
-        // Only update result/exit fields when result is known (not null) to avoid overwriting a real result with nulls
         if (result != null) {
             await this.run(
-                `UPDATE qualification_outcomes SET
+                `UPDATE signal_outcomes SET
                  result = ?, profit_loss = ?, exit_timestamp = ?, exit_price = ?, updated_at = ?
                  WHERE asset = ? AND signal_timestamp = ? AND (result IS NULL OR result = '')`,
                 [result, profitLoss, exitTimestamp, exitPrice, now, asset, signalTimestamp]
             );
         }
-    }
-
-    /**
-     * Get current streak for an asset (from asset_streaks table)
-     */
-    async getAssetStreak(asset) {
-        const row = await this.get('SELECT consecutive_wins, last_result, last_result_timestamp, updated_at FROM asset_streaks WHERE asset = ?', [asset]);
-        return row ? { consecutive_wins: row.consecutive_wins || 0, last_result: row.last_result, last_result_timestamp: row.last_result_timestamp, updated_at: row.updated_at } : null;
-    }
-
-    /**
-     * Update asset streak after a new outcome. Returns new consecutive_wins.
-     */
-    async updateAssetStreakAfterOutcome(asset, result, signalTimestamp) {
-        const now = Math.floor(Date.now() / 1000);
-        let streak = await this.getAssetStreak(asset);
-        const prevWins = streak ? streak.consecutive_wins : 0;
-        const newWins = result === 'WIN' ? prevWins + 1 : 0;
-        const sql = `INSERT OR REPLACE INTO asset_streaks (asset, consecutive_wins, last_result, last_result_timestamp, updated_at)
-                     VALUES (?, ?, ?, ?, ?)`;
-        await this.run(sql, [asset, newWins, result, signalTimestamp, now]);
-        return newWins;
-    }
-
-    /**
-     * Add asset to qualified_assets
-     */
-    async addQualifiedAsset(asset, consecutiveWins) {
-        const now = Math.floor(Date.now() / 1000);
-        const sql = `INSERT OR REPLACE INTO qualified_assets (asset, consecutive_wins, qualified_since, updated_at) VALUES (?, ?, ?, ?)`;
-        await this.run(sql, [asset, consecutiveWins, now, now]);
-    }
-
-    /**
-     * Remove asset from qualified_assets
-     */
-    async removeQualifiedAsset(asset) {
-        if (!asset) return;
-        const assetLower = asset.toLowerCase();
-        const assetOtc = assetLower.endsWith('_otc') ? assetLower : assetLower + '_otc';
-        const assetNonOtc = assetLower.endsWith('_otc') ? assetLower.replace('_otc', '') : assetLower;
-        await this.run('DELETE FROM qualified_assets WHERE LOWER(asset) IN (?, ?)', [assetOtc, assetNonOtc]);
-    }
-
-    /**
-     * Insert into assets_trades (validated outcomes for qualified assets only).
-     * Uses INSERT OR IGNORE so the FIRST outcome for an asset+signal_timestamp wins.
-     * This prevents the 30s duplicate signal leak: if a second signal fires within the
-     * 60s expiry window, it cannot overwrite the first recorded trade result.
-     */
-    async insertAssetsTrade(asset, signalTimestamp, signalId, direction, entryPrice, exitTimestamp, exitPrice, result, profitLoss) {
-        // Leak guard: don't insert if there is still an in-flight live order for this asset.
-        // A live order pending result sync means the trade is not yet settled — inserting now
-        // would be premature and could create a duplicate within the 60s expiry window.
-        const inFlight = await this.hasAssetInFlightLiveOrder(asset);
-        if (inFlight) {
-            console.warn(`   [LEAK GUARD] insertAssetsTrade blocked for ${asset}: in-flight live order awaiting result sync`);
-            return;
-        }
-        const sql = `INSERT OR IGNORE INTO assets_trades
-                     (asset, signal_timestamp, signal_id, direction, entry_price, exit_timestamp, exit_price, result, profit_loss)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        await this.run(sql, [asset, signalTimestamp, signalId, direction, entryPrice, exitTimestamp, exitPrice, result, profitLoss]);
-    }
-
-    /**
-     * Update qualification chain from a live trade result.
-     */
-    async updateQualificationChainFromLiveTrade(order, result, profitLoss, exitTimestamp, minConsecutiveWinsForTrading = 2) {
-        const { asset, signal_id, signal_timestamp, direction } = order;
-        const signalTsSeconds = signal_timestamp > 1e12 ? Math.floor(signal_timestamp / 1000) : signal_timestamp;
-
-        const entryCandle = await this.get('SELECT close FROM candles WHERE asset = ? AND timestamp = ?', [asset, signalTsSeconds]);
-        const entryPrice = entryCandle ? entryCandle.close : 0;
-
-        await this.insertQualificationOutcome(asset, signalTsSeconds, signal_id, direction, entryPrice, exitTimestamp, null, result, profitLoss);
-        const newStreak = await this.updateAssetStreakAfterOutcome(asset, result, signalTsSeconds);
-        if (result !== 'WIN') {
-            await this.removeQualifiedAsset(asset);
-        } else if (newStreak >= minConsecutiveWinsForTrading) {
-            await this.addQualifiedAsset(asset, newStreak);
-        }
-        await this.insertAssetsTrade(asset, signalTsSeconds, signal_id, direction, entryPrice, exitTimestamp, null, result, profitLoss);
     }
 
     /**
@@ -1419,22 +1277,6 @@ class TradingDatabase {
                     reject(err);
                 }
             });
-        });
-    }
-
-    /**
-     * Atomically insert trades_ordered + update qualification chain.
-     */
-    async insertOrderedTradeClosedAndUpdateQualificationChain(order, opts, minConsecutiveWinsForTrading = 2) {
-        return this.runInTransaction(async () => {
-            await this.insertOrderedTradeClosed(
-                order.id, order.signal_id, order.asset, opts.entryTs, order.direction,
-                opts.amount, opts.entryPrice ?? null, opts.exitTimestamp,
-                opts.exitPrice ?? null, opts.result, opts.profitLoss, opts.payout ?? null, opts.notes
-            );
-            await this.updateQualificationChainFromLiveTrade(
-                order, opts.result, opts.profitLoss, opts.exitTimestamp, minConsecutiveWinsForTrading
-            );
         });
     }
 

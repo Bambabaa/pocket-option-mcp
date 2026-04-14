@@ -7,7 +7,7 @@ export async function getPendingSignals(lookAheadSeconds = 60, limit = 50) {
   const rows = await all(
     `SELECT s.id, s.asset, s.timestamp, s.direction, s.strategy_used
      FROM signals s
-     LEFT JOIN qualification_outcomes q ON q.asset = s.asset AND q.signal_timestamp = s.timestamp
+     LEFT JOIN signal_outcomes q ON q.asset = s.asset AND q.signal_timestamp = s.timestamp
      WHERE q.id IS NULL
        AND s.timestamp <= ?
      ORDER BY s.timestamp DESC LIMIT ?`,
@@ -20,10 +20,10 @@ export async function getValidationStats(asset = null) {
   const assetFilter = asset ? 'AND asset = ?' : '';
   const assetParam = asset ? [asset] : [];
 
-  const total = await get(`SELECT COUNT(*) as n FROM qualification_outcomes WHERE 1=1 ${assetFilter}`, assetParam);
-  const wins = await get(`SELECT COUNT(*) as n FROM qualification_outcomes WHERE result='WIN' ${assetFilter}`, assetParam);
-  const losses = await get(`SELECT COUNT(*) as n FROM qualification_outcomes WHERE result='LOSS' ${assetFilter}`, assetParam);
-  const draws = await get(`SELECT COUNT(*) as n FROM qualification_outcomes WHERE result='DRAW' ${assetFilter}`, assetParam);
+  const total = await get(`SELECT COUNT(*) as n FROM signal_outcomes WHERE 1=1 ${assetFilter}`, assetParam);
+  const wins = await get(`SELECT COUNT(*) as n FROM signal_outcomes WHERE result='WIN' ${assetFilter}`, assetParam);
+  const losses = await get(`SELECT COUNT(*) as n FROM signal_outcomes WHERE result='LOSS' ${assetFilter}`, assetParam);
+  const draws = await get(`SELECT COUNT(*) as n FROM signal_outcomes WHERE result='DRAW' ${assetFilter}`, assetParam);
 
   const byAsset = await all(
     `SELECT asset,
@@ -31,7 +31,7 @@ export async function getValidationStats(asset = null) {
             SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END) as wins,
             SUM(CASE WHEN result='LOSS' THEN 1 ELSE 0 END) as losses,
             ROUND(SUM(profit_loss),2) as total_pnl
-     FROM qualification_outcomes
+     FROM signal_outcomes
      WHERE 1=1 ${assetFilter}
      GROUP BY asset ORDER BY wins DESC`,
     assetParam

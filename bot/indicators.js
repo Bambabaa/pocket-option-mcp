@@ -690,38 +690,16 @@ class Indicators {
     // ==================== PURE VIDEO SIGNAL GENERATION ====================
 
     // ════════════════════════════════════════════════════════════════════════════
-    // _generateSignalsKTVideo2 — Phase 34 · Four-Mode Architecture
-    // ════════════════════════════════════════════════════════════════════════════
+    // _generateSignalsKTVideo2 - 4 patterns: Reversal + Continuation
     //
-    // WHAT CHANGED FROM PHASE 33
-    // ──────────────────────────
-    // RESTORED (Phase 33 regressions fixed):
-    //   minDelta:           bps × 0.1  → bps × 0.3
-    //   ma14Rising/Falling: minDelta × 0.1 → minDelta × 0.5
-    //   rsiCallExhausted:   rsi >= 95  → rsi >= 80
-    //   3c dead zone:       commented out → restored (candlesSince !== 3)
-    //   Layer 1 chop filter: commented out → restored
+    // CALL Reversal (MA-independent): K crash 20+pts into <30 from >=50, RSI <45,
+    //   price near lower BB, BB stable/contracting, 3-bar lookback confirms
+    // PUT Reversal (MA-independent): RSI >70x2 (not 75-80), RSI falling [38,70) not [55,65),
+    //   velocity >-15, close >= BB mid, K exiting OB, D >=75, K-D <-3, 3-bar lookback confirms
+    // CALL Continuation (pre-cross): MA6<MA14 converging, RSI>50 rising, Stoch>30 rising, 3-bar lookback
+    // PUT Continuation (pre-cross): MA6>MA14 converging, RSI falling from >50, Stoch<70 falling, 3-bar lookback
     //
-    // FIXED (from session audit + chart analysis):
-    //   rsiStrongDown:      35 → 38  (cautious middle ground; 45 needs more data)
-    //   stochD >= 65:       added to CALL MODE B (blocks D-in-neutral losses)
-    //   maxGap:             5 bps cap retained in MODE B (7+ bps = 37.5% WR)
-    //   payout gate:        added (≥ 70 required)
-    //   LBPUSD blacklist:   added
-    //   crossAgeCeiling:    fixed at 4c (removed risky 6c extension)
-    //   MODE D candle check: replaced with MA-slope proxy (candle not in history)
-    //
-    // ADDED — Four signal modes (evaluated in order, first pass fires):
-    //   MODE D [REVERSAL]     — pre-MA-cross reversal from extreme zones
-    //   MODE A [EARLY]        — fresh cross 0–2c, RSI just over 50, pre-zone entry
-    //   MODE B [TREND]        — confirmed momentum, full gate stack (anchor mode)
-    //   MODE C [CONTINUATION] — re-entry on same trend, no new cross required
-    //
-    // ════════════════════════════════════════════════════════════════════════════
-
     _generateSignalsKTVideo2(indicators, settings, signals) {
-
-        // ─── Inputs ───────────────────────────────────────────────────────────
         const ma6 = indicators.ma6;
         const ma14 = indicators.ma14;
         const ma50 = indicators.ma50;
@@ -731,204 +709,63 @@ class Indicators {
         const prevStochD = indicators.stochastic_prevD;
         const history = indicators.v2History || [];
         const candle = indicators.lastCandle;
+        const bb = indicators.bollingerKT;
         const asset = indicators.asset || null;
 
-        // ─── Guard — hard blocks before any computation ───────────────────────
         if (ma6 == null || ma14 == null || ma50 == null || rsi == null || !candle) return false;
 
-        // Payout gate — EV-negative trades blocked regardless of signal quality.
         const minPayout = settings?.minPayout ?? 70;
         if (indicators.payout != null && indicators.payout < minPayout) return false;
 
-
-        // ─── Candle direction ─────────────────────────────────────────────────
         const openPrice = candle[1];
         const closePrice = candle[2];
         const isGreen = closePrice > openPrice;
         const isRed = closePrice < openPrice;
-
-        // ─── Base thresholds ──────────────────────────────────────────────────
-        const bps = closePrice / 10000;   // 1 bps of current price
-        const minDelta = bps * 0.3;            // restored from Phase 33 regression
-
-        // // ═════════════════════════════════════════════════════════════════════
-        // // LAYER 1 — CHOP FILTER
-        // // ═════════════════════════════════════════════════════════════════════
-
-
-        // ═════════════════════════════════════════════════════════════════════
-        // LAYER 2 — MA50 TREND MODE DETECTION
-        // ═════════════════════════════════════════════════════════════════════
-        const prevMa50 = history.length > 0 ? history[0].ma50 : ma50;
-        const ma50Rising = ma50 > prevMa50;
-        const ma50Falling = ma50 < prevMa50;
-        const priceAbove50 = closePrice > ma50;
-        const priceBelow50 = closePrice < ma50;
-        const distFromMa50 = Math.abs(closePrice - ma50);
-        const ma50Strong = distFromMa50 >= bps * 10;
-
-        const trendUpConfirmed = ma50Rising && priceAbove50;
-        const trendDownConfirmed = ma50Falling && priceBelow50;
-
-        const minGap = trendUpConfirmed || trendDownConfirmed ? bps * 2.0 : bps * 3.0;
-        const maxGap = bps * 5.0;   // Fix 1: 5 bps cap retained (7+ bps = 37.5% WR)
-        const crossAgeCeiling = 4;         // Fixed at 4c — 6c extension removed (data: risky)
-
-        // ═════════════════════════════════════════════════════════════════════
-        // LAYER 3 — ARMED CROSS DETECTION
-        // ═════════════════════════════════════════════════════════════════════
-        const isFreshCrossUp = (ma6 > ma14) && history.length > 0 &&
-            (history[0].ma6 <= history[0].ma14);
-        const isFreshCrossDown = (ma6 < ma14) && history.length > 0 &&
-            (history[0].ma6 >= history[0].ma14);
-
-        let crossAboveRecent = false;
-        let crossBelowRecent = false;
-        {
-            const lookback = history.slice(0, crossAgeCeiling);
-
-            if (ma6 > ma14) {
-                for (let i = 0; i < lookback.length; i++) {
-                    const h = lookback[i];
-                    const wasBelowAt = i + 1 < lookback.length
-                        ? lookback[i + 1].ma6 <= lookback[i + 1].ma14 : true;
-                    if (h.ma6 > h.ma14 && wasBelowAt) {
-                        const stayedAbove = lookback.slice(0, i).every(h2 => h2.ma6 > h2.ma14);
-                        if (stayedAbove) { crossAboveRecent = true; break; }
-                    }
-                }
-            }
-
-            if (ma6 < ma14) {
-                for (let i = 0; i < lookback.length; i++) {
-                    const h = lookback[i];
-                    const wasAboveAt = i + 1 < lookback.length
-                        ? lookback[i + 1].ma6 >= lookback[i + 1].ma14 : true;
-                    if (h.ma6 < h.ma14 && wasAboveAt) {
-                        const stayedBelow = lookback.slice(0, i).every(h2 => h2.ma6 < h2.ma14);
-                        if (stayedBelow) { crossBelowRecent = true; break; }
-                    }
-                }
-            }
-        }
-
-        // ═════════════════════════════════════════════════════════════════════
-        // LAYER 4 — GAP ANALYSIS
-        // ═════════════════════════════════════════════════════════════════════
+        const bps = closePrice / 10000;
         const currentGap = Math.abs(ma6 - ma14);
-        const prevGap = history.length > 0 ? Math.abs(history[0].ma6 - history[0].ma14) : currentGap;
-        const prevGap2 = history.length > 1 ? Math.abs(history[1].ma6 - history[1].ma14) : prevGap;
-
-        const gapMeetsMin = currentGap >= minGap;
-        const gapExpanding = currentGap >= prevGap;
-        const gapReExpanding = (prevGap < prevGap2) && (currentGap > prevGap);   // MODE C
-
-        // ═════════════════════════════════════════════════════════════════════
-        // LAYER 5 — SMA ALIGNMENT
-        // ═════════════════════════════════════════════════════════════════════
-        const alignedUp = (ma6 > ma14 + minGap) && (ma14 > ma50);
-        const alignedDown = (ma6 < ma14 - minGap) && (ma14 < ma50);
-
-        const ma14AboveMa50 = ma14 > ma50;
-        const ma14BelowMa50 = ma14 < ma50;
-
-        // ═════════════════════════════════════════════════════════════════════
-        // LAYER 6 — DUAL HARMONIC SLOPES
-        // ═════════════════════════════════════════════════════════════════════
-        const prevMa6 = history.length > 0 ? history[0].ma6 : ma6;
-        const prevMa14 = history.length > 0 ? history[0].ma14 : ma14;
-
-        const ma6Rising = (ma6 - prevMa6) >= minDelta;
-        const ma6Falling = (prevMa6 - ma6) >= minDelta;
-        const ma14Rising = (ma14 - prevMa14) >= minDelta * 0.5;
-        const ma14Falling = (prevMa14 - ma14) >= minDelta * 0.5;
-
-        const harmonicLeadUp = isFreshCrossUp ? ma6Rising : (ma6Rising && ma14Rising);
-        const harmonicLeadDown = isFreshCrossDown ? ma6Falling : (ma6Falling && ma14Falling);
-
-        // ═════════════════════════════════════════════════════════════════════
-        // LAYER 7 — RSI STRENGTH GATE
-        // Fix 3: rsiStrongDown = 38 (cautious middle ground; 45 needs more data)
-        // ═════════════════════════════════════════════════════════════════════
-        const rsiStrongUp = rsi >= 65;
-        const rsiStrongDown = rsi <= 38;          // Fix 3: was 35, raised to 38
-        const rsiCallExhausted = rsi >= 80;
-        const rsiNotExhausted = rsi > 0 && rsi < 100;
-
-        // ═════════════════════════════════════════════════════════════════════
-        // LAYER 8 — RSI 50-LINE IGNITION
-        // 3c dead zone restored (23% WR historically).
-        // ═════════════════════════════════════════════════════════════════════
-        let candlesSinceCross50Up = 0;
-        let candlesSinceCross50Down = 0;
-        let rsiCrossedUp = false;
-        let rsiCrossedDown = false;
-
-        for (let i = 0; i < Math.min(history.length, crossAgeCeiling + 1); i++) {
-            const h = history[i];
-            if (h.rsi_5 == null) break;
-            if (!rsiCrossedUp) { if (h.rsi_5 > 50) candlesSinceCross50Up++; else rsiCrossedUp = true; }
-            if (!rsiCrossedDown) { if (h.rsi_5 < 50) candlesSinceCross50Down++; else rsiCrossedDown = true; }
-        }
-
-        const rsiIgnitedUp = rsiNotExhausted
-            && rsi > 50 && rsiCrossedUp
-            && candlesSinceCross50Up >= 1
-            && candlesSinceCross50Up <= crossAgeCeiling
-            && candlesSinceCross50Up !== 3;   // 3c dead zone restored
-
-        const rsiIgnitedDown = rsiNotExhausted
-            && rsi < 50 && rsiCrossedDown
-            && candlesSinceCross50Down >= 1
-            && candlesSinceCross50Down <= crossAgeCeiling
-            && candlesSinceCross50Down !== 3; // 3c dead zone restored
-
-        // ═════════════════════════════════════════════════════════════════════
-        // LAYER 9 — STOCHASTIC TRIGGER
-        // ═════════════════════════════════════════════════════════════════════
-        const prevK = history.length > 0 ? (history[0].stochastic_k ?? stochK) : stochK;
-        const prevD = history.length > 0 ? (history[0].stochastic_d ?? stochD) : stochD;
-        const prev2K = history.length > 1 ? (history[1].stochastic_k ?? prevK) : prevK;
-        const prev2D = history.length > 1 ? (history[1].stochastic_d ?? prevD) : prevD;
-
-        const stochInUpperZone = stochK != null && stochK >= 60;
-        const stochInLowerZone = stochK != null && stochK <= 40;
-
-        const kCrossedUpNow = stochK > stochD && prevK <= prevD;
-        const kCrossedUp1bar = stochK > stochD && prevK > prevD && prev2K <= prev2D;
-        const kCrossedDownNow = stochK < stochD && prevK >= prevD;
-        const kCrossedDown1bar = stochK < stochD && prevK < prevD && prev2K >= prev2D;
-
-        const kCrossedUp = kCrossedUpNow || kCrossedUp1bar;
-        const kCrossedDown = kCrossedDownNow || kCrossedDown1bar;
-
-        const stochGapNow = Math.abs(stochK - stochD);
-        const stochGapPrev = Math.abs(prevK - prevD);
-        const stochExpanding = stochGapNow >= stochGapPrev;
-
-        const dSlopingUp = prevStochD != null && stochD > prevStochD + 0.1;
-        const dSlopingDown = prevStochD != null && stochD < prevStochD - 0.1;
-
-        const stochCallSafe = stochK == null || stochK < 90;
-        const stochPutSafe = stochK == null || stochK > 10;
-
-        // D-in-zone gate for CALL MODE B: all wins had D >= 69, losses had D <= 58
-        const stochDInUpperZone = stochD == null || stochD >= 65;
-
-        // Full triggers (MODE B)
-        const stochTriggerUp = stochInUpperZone && kCrossedUp && dSlopingUp &&
-            stochExpanding && stochCallSafe && stochDInUpperZone;
-        const stochTriggerDown = stochInLowerZone && kCrossedDown && dSlopingDown &&
-            stochExpanding && stochPutSafe;
-
-        // Relaxed triggers (MODE A — D zone not required yet)
-        const stochTriggerUpRelaxed = stochInUpperZone && kCrossedUp && dSlopingUp && stochCallSafe;
-        const stochTriggerDownRelaxed = stochInLowerZone && kCrossedDown && dSlopingDown && stochPutSafe;
-
-        // ═════════════════════════════════════════════════════════════════════
-        // LAYER 10 — STREAK GUARD
-        // ═════════════════════════════════════════════════════════════════════
         const candleTs = candle[0];
+
+        // History lookups
+        const ma6_1 = history.length > 0 ? history[0].ma6 : ma6;
+        const ma14_1 = history.length > 0 ? history[0].ma14 : ma14;
+        const rsi_1 = history.length > 0 ? (history[0].rsi_5 ?? rsi) : rsi;
+        const rsi_2 = history.length > 1 ? (history[1].rsi_5 ?? rsi_1) : rsi_1;
+        const rsi_3 = history.length > 2 ? (history[2].rsi_5 ?? rsi_2) : rsi_2;
+        const k_1 = history.length > 0 ? (history[0].stochastic_k ?? stochK) : stochK;
+        const k_2 = history.length > 1 ? (history[1].stochastic_k ?? k_1) : k_1;
+        const k_3 = history.length > 2 ? (history[2].stochastic_k ?? k_2) : k_2;
+        const d_1 = history.length > 0 ? (history[0].stochastic_d ?? stochD) : stochD;
+        const d_2 = history.length > 1 ? (history[1].stochastic_d ?? stochD) : stochD;
+        const d_3 = history.length > 2 ? (history[2].stochastic_d ?? stochD) : stochD;
+
+        // MA convergence rates
+        const ma6Delta = ma6 - ma6_1;
+        const ma14Delta = ma14 - ma14_1;
+        const ma6Rising = ma6Delta > 0;
+        const ma6Falling = ma6Delta < 0;
+        const rsiRising = rsi > rsi_1;
+        const rsiFalling = rsi < rsi_1;
+        const rsiVelocity = rsi - rsi_1;
+        const kRising = stochK != null && k_1 != null && stochK > k_1;
+        const kFalling = stochK != null && k_1 != null && stochK < k_1;
+
+        // BB state
+        const bbWidth = bb != null && bb.upper != null && bb.lower != null && bb.middle
+            ? (bb.upper - bb.lower) / bb.middle : 0;
+        const bbWidth_1 = history.length > 0 && history[0].bb_upper != null && history[0].bb_lower != null && history[0].bb_middle
+            ? (history[0].bb_upper - history[0].bb_lower) / history[0].bb_middle : bbWidth;
+        const bbWidth_2 = history.length > 1 && history[1].bb_upper != null && history[1].bb_lower != null && history[1].bb_middle
+            ? (history[1].bb_upper - history[1].bb_lower) / history[1].bb_middle : bbWidth;
+        const bbStable = bbWidth > 0 && bbWidth_1 > 0 && bbWidth_2 > 0
+            ? Math.abs(bbWidth - bbWidth_1) / bbWidth < 0.05 && Math.abs(bbWidth_1 - bbWidth_2) / bbWidth_1 < 0.05
+            : true;
+        const closeAboveMid = bb != null && bb.middle != null && closePrice >= bb.middle;
+        const closeBelowMid = bb != null && bb.middle != null && closePrice < bb.middle;
+        const priceNearLowerBB = bb != null && bb.lower != null
+            ? closePrice <= bb.lower + (bb.upper - bb.lower) * 0.15
+            : false;
+
+        // Streak guard
         let streakBlocked = false;
         if (asset) {
             if (!this._v2LastTs) this._v2LastTs = {};
@@ -939,7 +776,6 @@ class Indicators {
             if (streak >= 3) streakBlocked = true;
         }
 
-        // ─── Shared helpers ───────────────────────────────────────────────────
         const _updateStreak = () => {
             if (!asset) return;
             if (!this._v2LastTs) this._v2LastTs = {};
@@ -950,317 +786,243 @@ class Indicators {
             this._v2LastTs[asset] = candleTs;
         };
 
-        const _reason = (dir, mode, tag, rsiVal, rsiAge, kVal, dVal, gapBps) =>
-            `[FastTrend ${dir}] ${tag} | Mode: ${mode} | ` +
-            `RSI ${rsiVal.toFixed(1)}${rsiAge != null ? ` (${rsiAge}c past 50)` : ''} | ` +
-            `Gap ${gapBps.toFixed(1)} bps${gapExpanding ? ' ↑' : ' →'} | ` +
-            `Stoch K=${kVal != null ? kVal.toFixed(1) : 'n/a'} ` +
-            `D=${dVal != null ? dVal.toFixed(1) : 'n/a'}`;
-
         // ═════════════════════════════════════════════════════════════════════
-        // ── CALL — four modes in priority order ───────────────────────────────
+        // 1. CALL REVERSAL (MA-independent, with 3-bar lookback)
+        // K crash 20+pts into <30 from >=50, RSI <45, price near lower BB, BB stable
+        // 3-bar lookback: crash within 3-4 bars, RSI stayed <45, no premature bullish cross
         // ═════════════════════════════════════════════════════════════════════
+        if (!streakBlocked && rsi < 80) {
+            const isTrendConfirmed = (ma6 < ma14 && ma14 < ma50);
+            const maxGap = isTrendConfirmed ? (bps * 2.0) : (bps * 3.0);
 
-        if (!streakBlocked && !rsiCallExhausted && isGreen) {
+            const kCrash = k_1 != null && stochK != null ? k_1 - stochK : null;
+            const kFlashCrash = kCrash != null && kCrash > 20;
+            const kOversold = stochK != null && stochK < 30;
+            const kWasMid = k_1 != null && k_1 >= 50;
+            const rsiDown = rsi < 45;
 
-            const gapBps = currentGap / closePrice * 10000;
+            // Exhaustion / Blowoff filter: Reject if current candle is outlier size or RSI < 10
+            const avgBodySize = history.length >= 5 
+                ? history.slice(0, 5).reduce((sum, h) => sum + Math.abs(h.candle[2] - h.candle[1]), 0) / 5
+                : bps * 5;
+            const isBlowoff = Math.abs(closePrice - openPrice) > avgBodySize * 4;
+            const isExhausted = rsi < 15;
 
-            // ═════════════════════════════════════════════════════════════════════
-            // ── MODE D [REVERSAL] — K Flash Crash Bounce ─────────────────────
-            // Pattern: 5,3,3 stoch K drops 25+ pts from ≥50 to <25 in ONE bar.
-            // Fast stochastic overshoots on a sharp move — next bar snaps back.
-            //
-            // Gate logic (all must pass):
-            //   Gate 1: Bearish MA stack (ma6 < ma14 < ma50) — counter-trend context
-            //   Gate 2: K₋₁ - K₀ > 25 (K crashed 25+ pts in one bar)
-            //   Gate 3: K₀ < 25 (K is now in oversold territory)
-            //   Gate 4: K₋₁ >= 50 (K crashed from mid/high territory — not already oversold)
-            //   Gate 5: RSI₀ < 40 (RSI also confirmed pullback)
-            //   Gate 6: MA14-MA50 gap > -20 bps (not too deeply bearish — deep = no bounce)
-            // Validated WR: 61.5% (8W/5L) on 13 signals across 5 databases
-            // ═════════════════════════════════════════════════════════════════════
-            {
-                // ── Gate 1: Bearish MA stack ──
-                const bearishStack = ma6 < ma14 && ma14 < ma50;
+            // 3-bar lookback for CALL reversal confirmation
+            let lookbackOk = false;
+            if (history.length >= 3 && kFlashCrash && kOversold) {
+                // RSI stayed <45 throughout the 3-bar window
+                const rsiAllLow = rsi < 45 && rsi_1 < 45 && rsi_2 < 45 && rsi_3 < 45;
 
-                // ── Gate 2: K crashed 25+ pts in one bar ──
-                const k_1bar = history.length > 0 ? (history[0].stochastic_k ?? null) : null;
-                const kCrash = k_1bar != null && stochK != null ? k_1bar - stochK : null;
-                const kFlashCrash = kCrash != null && kCrash > 25;
+                // Stoch crash occurred within last 3-4 bars (not stale)
+                const k_4 = history.length >= 4 ? (history[3].stochastic_k ?? k_3) : k_3;
+                const crashRecent = k_1 >= 50 || k_2 >= 50 || k_3 >= 50 || k_4 >= 50;
 
-                // ── Gate 3: K₀ now in oversold territory (<25) ──
-                const kOversold = stochK != null && stochK < 25;
+                // No premature bullish crossover during crash (K didn't cross above D early)
+                const noPrematureCross = !(k_1 > d_1 && k_2 <= d_2);
 
-                // ── Gate 4: K₋₁ was from mid/high territory (>=50) ──
-                const kWasMid = k_1bar != null && k_1bar >= 50;
-
-                // ── Gate 5: RSI₀ < 40 (confirmed pullback) ──
-                const rsiDown = rsi != null && rsi < 40;
-
-                // ── Gate 6: MA14-MA50 gap not too deeply bearish (>-20 bps) ──
-                const maTrendBps = ma50 > 0 ? ((ma14 - ma50) / ma50) * 10000 : null;
-                const maNotDeep = maTrendBps != null && maTrendBps > -20;
-
-                if (bearishStack &&
-                    kFlashCrash &&
-                    kOversold &&
-                    kWasMid &&
-                    rsiDown &&
-                    maNotDeep &&
-                    currentGap <= maxGap) {
-
-                    const candleHour = new Date(candle[0] * 1000).getUTCHours();
-                    signals.direction = 'CALL'; signals.strategyUsed = 'video2';
-                    signals.buy = true; signals.sell = false;
-                    signals.reasons.push(`[FastTrend CALL] K_FLASH_CRASH | Mode: REVERSAL | ` +
-                        `K crash ${kCrash.toFixed(1)}pts (${k_1bar.toFixed(1)}→${stochK.toFixed(1)}) | ` +
-                        `RSI ${rsi.toFixed(1)} (<40) | ` +
-                        `maBps ${maTrendBps.toFixed(1)} (>-20) | Bearish Stack | UTC ${candleHour}`);
-                    _updateStreak(); return true;
-                }
+                lookbackOk = rsiAllLow && crashRecent && noPrematureCross;
             }
 
-            // ── MODE A [EARLY] — fresh cross 0–2c ────────────────────────────
-            if (false) // DISABLED: focus on MODE D REVERSAL only
-            {
-                const isGenuineFreshUp = isFreshCrossUp &&
-                    (history.length < 2 || history[1].ma6 <= history[1].ma14);
-                const isFreshOrVeryRecent = isGenuineFreshUp;
-                const rsiJustCrossed50 = rsiCrossedUp &&
-                    candlesSinceCross50Up >= 1 && candlesSinceCross50Up <= 2;
+            // Relaxed: allow K crash ≥15 or K<20 without full crash, or K was just ≥40
+            const kCrashRelaxed = kCrash != null && kCrash >= 15;
+            const kDeepOversold = stochK != null && stochK < 20;
+            const kWasMidRelaxed = k_1 != null && k_1 >= 40;
+            const lookbackRelaxed = (kCrashRelaxed || kDeepOversold) && rsiDown;
 
-                if (isFreshOrVeryRecent &&
-                    rsiJustCrossed50 &&
-                    stochTriggerUpRelaxed &&
-                    currentGap >= bps * 1.0 &&
-                    gapExpanding &&
-                    harmonicLeadUp &&
-                    ma14AboveMa50) {
-                    signals.direction = 'CALL'; signals.strategyUsed = 'video2';
-                    signals.buy = true; signals.sell = false;
-                    signals.reasons.push(_reason('CALL', 'EARLY', 'PULSE',
-                        rsi, candlesSinceCross50Up, stochK, stochD, gapBps));
-                    _updateStreak(); return true;
-                }
-            }
+            if (!isBlowoff && !isExhausted && currentGap <= maxGap && (
+                (kFlashCrash && kOversold && kWasMid && rsiDown && priceNearLowerBB && bbStable && lookbackOk) ||
+                (kCrashRelaxed && kOversold && kWasMidRelaxed && rsiDown && bbStable && lookbackRelaxed))) {
 
-            // ── MODE B [TREND] — full gate stack ─────────────────────────────
-            if (false) // DISABLED: focus on MODE D REVERSAL only
-            {
-                if (alignedUp &&
-                    crossAboveRecent &&
-                    gapMeetsMin &&
-                    currentGap <= maxGap &&   // Fix 1: 5 bps cap
-                    gapExpanding &&
-                    harmonicLeadUp &&
-                    rsiStrongUp &&
-                    rsiIgnitedUp &&
-                    stochTriggerUp) {
-                    signals.direction = 'CALL'; signals.strategyUsed = 'video2';
-                    signals.buy = true; signals.sell = false;
-                    signals.reasons.push(_reason('CALL', 'TREND',
-                        isFreshCrossUp ? 'PULSE' : 'STEADY',
-                        rsi, candlesSinceCross50Up, stochK, stochD, gapBps));
-                    _updateStreak(); return true;
-                }
-            }
-
-            // ── MODE C [CONTINUATION] — re-entry, no new cross ───────────────
-            if (false) // DISABLED: focus on MODE D REVERSAL only
-            {
-                const rsiPulledBack = history.slice(0, 4).some(h => (h.rsi_5 ?? 50) < 50);
-                const prevRsiVal = history.length > 0 ? (history[0].rsi_5 ?? rsi) : rsi;
-                const rsiPBR = rsiPulledBack && rsi > 50 && rsi > prevRsiVal;
-
-                const stochPulledBack = history.slice(0, 3).some(h => (h.stochastic_k ?? 50) < 50);
-                const stochContinuation = stochPulledBack && stochK > 60 && kCrossedUp && dSlopingUp;
-
-                if (ma6 > ma14 &&
-                    ma50Rising && priceAbove50 &&
-                    rsiPBR &&
-                    stochContinuation &&
-                    rsi > 55 &&   // RSI floor for continuation
-                    gapReExpanding) {
-                    signals.direction = 'CALL'; signals.strategyUsed = 'video2';
-                    signals.buy = true; signals.sell = false;
-                    signals.reasons.push(_reason('CALL', 'CONTINUATION', 'STEADY',
-                        rsi, null, stochK, stochD, gapBps));
-                    _updateStreak(); return true;
-                }
+                const candleHour = new Date(candleTs * 1000).getUTCHours();
+                signals.direction = 'CALL'; signals.strategyUsed = 'video2';
+                signals.buy = true; signals.sell = false;
+                signals.reasons.push('OVERSOLD | Reversal | ' +
+                    'K crash ' + kCrash.toFixed(1) + 'pts (' + k_1.toFixed(1) + '->' + stochK.toFixed(1) + ') | ' +
+                    'RSI ' + rsi.toFixed(1) + ' (<45) | ' +
+                    'Price near lower BB | BB stable | UTC ' + candleHour);
+                _updateStreak(); return true;
             }
         }
 
         // ═════════════════════════════════════════════════════════════════════
-        // ── PUT — four modes in priority order ───────────────────────────────
+        // 2. PUT REVERSAL (MA-independent, with 3-bar lookback)
+        // RSI >70x2 (not 75-80), RSI falling [38,70) not [55,65), velocity >-15
+        // close >= BB mid, K exiting OB, D >=75, K-D <-3
+        // 3-bar lookback: RSI >70 for 2-3 bars, Stoch overbought, no early bullish cross
         // ═════════════════════════════════════════════════════════════════════
-
         if (!streakBlocked && isRed) {
+            const isTrendConfirmed = (ma6 > ma14 && ma14 > ma50);
+            const maxGap = isTrendConfirmed ? (bps * 2.0) : (bps * 3.0);
 
-            const gapBps = currentGap / closePrice * 10000;
+            const rsiWasOverbought1 = rsi_1 != null && rsi_1 > 70;
+            const rsiWasOverbought2 = rsi_2 != null && rsi_2 > 70;
+            const notFastDrop = rsi_1 == null || !(rsi_1 >= 75 && rsi_1 < 80);
+            const rsiInReversal = rsiFalling && rsi >= 38 && rsi < 70 &&
+                !(rsi >= 55 && rsi < 65) && rsiVelocity > -15;
+            const kExitingOB = k_1 != null && k_1 > 65 && kFalling &&
+                stochK != null && stochK >= 55 && stochK < 80;
+            const dLaggingHigh = stochD != null && stochD >= 75;
+            const kdSpread = stochK != null && stochD != null ? stochK - stochD : null;
+            
+            // 1-bar tolerance for crossover: either currently cross or was crossed last bar
+            const kBelowD = kdSpread != null && kdSpread < -1; // current bar
+            const kWasBelowD = (k_1 != null && d_1 != null && k_1 < d_1); // previous bar
+            const stochCrossValid = kBelowD || kWasBelowD;
 
-            // ── MODE D [REVERSAL] — Deterministic Late Overbought Pattern ──────
-            // Data source: 41-signal candle-replay analysis (pattern_test_results.csv)
-            //
-            // Gate logic (all must pass):
-            //   Gate 1: RSI₋₂ > 70 AND RSI₋₁ > 70       — overbought baseline (2 bars)
-            //   Gate 1: RSI₋₁ NOT in [75,80)             — fast-drop zone = 0% WR (7L/0W);
-            //           RSI falls fast from ~84→77 but MA still strongly bullish — snaps back
-            //   Gate 2: RSI₀ falling AND in [38,70)       — confirming reversal in progress
-            //   Gate 2: RSI₀ NOT in [55,65)               — extended death zone (0-36% WR)
-            //   Gate 2: RSI velocity > -12 pts            — slow fall = 68.4% WR; fast fall = 49-52% WR
-            //   Gate 2: Close >= BB midline               — price still in upper half of band
-            //   Gate 3: K₋₁ > 65, K₀ in [55,80) falling — stoch exiting overbought
-            //   Gate 4: D₀ >= 80                          — D lagging high (67% WR vs 21% WR)
-            //   Gate 5: Bullish MA stack (ma6>ma14>ma50)  — reversal from peak of uptrend
-            //   Gate 6: K < D AND K-D spread < -3         — confirmed cross, not whipsaw
-            //   Gate 7: MA14-MA50 gap < 20 bps            — not a strong uptrend;
-            //           MA gap ≥20 bps = 25-37% WR (uptrend resists reversal)
-            // Validated WR: 68.4% (26W/12L) on 38 signals (v2 stoch combo analysis, 5 DBs)
-            // ═════════════════════════════════════════════════════════════════════
-            {
-                const rsi_1bar = history.length > 0 ? (history[0].rsi_5 ?? null) : null;
-                const rsi_2bar = history.length > 1 ? (history[1].rsi_5 ?? null) : null;
-                const bb = indicators.bollingerKT;
+            // Exhaustion filter for PUT
+            const isBlowoff = history.length >= 5 && Math.abs(closePrice - openPrice) > (history.slice(0, 5).reduce((sum, h) => sum + Math.abs(h.candle[2] - h.candle[1]), 0) / 5) * 4;
+            const isExhausted = rsi > 85;
 
-                // ── Gate 1: Overbought baseline ──
-                // Floor raised 65→70: RSI₋₁ 65-70 = 42% WR (n=24) barely-overbought = low conviction
-                // RSI₋₁ 70-75 = 74% WR (n=34) — true overbought entry
-                const rsiWasOverbought1 = rsi_1bar != null && rsi_1bar > 70;
-                const rsiWasOverbought2 = rsi_2bar != null && rsi_2bar > 70;
-                // EXCLUDE RSI₋₁ [75,80): fast-drop zone = 0% WR; RSI₋₂ avg 84, MA gap avg 37 bps = snap-back
-                const notFastDrop = rsi_1bar == null || !(rsi_1bar >= 75 && rsi_1bar < 80);
+            // 3-bar lookback for PUT reversal confirmation
+            let lookbackOk = false;
+            if (history.length >= 3 && rsiWasOverbought1 && rsiWasOverbought2) {
+                // RSI stayed >70 for at least prior 2-3 bars
+                const rsiAllHigh = rsi_1 > 70 && rsi_2 > 70 && rsi_3 > 70;
 
-                // ── Gate 2: RSI falling into confirmation zone, exclude [55,65) ──
-                const prevRsiVal = rsi_1bar ?? rsi;
-                const rsiFalling = rsi < prevRsiVal;
-                const rsiVelocity = rsi - prevRsiVal;  // pts change (negative when falling)
-                // EXCLUDE RSI₀ [55,65): extended death zone
-                //   RSI₀ 60-65 = 0% WR (8L/0W) — stoch cross but price hasn't turned
-                //   RSI₀ 55-60 = 36% WR (n=11) — reversal premature, added to exclusion
-                //   RSI₀ 50-55 = 80% WR (n=20) — sweet spot
-                const rsiInReversal = rsiFalling && rsi >= 38 && rsi < 70 &&
-                    !(rsi >= 55 && rsi < 65);
-                // RSI velocity gate: slow fall < 12 pts = 68.4% WR (n=38)
-                // Fast fall ≥12 pts = panic/chop = 49-52% WR (v2 stoch combo analysis)
-                const slowFall = rsiVelocity > -12;
-                // Close above BB midline: price still in upper half confirms reversal context
-                const closeAboveMid = bb != null && bb.middle != null && closePrice >= bb.middle;
+                // Stochastic remained overbought the whole time before exit
+                const stochAllOB = k_1 > 65 && k_2 > 65 && k_3 > 65;
 
-                // ── Gate 3: Stoch exiting overbought ──
-                const k_1bar = history.length > 0 ? (history[0].stochastic_k ?? null) : null;
-                const stochWasOverbought = k_1bar != null && k_1bar > 65;
-                const kFalling = stochK != null && k_1bar != null && stochK < k_1bar;
-                const kExitingOB = stochWasOverbought && kFalling && stochK != null && stochK >= 55 && stochK < 80;
+                // No early bullish Stoch crossover during overbought phase
+                const noEarlyBullishCross = !(k_1 < d_1 && k_2 >= d_2);
 
-                // ── Gate 4: D still >= 80 (D>=80 = 67% WR; D<80 = 21% WR) ──
-                const dLaggingHigh = stochD != null && stochD >= 80;
-
-                // ── Gate 5: Bullish MA stack ──
-                const bullishStack = ma6 > ma14 && ma14 > ma50;
-
-                // ── Gate 6: K < D AND spread ≤ -3 (confirmed cross, not a whipsaw) ──
-                const kdSpread = stochK != null && stochD != null ? stochK - stochD : null;
-                const kBelowD = kdSpread != null && kdSpread < -3;
-
-                // ── Gate 7: MA14-MA50 gap < 20 bps (not a strong uptrend) ──
-                // MA gap ≥20 bps = bull trend too strong to reverse: 25-37% WR
-                const maTrendBps = ma50 > 0 ? ((ma14 - ma50) / ma50) * 10000 : 999;
-                const maTrendWeak = maTrendBps < 20;
-
-                if (rsiWasOverbought1 &&
-                    rsiWasOverbought2 &&
-                    notFastDrop &&
-                    rsiFalling &&
-                    rsiInReversal &&
-                    slowFall &&
-                    closeAboveMid &&
-                    kExitingOB &&
-                    dLaggingHigh &&
-                    bullishStack &&
-                    kBelowD &&
-                    maTrendWeak &&
-                    currentGap <= maxGap) {
-
-                    const candleHour = new Date(candle[0] * 1000).getUTCHours();
-                    signals.direction = 'PUT'; signals.strategyUsed = 'video2';
-                    signals.sell = true; signals.buy = false;
-                    signals.reasons.push(`[FastTrend PUT] LATE_OVERBOUGHT | Mode: REVERSAL | ` +
-                        `RSI ${rsi.toFixed(1)} (↓ from ${prevRsiVal.toFixed(1)}, vel=${rsiVelocity.toFixed(1)}) | ` +
-                        `K ${stochK.toFixed(1)} (55-80, ↓ from ${k_1bar?.toFixed(1)}) | ` +
-                        `D ${stochD.toFixed(1)} (≥80) | K-D ${kdSpread.toFixed(1)} (<-3) | ` +
-                        `MA gap ${maTrendBps.toFixed(1)} bps (<20) | close vs BBmid: ${closeAboveMid} | ` +
-                        `RSI₋₁ ${rsi_1bar?.toFixed(1)} (not 75-80) | UTC ${candleHour}`);
-                    _updateStreak(); return true;
-                }
+                lookbackOk = rsiAllHigh && stochAllOB && noEarlyBullishCross;
             }
 
-            // ── MODE A [EARLY] — fresh cross 0–2c ────────────────────────────
-            if (false) // DISABLED: focus on MODE D REVERSAL only
-            {
-                const isGenuineFreshDown = isFreshCrossDown &&
-                    (history.length < 2 || history[1].ma6 >= history[1].ma14);
-                const isFreshOrVeryRecent = isGenuineFreshDown;
-                const rsiJustCrossed50 = rsiCrossedDown &&
-                    candlesSinceCross50Down >= 1 && candlesSinceCross50Down <= 2;
+            // Relaxed: allow RSI falling from >65 (not just >70), or K exiting from >60
+            const rsiWasHigh1 = rsi_1 != null && rsi_1 > 65;
+            const rsiWasHigh2 = rsi_2 != null && rsi_2 > 65;
+            const rsiInReversalRelaxed = rsiFalling && rsi >= 35 && rsi < 70 && rsiVelocity > -20;
+            const kExitingOBRelaxed = k_1 != null && k_1 > 60 && kFalling &&
+                stochK != null && stochK >= 50 && stochK < 80;
+            const dLaggingRelaxed = stochD != null && stochD >= 70;
+            const kdSpreadRelaxed = kdSpread != null && kdSpread < -1;
 
-                if (isFreshOrVeryRecent &&
-                    rsiJustCrossed50 &&
-                    stochTriggerDownRelaxed &&
-                    currentGap >= bps * 1.0 &&
-                    gapExpanding &&
-                    harmonicLeadDown &&
-                    ma14BelowMa50) {
-                    signals.direction = 'PUT'; signals.strategyUsed = 'video2';
-                    signals.sell = true; signals.buy = false;
-                    signals.reasons.push(_reason('PUT', 'EARLY', 'PULSE',
-                        rsi, candlesSinceCross50Down, stochK, stochD, gapBps));
-                    _updateStreak(); return true;
-                }
+            if (!isBlowoff && !isExhausted && currentGap <= maxGap && (
+                (rsiWasOverbought1 && rsiWasOverbought2 && notFastDrop &&
+                rsiInReversal && closeAboveMid &&
+                kExitingOB && dLaggingHigh && stochCrossValid &&
+                lookbackOk) ||
+                (rsiWasHigh1 && rsiWasHigh2 && rsiInReversalRelaxed &&
+                    closeAboveMid && kExitingOBRelaxed && dLaggingRelaxed && kdSpreadRelaxed))) {
+
+                const candleHour = new Date(candleTs * 1000).getUTCHours();
+                signals.direction = 'PUT'; signals.strategyUsed = 'video2';
+                signals.sell = true; signals.buy = false;
+                signals.reasons.push('OVERBOUGHT | Reversal | ' +
+                    'RSI ' + rsi.toFixed(1) + ' (from ' + rsi_1.toFixed(1) + ', vel=' + rsiVelocity.toFixed(1) + ') | ' +
+                    'K ' + stochK.toFixed(1) + ' (55-80, from ' + k_1.toFixed(1) + ') | ' +
+                    'D ' + stochD.toFixed(1) + ' (>=75) | K-D ' + kdSpread.toFixed(1) + ' (<-3) | ' +
+                    'Price >= BB mid | UTC ' + candleHour);
+                _updateStreak(); return true;
+            }
+        }
+
+        // ═════════════════════════════════════════════════════════════════════
+        // 3. CALL CONTINUATION (pre-cross with 3-bar lookback)
+        // MA6 < MA14 converging up, RSI >50 rising, Stoch >30 rising
+        // 3-bar lookback: MA6 stays below MA14, gap shrinks, Stoch dips but recovers >30
+        // ═════════════════════════════════════════════════════════════════════
+        if (!streakBlocked && isGreen) {
+            const ma6BelowMa14 = ma6 < ma14;
+            const ma6ConvergingUp = ma6BelowMa14 && ma6Rising;
+            const rsiAbove50Rising = rsi > 50 && rsiRising;
+            const stochRisingFromOversold = stochK != null && stochK > 30 && kRising;
+
+            // 3-bar lookback: MA gap shrinking, Stoch stays >30, no bearish crossover
+            let lookbackOk = false;
+            if (history.length >= 3 && ma6BelowMa14) {
+                const gap0 = Math.abs(ma6 - ma14);
+                const gap3 = Math.abs((history[2].ma6 ?? ma6) - (history[2].ma14 ?? ma14));
+                const gapShrinking = gap0 < gap3;
+
+                const ma14_3 = history[2].ma14 ?? ma14;
+                const ma14FlatOrRising = ma14 >= ma14_3;
+
+                const stochAbove30 = stochK > 30 && k_1 > 30 && k_2 > 30 && k_3 > 30;
+                const stochRecovering = stochK > k_2;
+
+                const noBearishCross = !(k_1 > d_1 && stochK <= stochD);
+
+                lookbackOk = gapShrinking && ma14FlatOrRising && stochAbove30 && stochRecovering && noBearishCross;
             }
 
-            // ── MODE B [TREND] — full gate stack ─────────────────────────────
-            if (false) // DISABLED: focus on MODE D REVERSAL only
-            {
-                if (alignedDown &&
-                    crossBelowRecent &&
-                    gapMeetsMin &&
-                    currentGap <= maxGap &&   // Fix 1: 5 bps cap
-                    gapExpanding &&
-                    harmonicLeadDown &&
-                    rsiStrongDown &&
-                    rsiIgnitedDown &&
-                    stochTriggerDown) {
-                    signals.direction = 'PUT'; signals.strategyUsed = 'video2';
-                    signals.sell = true; signals.buy = false;
-                    signals.reasons.push(_reason('PUT', 'TREND',
-                        isFreshCrossDown ? 'PULSE' : 'STEADY',
-                        rsi, candlesSinceCross50Down, stochK, stochD, gapBps));
-                    _updateStreak(); return true;
-                }
+            // Relaxed: MA convergence with RSI bullish and Stoch rising
+            const ma6ConvergingUpRelaxed = ma6BelowMa14 && ma6Rising;
+            const rsiBullish = rsi > 50;
+            const stochRising = stochK != null && stochK > 25 && kRising;
+            const lookbackRelaxed = history.length >= 2 && ma6BelowMa14 && gap0 < Math.abs((history[0].ma6 ?? ma6) - (history[0].ma14 ?? ma14));
+
+            if ((ma6ConvergingUp && rsiAbove50Rising && stochRisingFromOversold &&
+                bbStable && lookbackOk && currentGap <= maxGap) ||
+                (ma6ConvergingUpRelaxed && rsiBullish && stochRising &&
+                    lookbackRelaxed && currentGap <= maxGap * 2)) {
+
+                const candleHour = new Date(candleTs * 1000).getUTCHours();
+                signals.direction = 'CALL'; signals.strategyUsed = 'video2';
+                signals.buy = true; signals.sell = false;
+                signals.reasons.push('UP TREND | ' +
+                    'MA6 ' + ma6.toFixed(4) + ' conv up to MA14 ' + ma14.toFixed(4) + ' | ' +
+                    'RSI ' + rsi.toFixed(1) + ' (>50 rising) | ' +
+                    'Stoch K ' + stochK.toFixed(1) + ' (>30 rising, recovered) | ' +
+                    'BB stable | UTC ' + candleHour);
+                _updateStreak(); return true;
+            }
+        }
+
+        // ═════════════════════════════════════════════════════════════════════
+        // 4. PUT CONTINUATION (pre-cross with 3-bar lookback)
+        // MA6 > MA14 converging down, price < MA14, RSI falling from >50, Stoch <70 falling
+        // 3-bar lookback: MA6 stays above MA14, gap shrinks, Stoch pops but resumes <70
+        // ═════════════════════════════════════════════════════════════════════
+        if (!streakBlocked && isRed) {
+            const ma6AboveMa14 = ma6 > ma14;
+            const ma6ConvergingDown = ma6AboveMa14 && ma6Falling;
+            const priceBelowMa14 = closePrice < ma14;
+            const rsiFallingFrom50 = rsi_1 > 50 && rsiFalling && rsi < 55;
+            const stochFallingFromOverbought = stochK != null && stochK < 70 && kFalling;
+
+            // 3-bar lookback: MA gap shrinking, Stoch stays <70, no bullish crossover
+            let lookbackOk = false;
+            if (history.length >= 3 && ma6AboveMa14) {
+                const gap0 = Math.abs(ma6 - ma14);
+                const gap3 = Math.abs((history[2].ma6 ?? ma6) - (history[2].ma14 ?? ma14));
+                const gapShrinking = gap0 < gap3;
+
+                const ma14_3 = history[2].ma14 ?? ma14;
+                const ma14FlatOrFalling = ma14 <= ma14_3;
+
+                const stochBelow70 = stochK < 70 && k_1 < 70 && k_2 < 70 && k_3 < 70;
+                const stochResumingDown = stochK < k_2;
+
+                const noBullishCross = !(k_1 < d_1 && stochK >= stochD);
+
+                lookbackOk = gapShrinking && ma14FlatOrFalling && stochBelow70 && stochResumingDown && noBullishCross;
             }
 
-            // ── MODE C [CONTINUATION] — re-entry, no new cross ───────────────
-            if (false) // DISABLED: focus on MODE D REVERSAL only
-            {
-                const rsiPulledBack = history.slice(0, 4).some(h => (h.rsi_5 ?? 50) > 50);
-                const prevRsiVal = history.length > 0 ? (history[0].rsi_5 ?? rsi) : rsi;
-                const rsiPBR = rsiPulledBack && rsi < 50 && rsi < prevRsiVal;
+            // Relaxed: MA divergence with RSI bearish and Stoch falling
+            const ma6ConvergingDownRelaxed = ma6AboveMa14 && ma6Falling;
+            const rsiBearish = rsi < 55 && rsiFalling;
+            const stochFalling = stochK != null && stochK < 75 && kFalling;
+            const gap0 = Math.abs(ma6 - ma14);
+            const lookbackRelaxed = history.length >= 2 && ma6AboveMa14 && gap0 < Math.abs((history[0].ma6 ?? ma6) - (history[0].ma14 ?? ma14));
 
-                const stochPulledBack = history.slice(0, 3).some(h => (h.stochastic_k ?? 50) > 50);
-                const stochContinuation = stochPulledBack && stochK < 40 && kCrossedDown && dSlopingDown;
+            if ((ma6ConvergingDown && priceBelowMa14 && rsiFallingFrom50 &&
+                stochFallingFromOverbought && bbStable && lookbackOk &&
+                currentGap <= maxGap) ||
+                (ma6ConvergingDownRelaxed && rsiBearish && stochFalling &&
+                    lookbackRelaxed && currentGap <= maxGap * 2)) {
 
-                if (ma6 < ma14 &&
-                    ma50Falling && priceBelow50 &&
-                    rsiPBR &&
-                    stochContinuation &&
-                    rsi < 45 &&   // RSI ceiling for continuation
-                    gapReExpanding) {
-                    signals.direction = 'PUT'; signals.strategyUsed = 'video2';
-                    signals.sell = true; signals.buy = false;
-                    signals.reasons.push(_reason('PUT', 'CONTINUATION', 'STEADY',
-                        rsi, null, stochK, stochD, gapBps));
-                    _updateStreak(); return true;
-                }
+                const candleHour = new Date(candleTs * 1000).getUTCHours();
+                signals.direction = 'PUT'; signals.strategyUsed = 'video2';
+                signals.sell = true; signals.buy = false;
+                signals.reasons.push('DOWN TREND | ' +
+                    'MA6 ' + ma6.toFixed(4) + ' conv down to MA14 ' + ma14.toFixed(4) + ' | ' +
+                    'Price ' + closePrice.toFixed(4) + ' < MA14 | ' +
+                    'RSI ' + rsi.toFixed(1) + ' (falling from ' + rsi_1.toFixed(1) + ') | ' +
+                    'Stoch K ' + stochK.toFixed(1) + ' (<70 falling, resumed) | ' +
+                    'BB stable | UTC ' + candleHour);
+                _updateStreak(); return true;
             }
         }
 
@@ -1280,8 +1042,7 @@ class Indicators {
         if (!indicators.currentPrice) return signals;
 
         const fired =
-            indicators.ma6 != null && indicators.ma50 != null &&
-                indicators.ma14 != null && indicators.rsi_5 != null && indicators.lastCandle
+            indicators.ma6 != null && indicators.ma14 != null && indicators.rsi_5 != null && indicators.lastCandle
                 ? this._generateSignalsKTVideo2(indicators, settings, signals)
                 : false;
 

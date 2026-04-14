@@ -156,7 +156,7 @@ const COMMANDS = {
   outcomes: {
     desc: 'Signal validation history (entry/exit price, WIN/LOSS per signal)',
     usage: 'po outcomes [--asset EURUSD_otc] [--limit 50]',
-    run: async ({ flags }) => print(await assets.getQualificationOutcomes(flags.asset || null, num(flags.limit, 50))),
+    run: async ({ flags }) => print(await assets.getSignalOutcomes(flags.asset || null, num(flags.limit, 50))),
   },
 
   'asset-trades': {
@@ -166,7 +166,7 @@ const COMMANDS = {
   },
 
   'validation-stats': {
-    desc: 'Aggregate win rate and P/L from qualification_outcomes',
+    desc: 'Aggregate win rate and P/L from signal_outcomes',
     usage: 'po validation-stats [--asset EURUSD_otc]',
     run: async ({ flags }) => print(await validation.getValidationStats(flags.asset || null)),
   },

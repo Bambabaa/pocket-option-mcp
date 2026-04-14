@@ -26,14 +26,14 @@ export function registerAssetTools(server) {
   );
 
   server.tool(
-    'po_qualification_outcomes',
-    'Get the signal validation history used to compute qualification streaks.',
+    'po_signal_outcomes',
+    'Get signal validation history — entry/exit price, WIN/LOSS results from signal_outcomes table.',
     {
       asset: z.string().optional().describe('Filter by asset (omit for all)'),
       limit: z.coerce.number().min(1).max(500).optional().default(50),
     },
     async ({ asset, limit }) => {
-      try { return jsonResult(core.getQualificationOutcomes(asset || null, limit)); }
+      try { return jsonResult(core.getSignalOutcomes(asset || null, limit)); }
       catch (err) { return jsonResult({ success: false, error: err.message }, true); }
     }
   );
