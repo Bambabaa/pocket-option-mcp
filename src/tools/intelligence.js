@@ -48,4 +48,16 @@ export function registerIntelligenceTools(server) {
       catch (err) { return jsonResult({ success: false, error: err.message }, true); }
     }
   );
+
+  server.tool(
+    'po_asset_bias',
+    'Analyse historical win rate per asset per direction (CALL vs PUT). Shows which direction each asset historically wins in, flags flat/pegged assets as BLOCK_RECOMMENDED, and identifies assets to avoid entirely. Use this before po_recommend to know which direction to filter per asset, or before po_block_asset to see which assets need blocking.',
+    {
+      min_trades: z.coerce.number().int().min(1).optional().default(3).describe('Minimum trades required to include an asset (default 3)'),
+    },
+    async ({ min_trades }) => {
+      try { return jsonResult(core.assetBias(min_trades ?? 3)); }
+      catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    }
+  );
 }

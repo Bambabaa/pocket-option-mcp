@@ -909,8 +909,8 @@ class Indicators {
 
             // 3-bar lookback: MA gap shrinking, Stoch stays >30, no bearish crossover
             let lookbackOk = false;
+            let gap0 = Math.abs(ma6 - ma14);
             if (history.length >= 3 && ma6BelowMa14) {
-                const gap0 = Math.abs(ma6 - ma14);
                 const gap3 = Math.abs((history[2].ma6 ?? ma6) - (history[2].ma14 ?? ma14));
                 const gapShrinking = gap0 < gap3;
 
@@ -962,8 +962,8 @@ class Indicators {
 
             // 3-bar lookback: MA gap shrinking, Stoch stays <70, no bullish crossover
             let lookbackOk = false;
+            let gap0 = Math.abs(ma6 - ma14);
             if (history.length >= 3 && ma6AboveMa14) {
-                const gap0 = Math.abs(ma6 - ma14);
                 const gap3 = Math.abs((history[2].ma6 ?? ma6) - (history[2].ma14 ?? ma14));
                 const gapShrinking = gap0 < gap3;
 
@@ -982,7 +982,6 @@ class Indicators {
             const ma6ConvergingDownRelaxed = ma6AboveMa14 && ma6Falling;
             const rsiBearish = rsi < 55 && rsiFalling;
             const stochFalling = stochK != null && stochK < 75 && kFalling;
-            const gap0 = Math.abs(ma6 - ma14);
             const lookbackRelaxed = history.length >= 2 && ma6AboveMa14 && gap0 < Math.abs((history[0].ma6 ?? ma6) - (history[0].ma14 ?? ma14));
 
             if ((ma6ConvergingDown && priceBelowMa14 && rsiFallingFrom50 &&

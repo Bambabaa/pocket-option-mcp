@@ -17,7 +17,7 @@ const server = new McpServer(
     description: 'MCP server for Pocket Option trading bot — read live data, enqueue trades, analyze performance',
   },
   {
-    instructions: `Pocket Option MCP — 38 tools for reading, analyzing, and controlling a live Pocket Option trading bot.
+    instructions: `Pocket Option MCP — 39 tools for reading, analyzing, and controlling a live Pocket Option trading bot.
 
 DATABASE MODEL:
 - Bot DB (readonly): candles, prices, indicators, signals, orders_queue, trades_ordered, qualification data
@@ -80,6 +80,7 @@ Multi-agent system (autonomous trading pipeline):
 - po_drawdown_check → session safety gate: today P/L, consecutive losses, bot liveness (for Executor agent)
 - po_session_log_write → agent writes a decision to the audit trail (scanner/analyst/executor/orchestrator)
 - po_session_log_read → read the full agent decision history — what was scanned, approved, placed, blocked
+- po_asset_bias → per-asset CALL vs PUT win rate history — shows preferred direction, BLOCK_RECOMMENDED for flat assets, AVOID for consistent losers
 - po_block_asset → block an asset from being traded (writes to asset_controls; bot checks before every order)
 - po_unblock_asset → remove an active block so the bot can trade that asset again
 - po_asset_volatility → rank all assets by BB width bps — find flat/pegged assets to block, identify best setups

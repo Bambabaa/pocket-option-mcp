@@ -15,6 +15,26 @@
 
 import { all, get } from '../connection.js';
 
+// ─── Pattern label helpers ────────────────────────────────────────────────────
+// Maps the exact reasons strings the bot writes to signal pattern names.
+// reasons field examples:
+//   CALL Reversal:     "OVERSOLD | Reversal | K crash ..."
+//   PUT Reversal:      "OVERBOUGHT | Reversal | RSI ..."
+//   CALL Continuation: "UP TREND | MA6 ... conv up ..."
+//   PUT Continuation:  "DOWN TREND | MA6 ... conv down ..."
+
+function parsePatternFromReasons(reasons, direction) {
+    if (!reasons) return 'UNKNOWN';
+    // reasons is stored as JSON array string e.g. '["OVERSOLD | Reversal | ..."]'
+    let text = reasons;
+    try { const parsed = JSON.parse(reasons); text = Array.isArray(parsed) ? parsed.join(' ') : String(parsed); } catch { /* use raw */ }
+    if (text.includes('OVERSOLD') && text.includes('Reversal'))   return 'CALL_REVERSAL';
+    if (text.includes('OVERBOUGHT') && text.includes('Reversal')) return 'PUT_REVERSAL';
+    if (text.includes('UP TREND'))                                 return 'CALL_CONTINUATION';
+    if (text.includes('DOWN TREND'))                               return 'PUT_CONTINUATION';
+    return direction === 'CALL' ? 'CALL_OTHER' : 'PUT_OTHER';
+}
+
 // ─── MODE D Gate Definitions (from indicators.js, matching test_patterns.js) ─
 
 const CALL_GATES = {
@@ -220,6 +240,7 @@ export async function replayCandles(asset = null, params = {}) {
             total_pl: putValid.reduce((a, s) => a + (s.profitLoss || 0), 0),
             gate_rejections: putRejections,
         },
+        signals_all: signals, // Full signal list for findEdge / optimizeGates
         signals_detail: signals.slice(0, 50), // First 50 for inspection
     };
 }
@@ -230,13 +251,8 @@ export async function findEdge() {
     const replay = await replayCandles();
     if (!replay.success) return replay;
 
-    const allValid = [
-        ...replay.call.validated || [],
-        ...replay.put.validated || [],
-    ];
-
-    // Re-fetch from signals array since replayCandles doesn't return validated separately
-    const allSignals = replay.signals_detail || [];
+    // Use full signal list — signals_all contains every signal, not just first 50
+    const allSignals = replay.signals_all || replay.signals_detail || [];
     const validSignals = allSignals.filter(s => s.result != null);
 
     if (validSignals.length < 5) {
@@ -338,34 +354,147 @@ export async function findEdge() {
     // ── Analysis 5: By asset ──
     const assetAnalysis = {};
     for (const s of validSignals) {
-        if (!assetAnalysis[s.asset]) assetAnalysis[s.asset] = { trades: 0, wins: 0, total_pl: 0 };
+        if (!assetAnalysis[s.asset]) assetAnalysis[s.asset] = { trades: 0, wins: 0, total_pl: 0, call_w: 0, call_l: 0, put_w: 0, put_l: 0 };
         assetAnalysis[s.asset].trades++;
         if (s.result === 'WIN') assetAnalysis[s.asset].wins++;
         assetAnalysis[s.asset].total_pl += (s.profitLoss || 0);
+        if (s.direction === 'CALL') {
+            if (s.result === 'WIN') assetAnalysis[s.asset].call_w++;
+            else assetAnalysis[s.asset].call_l++;
+        } else {
+            if (s.result === 'WIN') assetAnalysis[s.asset].put_w++;
+            else assetAnalysis[s.asset].put_l++;
+        }
     }
 
     const assetData = Object.entries(assetAnalysis)
-        .map(([asset, data]) => ({
-            asset,
-            trades: data.trades,
-            wins: data.wins,
-            losses: data.trades - data.wins,
-            win_rate: ((data.wins / data.trades) * 100).toFixed(1) + '%',
-            total_pl: Math.round(data.total_pl * 100) / 100,
-        }))
-        .sort((a, b) => b.win_rate.localeCompare(a.win_rate));
+        .map(([asset, data]) => {
+            const callTotal = data.call_w + data.call_l;
+            const putTotal = data.put_w + data.put_l;
+            const callWR = callTotal > 0 ? (data.call_w / callTotal) * 100 : null;
+            const putWR  = putTotal  > 0 ? (data.put_w  / putTotal)  * 100 : null;
+            let preferred_direction = null;
+            if (callWR !== null && putWR !== null) preferred_direction = callWR >= putWR ? 'CALL' : 'PUT';
+            else if (callWR !== null) preferred_direction = 'CALL';
+            else if (putWR  !== null) preferred_direction = 'PUT';
+            return {
+                asset,
+                trades: data.trades,
+                wins: data.wins,
+                losses: data.trades - data.wins,
+                win_rate: ((data.wins / data.trades) * 100).toFixed(1) + '%',
+                total_pl: Math.round(data.total_pl * 100) / 100,
+                call: callTotal > 0 ? { w: data.call_w, l: data.call_l, wr: callWR.toFixed(1) + '%' } : null,
+                put:  putTotal  > 0 ? { w: data.put_w,  l: data.put_l,  wr: putWR.toFixed(1)  + '%' } : null,
+                preferred_direction,
+            };
+        })
+        .sort((a, b) => parseFloat(b.win_rate) - parseFloat(a.win_rate));
 
+    // ── Analysis 6: BB width buckets ──
+    const bbBuckets = [
+        { label: 'flat (<2 bps)',     min: 0,  max: 2  },
+        { label: 'weak (2-5 bps)',    min: 2,  max: 5  },
+        { label: 'marginal (5-10)',   min: 5,  max: 10 },
+        { label: 'ok (10-20)',        min: 10, max: 20 },
+        { label: 'good (20+ bps)',    min: 20, max: Infinity },
+    ];
+
+    // Compute bb_bps per signal from raw indicator values stored in signal
+    const bbAnalysis = bbBuckets.map(b => {
+        const bucket = validSignals.filter(s => {
+            if (s.bb_upper == null || s.bb_lower == null || s.bb_middle == null || s.bb_middle === 0) return false;
+            const bps = (s.bb_upper - s.bb_lower) / s.bb_middle * 10000;
+            return bps >= b.min && bps < b.max;
+        });
+        const wins = bucket.filter(s => s.result === 'WIN').length;
+        return {
+            bb_range: b.label,
+            trades: bucket.length,
+            wins,
+            losses: bucket.length - wins,
+            win_rate: bucket.length > 0 ? ((wins / bucket.length) * 100).toFixed(1) + '%' : 'N/A',
+        };
+    }).filter(b => b.trades > 0);
+
+    // ── Analysis 7: By pattern — all 4 patterns from DB signals table ──────────
+    // The replay engine only knows CALL (K_FLASH_CRASH) and PUT (LATE_OVERBOUGHT).
+    // The bot also fires CALL_CONTINUATION (UP TREND) and PUT_CONTINUATION (DOWN TREND).
+    // Read trades_ordered joined to signals to get pattern labels from reasons field,
+    // then cross with replay results for gate-level analysis.
+
+    // DB pattern breakdown: join trades_ordered → signals on asset + timestamp proximity
+    const dbPatternRows = await all(
+        `SELECT t.direction, t.result, t.profit_loss, s.reasons
+         FROM trades_ordered t
+         JOIN signals s ON s.asset = t.asset
+           AND s.timestamp >= t.entry_timestamp - 120
+           AND s.timestamp <= t.entry_timestamp + 120
+         WHERE t.result IN ('WIN','LOSS')
+         ORDER BY t.entry_timestamp DESC`,
+        []
+    );
+
+    const patternMap = {};
+    for (const r of dbPatternRows) {
+        const label = parsePatternFromReasons(r.reasons, r.direction);
+        if (!patternMap[label]) patternMap[label] = { wins: 0, losses: 0, pl: 0 };
+        if (r.result === 'WIN') patternMap[label].wins++;
+        else patternMap[label].losses++;
+        patternMap[label].pl += (r.profit_loss || 0);
+    }
+
+    // Also tag replay signals by gate set name
+    const replayPatternMap = {};
+    for (const s of validSignals) {
+        // replay signals carry patternName from CALL_GATES / PUT_GATES
+        const label = s.direction === 'CALL' ? 'CALL_REVERSAL' : 'PUT_REVERSAL';
+        if (!replayPatternMap[label]) replayPatternMap[label] = { wins: 0, losses: 0, pl: 0 };
+        if (s.result === 'WIN') replayPatternMap[label].wins++;
+        else replayPatternMap[label].losses++;
+        replayPatternMap[label].pl += (s.profitLoss || 0);
+    }
+
+    // Merge DB patterns (all 4) with replay results (2 gate sets)
+    const allPatternKeys = new Set([
+        'CALL_REVERSAL', 'PUT_REVERSAL', 'CALL_CONTINUATION', 'PUT_CONTINUATION',
+        ...Object.keys(patternMap), ...Object.keys(replayPatternMap),
+    ]);
+
+    const patternData = Array.from(allPatternKeys).map(pattern => {
+        const db = patternMap[pattern] || null;
+        const rp = replayPatternMap[pattern] || null;
+        // Prefer DB data (real executed trades); fall back to replay if no DB data
+        const src = db || rp;
+        if (!src) return null;
+        const total = src.wins + src.losses;
+        return {
+            pattern,
+            type: pattern.includes('REVERSAL') ? 'Reversal' : 'Continuation',
+            direction: pattern.startsWith('CALL') ? 'CALL' : 'PUT',
+            source: db ? 'live_trades' : 'replay',
+            trades: total,
+            wins: src.wins,
+            losses: src.losses,
+            win_rate: total > 0 ? ((src.wins / total) * 100).toFixed(1) + '%' : 'N/A',
+            total_pl: parseFloat(src.pl.toFixed(2)),
+        };
+    }).filter(Boolean).sort((a, b) => b.trades - a.trades);
+
+    const totalWins = validSignals.filter(s => s.result === 'WIN').length;
     return {
         success: true,
         total_signals: validSignals.length,
-        wins: validSignals.filter(s => s.result === 'WIN').length,
-        losses: validSignals.filter(s => s.result === 'LOSS').length,
-        overall_wr: ((validSignals.filter(s => s.result === 'WIN').length / validSignals.length) * 100).toFixed(1) + '%',
+        wins: totalWins,
+        losses: validSignals.length - totalWins,
+        overall_wr: ((totalWins / validSignals.length) * 100).toFixed(1) + '%',
         analyses: {
             by_rsi: rsiAnalysis,
             by_stochastic_k: stochAnalysis,
             by_ma_gap: maGapAnalysis,
             by_hour: hourData,
+            by_bb_width: bbAnalysis,
+            by_pattern: patternData,
             by_asset: assetData,
             by_direction: {
                 call: {
@@ -391,7 +520,7 @@ export async function optimizeGates(direction = 'both') {
     const replay = await replayCandles();
     if (!replay.success) return replay;
 
-    const allSignals = replay.signals_detail || [];
+    const allSignals = replay.signals_all || replay.signals_detail || [];
     const validSignals = allSignals.filter(s => s.result != null);
 
     if (validSignals.length < 10) {

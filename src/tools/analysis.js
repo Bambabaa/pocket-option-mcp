@@ -30,7 +30,7 @@ export function registerAnalysisTools(server) {
 
   server.tool(
     'po_find_edge',
-    'Analyze ALL replayed signals to find patterns. Breaks down win rate by: RSI range, Stochastic K range, MA gap range, hour of day, asset, and signal direction. Answers: "What RSI range produces the best WR?" "Which hours are most profitable?" "Which assets should I avoid?"',
+    'Deep analysis of ALL historical signals and live trades. Breaks down win rate by: RSI range, Stochastic K range, MA gap range, BB width (flat/weak/marginal/good), hour of day, asset (with per-direction breakdown), and all 4 strategy patterns (CALL_REVERSAL=OVERSOLD, PUT_REVERSAL=OVERBOUGHT, CALL_CONTINUATION=UP TREND, PUT_CONTINUATION=DOWN TREND). Pattern data is sourced from live trades_ordered joined to signals table — shows real executed win rates per pattern, not just replay estimates.',
     {},
     async () => {
       try { return jsonResult(core.findEdge()); }

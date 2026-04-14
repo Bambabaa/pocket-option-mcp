@@ -4,13 +4,16 @@ const Indicators = require('../bot/indicators');
 
 const DB_PATH = path.join(__dirname, '../data/trading_data.db');
 const MIN_CANDLES = 60;
-const LOOKAHEAD = 1; // candles to wait for result
 
-// ── Settings ──
+// ── Matches live bot settings ──
 const SETTINGS = {
     ktStrategy: 'video2',
     minPayout: 70,
+    execution: { enabled: true },
+    tradeAmount: 500,
 };
+const LOOKAHEAD_SECONDS = 60;   // Matches live bot: lookAheadSeconds: 60
+const PRICE_TOLERANCE = 5;      // Matches live bot: ±5s tolerance
 
 // ── Helpers ──
 function formatTime(ts) {
@@ -20,6 +23,51 @@ function formatTime(ts) {
         hour: '2-digit', minute: '2-digit', second: '2-digit',
         hour12: false
     });
+}
+
+/**
+ * Find exit price exactly like validate-signals.js:
+ *   1. Look for price at (signalTs + lookAhead) ± tolerance
+ *   2. Fallback: closest candle close within [signalTs, signalTs + lookAhead + 60]
+ */
+function findExitPrice(candleArr, signalTs, lookAhead = LOOKAHEAD_SECONDS) {
+    const expirationTime = signalTs + lookAhead;
+    const tolerance = Math.min(PRICE_TOLERANCE, Math.max(1, Math.floor(lookAhead / 2)));
+
+    // Step 1: Find candle closest to expirationTime within tolerance
+    let bestPrice = null;
+    let bestTs = null;
+    let bestDist = Infinity;
+    for (const candle of candleArr) {
+        const dist = Math.abs(candle[0] - expirationTime);
+        if (dist <= tolerance && dist < bestDist) {
+            bestDist = dist;
+            bestPrice = candle[2]; // close
+            bestTs = candle[0];
+        }
+    }
+    if (bestPrice !== null) {
+        return { price: bestPrice, timestamp: bestTs };
+    }
+
+    // Step 2: Fallback — closest candle close in range [signalTs, signalTs + lookAhead + 60]
+    const maxTs = signalTs + lookAhead + 60;
+    bestDist = Infinity;
+    for (const candle of candleArr) {
+        if (candle[0] >= signalTs && candle[0] <= maxTs) {
+            const dist = Math.abs(candle[0] - expirationTime);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestPrice = candle[2];
+                bestTs = candle[0];
+            }
+        }
+    }
+    if (bestPrice !== null) {
+        return { price: bestPrice, timestamp: bestTs };
+    }
+
+    return null; // no exit price found
 }
 
 async function backtest() {
@@ -41,14 +89,16 @@ async function backtest() {
 
     const indicators = new Indicators();
     const signals = [];
-    const results = { CALL: { win: 0, loss: 0, total: 0 }, PUT: { win: 0, loss: 0, total: 0 } };
+    const results = { CALL: { win: 0, loss: 0, draw: 0, total: 0 }, PUT: { win: 0, loss: 0, draw: 0, total: 0 } };
+    let skippedNoExit = 0;
 
     console.log('═══════════════════════════════════════════════════════════════');
     console.log('  POCKET OPTION BACKTEST — KT Video2 Strategy (Relaxed)');
     console.log('═══════════════════════════════════════════════════════════════');
     console.log(`  Assets: ${Object.keys(byAsset).length}`);
     console.log(`  Total candles: ${candles.length}`);
-    console.log(`  Lookahead: ${LOOKAHEAD} candle(s) for WIN/LOSS`);
+    console.log(`  Expiry: ${LOOKAHEAD_SECONDS}s (matches live bot validation)`);
+    console.log(`  Price tolerance: ±${PRICE_TOLERANCE}s`);
     console.log('═══════════════════════════════════════════════════════════════\n');
 
     for (const [asset, candleArr] of Object.entries(byAsset)) {
@@ -58,7 +108,7 @@ async function backtest() {
         }
 
         let assetSignals = 0;
-        for (let i = MIN_CANDLES; i < candleArr.length - LOOKAHEAD; i++) {
+        for (let i = MIN_CANDLES; i < candleArr.length; i++) {
             const slice = candleArr.slice(0, i + 1);
             const calc = indicators.calculateAll(asset, slice, SETTINGS);
             if (!calc || !calc.signals) continue;
@@ -66,29 +116,39 @@ async function backtest() {
             const sig = calc.signals;
             if (sig.direction !== 'CALL' && sig.direction !== 'PUT') continue;
 
+            const signalTs = candleArr[i][0]; // candle timestamp (signal fires at candle close)
             assetSignals++;
 
-            // Determine outcome: compare entry close to LOOKAHEAD-candle-ahead close
-            const entryClose = candleArr[i][2];
-            const exitClose = candleArr[i + LOOKAHEAD][2];
-
-            let outcome;
-            if (sig.direction === 'CALL') {
-                outcome = exitClose > entryClose ? 'WIN' : 'LOSS';
-            } else {
-                outcome = exitClose < entryClose ? 'WIN' : 'LOSS';
+            // ── Exit price lookup (matches validate-signals.js logic) ──
+            const exitData = findExitPrice(candleArr, signalTs, LOOKAHEAD_SECONDS);
+            if (!exitData) {
+                skippedNoExit++;
+                continue; // no exit candle found — same as live bot "skipped: no_exit_price"
             }
 
+            const entryPrice = candleArr[i][2]; // close = entry
+            const exitPrice = exitData.price;
+            const priceChange = exitPrice - entryPrice;
+
+            // ── Determine result (matches validate-signals.js exactly) ──
+            let result;
+            if (sig.direction === 'CALL' && priceChange > 0) result = 'WIN';
+            else if (sig.direction === 'CALL' && priceChange < 0) result = 'LOSS';
+            else if (sig.direction === 'PUT' && priceChange < 0) result = 'WIN';
+            else if (sig.direction === 'PUT' && priceChange > 0) result = 'LOSS';
+            else result = 'DRAW';
+
             results[sig.direction].total++;
-            results[sig.direction][outcome.toLowerCase()]++;
+            results[sig.direction][result.toLowerCase()]++;
 
             signals.push({
                 asset,
-                time: formatTime(candleArr[i][0]),
+                time: formatTime(signalTs),
                 direction: sig.direction,
-                entry: entryClose,
-                exit: exitClose,
-                outcome,
+                entry: entryPrice,
+                exit: exitPrice,
+                exitTime: formatTime(exitData.timestamp),
+                outcome: result,
                 reasons: sig.reasons.join(' | '),
                 rsi: calc.rsi_5?.toFixed(1),
                 k: calc.stochastic_k?.toFixed(1),
@@ -108,12 +168,15 @@ async function backtest() {
 
     const totalSignals = results.CALL.total + results.PUT.total;
     const totalWins = results.CALL.win + results.PUT.win;
+    const totalLosses = results.CALL.loss + results.PUT.loss;
+    const totalDraws = results.CALL.draw + results.PUT.draw;
     const winRate = totalSignals > 0 ? ((totalWins / totalSignals) * 100).toFixed(1) : '0.0';
 
-    console.log(`  CALL: ${results.CALL.win}W / ${results.CALL.loss}L  (${results.CALL.total} total, ${results.CALL.total > 0 ? ((results.CALL.win / results.CALL.total) * 100).toFixed(1) : 0}% win rate)`);
-    console.log(`  PUT:  ${results.PUT.win}W / ${results.PUT.loss}L  (${results.PUT.total} total, ${results.PUT.total > 0 ? ((results.PUT.win / results.PUT.total) * 100).toFixed(1) : 0}% win rate)`);
+    console.log(`  CALL: ${results.CALL.win}W / ${results.CALL.loss}L / ${results.CALL.draw}D  (${results.CALL.total} total, ${results.CALL.total > 0 ? ((results.CALL.win / results.CALL.total) * 100).toFixed(1) : 0}% win rate)`);
+    console.log(`  PUT:  ${results.PUT.win}W / ${results.PUT.loss}L / ${results.PUT.draw}D  (${results.PUT.total} total, ${results.PUT.total > 0 ? ((results.PUT.win / results.PUT.total) * 100).toFixed(1) : 0}% win rate)`);
     console.log(`  ─────────────────────────────────`);
-    console.log(`  TOTAL: ${totalWins}W / ${totalSignals - totalWins}L  (${totalSignals} signals, ${winRate}% win rate)`);
+    console.log(`  TOTAL: ${totalWins}W / ${totalLosses}L / ${totalDraws}D  (${totalSignals} signals, ${winRate}% win rate)`);
+    console.log(`  Skipped (no exit price): ${skippedNoExit}`);
     console.log('═══════════════════════════════════════════════════════════════\n');
 
     // ── Replay Mode ──
@@ -123,10 +186,10 @@ async function backtest() {
         console.log('  SIGNAL REPLAY (first 20):\n');
         const show = signals.slice(0, 20);
         show.forEach((s, idx) => {
-            const emoji = s.outcome === 'WIN' ? '✅' : '❌';
+            const emoji = s.outcome === 'WIN' ? '✅' : s.outcome === 'LOSS' ? '❌' : '➖';
             const arrow = s.direction === 'CALL' ? '▲' : '▼';
             console.log(`  ${emoji} [${idx + 1}] ${s.time} | ${s.asset} ${arrow} ${s.direction} | RSI=${s.rsi} K=${s.k} D=${s.d}`);
-            console.log(`        Entry: ${s.entry} → Exit: ${s.exit} → ${s.outcome}`);
+            console.log(`        Entry: ${s.entry} → Exit: ${s.exit} (${s.exitTime}) → ${s.outcome}`);
             console.log(`        ${s.reasons}`);
             console.log('');
         });

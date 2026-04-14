@@ -630,3 +630,137 @@ export async function marketState() {
         },
     };
 }
+
+// ─── assetBias() ─────────────────────────────────────────────────────────────
+//
+// Per-asset directional bias from historical trades_ordered.
+// For each asset with enough trade history, computes:
+//   - CALL win rate vs PUT win rate
+//   - Preferred direction (which direction wins more)
+//   - Verdict: CALL_ONLY, PUT_ONLY, BOTH, AVOID
+//   - BB width classification from indicators (flat asset detection)
+//   - BLOCK_RECOMMENDED flag for flat/consistently-losing assets
+//
+// This drives po_recommend direction filtering so signals are only surfaced
+// in the direction that asset historically wins.
+
+export async function assetBias(minTrades = 3) {
+    const now = Math.floor(Date.now() / 1000);
+
+    // Historical win/loss per asset per direction
+    const tradeRows = await all(
+        `SELECT asset, direction,
+                SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN result='LOSS' THEN 1 ELSE 0 END) as losses,
+                COUNT(*) as total,
+                ROUND(SUM(profit_loss), 2) as pl
+         FROM trades_ordered
+         WHERE result IN ('WIN','LOSS')
+         GROUP BY asset, direction
+         ORDER BY asset, direction`,
+        []
+    );
+
+    // BB width per asset (last 100 bars) for flat detection
+    const bbRows = await all(
+        `SELECT asset,
+                ROUND(AVG((bb_upper - bb_lower) / NULLIF(bb_middle, 0) * 10000), 2) AS avg_bb_bps
+         FROM (
+           SELECT asset, bb_upper, bb_lower, bb_middle,
+                  ROW_NUMBER() OVER (PARTITION BY asset ORDER BY timestamp DESC) AS rn
+           FROM indicators WHERE bb_middle > 0
+         ) sub
+         WHERE rn <= 100
+         GROUP BY asset`,
+        []
+    );
+    const bbMap = new Map(bbRows.map(r => [r.asset, r.avg_bb_bps]));
+
+    // Active blocks
+    const blocks = await mcpAll(
+        `SELECT asset FROM asset_controls WHERE active = 1 AND (expires_at IS NULL OR expires_at > ?)`,
+        [now]
+    );
+    const blockedSet = new Set(blocks.map(b => b.asset));
+
+    // Group by asset
+    const byAsset = {};
+    for (const r of tradeRows) {
+        if (!byAsset[r.asset]) byAsset[r.asset] = {};
+        byAsset[r.asset][r.direction] = { wins: r.wins, losses: r.losses, total: r.total, pl: r.pl };
+    }
+
+    const assets = Object.entries(byAsset).map(([asset, dirs]) => {
+        const call = dirs['CALL'] || null;
+        const put  = dirs['PUT']  || null;
+        const totalTrades = (call?.total || 0) + (put?.total || 0);
+
+        const callWR = call && call.total > 0 ? (call.wins / call.total) * 100 : null;
+        const putWR  = put  && put.total  > 0 ? (put.wins  / put.total)  * 100 : null;
+        const netPL  = (call?.pl || 0) + (put?.pl || 0);
+
+        const bbBps = bbMap.get(asset) ?? null;
+        const isFlat = bbBps !== null && bbBps < 5;
+
+        // Determine verdict
+        let verdict, preferred_direction;
+        if (isFlat) {
+            verdict = 'BLOCK_RECOMMENDED';
+            preferred_direction = null;
+        } else if (callWR === null && putWR === null) {
+            verdict = 'NO_DATA';
+            preferred_direction = null;
+        } else if (callWR !== null && putWR !== null) {
+            if (callWR >= 60 && putWR < 45) { verdict = 'CALL_ONLY'; preferred_direction = 'CALL'; }
+            else if (putWR >= 60 && callWR < 45) { verdict = 'PUT_ONLY'; preferred_direction = 'PUT'; }
+            else if (callWR < 40 && putWR < 40) { verdict = 'AVOID'; preferred_direction = null; }
+            else { verdict = 'BOTH'; preferred_direction = callWR >= putWR ? 'CALL' : 'PUT'; }
+        } else if (callWR !== null) {
+            verdict = callWR >= 55 ? 'CALL_PREFERRED' : callWR < 40 ? 'AVOID' : 'BOTH';
+            preferred_direction = callWR >= 40 ? 'CALL' : null;
+        } else {
+            verdict = putWR >= 55 ? 'PUT_PREFERRED' : putWR < 40 ? 'AVOID' : 'BOTH';
+            preferred_direction = putWR >= 40 ? 'PUT' : null;
+        }
+
+        return {
+            asset,
+            total_trades: totalTrades,
+            net_pl: parseFloat(netPL.toFixed(2)),
+            avg_bb_bps: bbBps,
+            is_flat: isFlat,
+            blocked: blockedSet.has(asset),
+            verdict,
+            preferred_direction,
+            call: call ? {
+                trades: call.total, wins: call.wins, losses: call.losses,
+                win_rate: callWR !== null ? callWR.toFixed(1) + '%' : 'N/A',
+                pl: call.pl,
+            } : null,
+            put: put ? {
+                trades: put.total, wins: put.wins, losses: put.losses,
+                win_rate: putWR !== null ? putWR.toFixed(1) + '%' : 'N/A',
+                pl: put.pl,
+            } : null,
+        };
+    }).filter(a => a.total_trades >= minTrades)
+      .sort((a, b) => b.net_pl - a.net_pl);
+
+    const blockRecommended = assets.filter(a => a.verdict === 'BLOCK_RECOMMENDED').map(a => a.asset);
+    const callOnly = assets.filter(a => a.verdict === 'CALL_ONLY' || a.verdict === 'CALL_PREFERRED').map(a => a.asset);
+    const putOnly  = assets.filter(a => a.verdict === 'PUT_ONLY'  || a.verdict === 'PUT_PREFERRED').map(a => a.asset);
+    const avoid    = assets.filter(a => a.verdict === 'AVOID').map(a => a.asset);
+
+    return {
+        success: true,
+        total_assets: assets.length,
+        summary: {
+            block_recommended: blockRecommended,
+            call_favored: callOnly,
+            put_favored: putOnly,
+            avoid: avoid,
+        },
+        assets,
+        note: 'preferred_direction is the direction with better historical win rate. BLOCK_RECOMMENDED = BB width < 5 bps (flat/pegged asset).',
+    };
+}
