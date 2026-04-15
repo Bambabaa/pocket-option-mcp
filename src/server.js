@@ -17,7 +17,7 @@ const server = new McpServer(
     description: 'MCP server for Pocket Option trading bot — read live data, enqueue trades, analyze performance',
   },
   {
-    instructions: `Pocket Option MCP — 39 tools for reading, analyzing, and controlling a live Pocket Option trading bot.
+    instructions: `Pocket Option MCP — 40 tools for reading, analyzing, and controlling a live Pocket Option trading bot.
 
 DATABASE MODEL:
 - Bot DB (readonly): candles, prices, indicators, signals, orders_queue, trades_ordered, qualification data
@@ -42,7 +42,7 @@ Analysis & Backtesting (AI research — find the edge):
 - po_replay_signal → reconstruct ALL gate values for a historical signal (RSI, K crash, MA gaps, etc.)
 - po_find_edge → analyze ALL historical trades: win rate by RSI range, stoch range, MA gap, hour, asset, direction
 - po_optimize_gates → grid search: what RSI/K-crash/D thresholds would produce the best win rate?
-- po_simulate → replay historical candles with custom MODE D params — "what if I used RSI < 35 instead of 40?"
+- po_simulate → replay with custom gate thresholds vs baseline — "what if I raised K crash min to 35?" or "skip flat assets with min_bb_bps=5"
 
 Reading market data:
 - po_candles → OHLC bars. Use summary=true unless you need individual bars

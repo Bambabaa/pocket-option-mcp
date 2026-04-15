@@ -100,7 +100,8 @@ class TradingDatabase {
                 keltner_lower REAL,
                 schaff_value REAL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(asset, timestamp)
+                UNIQUE(asset, timestamp),
+                FOREIGN KEY (asset, timestamp) REFERENCES candles(asset, timestamp)
             )`,
 
             // 3. Signals table - stores trading signals (KT-only: direction + reasons + strategy)
@@ -112,7 +113,8 @@ class TradingDatabase {
                 strategy_used TEXT,
                 reasons TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(asset, timestamp)
+                UNIQUE(asset, timestamp),
+                FOREIGN KEY (asset, timestamp) REFERENCES candles(asset, timestamp)
             )`,
 
             // 4. Trades table - stores executed trades
@@ -172,7 +174,8 @@ class TradingDatabase {
                 profit_loss REAL,
                 updated_at INTEGER,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(asset, signal_timestamp)
+                UNIQUE(asset, signal_timestamp),
+                FOREIGN KEY (signal_id) REFERENCES signals(id)
             )`,
 
             // Migration: add updated_at to signal_outcomes if missing (safe, idempotent)
@@ -229,6 +232,7 @@ class TradingDatabase {
                 notes TEXT NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (order_id) REFERENCES orders_queue(id),
+                FOREIGN KEY (signal_id) REFERENCES signals(id),
                 UNIQUE(order_id)
             )`
         ];
@@ -274,6 +278,10 @@ class TradingDatabase {
                     }
                 }
             }
+
+            // Cleanup: asset_controls belongs in mcp.db only — drop it from trading_data.db if present
+            try { await this.run(`DROP TABLE IF EXISTS asset_controls`); } catch (_) {}
+            try { await this.run(`DROP INDEX IF EXISTS idx_asset_controls_asset`); } catch (_) {}
 
             // Schema migrations: drop deprecated columns from indicators/signals tables if present
             await this.migrateIndicatorsDropLegacyColumns();
@@ -1243,6 +1251,9 @@ class TradingDatabase {
      * INSERT OR IGNORE so first write wins, then UPDATE only fills in non-null result fields.
      */
     async insertSignalOutcome(asset, signalTimestamp, signalId, direction, entryPrice, exitTimestamp, exitPrice, result, profitLoss) {
+        // Timestamps already converted to local time at original insert
+        // (signals via insertSignal, exit via order-executor).
+        // Pass through as-is — don't double-convert.
         const now = Math.floor(Date.now() / 1000);
         await this.run(
             `INSERT OR IGNORE INTO signal_outcomes
@@ -1312,8 +1323,8 @@ class TradingDatabase {
      * @returns {Promise<number>} - ID of inserted queue item
      */
     async enqueueOrder(signalId, asset, direction, signalTimestamp) {
-        const sql = `INSERT OR IGNORE INTO orders_queue 
-                     (signal_id, asset, direction, signal_timestamp, status) 
+        const sql = `INSERT OR IGNORE INTO orders_queue
+                     (signal_id, asset, direction, signal_timestamp, status)
                      VALUES (?, ?, ?, ?, 'PENDING')`;
         try {
             const result = await this.run(sql, [signalId, asset, direction, signalTimestamp]);
@@ -1368,8 +1379,8 @@ class TradingDatabase {
      * Link an executed order in trades_ordered
      */
     async insertOrderedTradeClosed(orderId, signalId, asset, entryTimestamp, direction, amount, entryPrice, exitTimestamp, exitPrice, result, profitLoss, payout, notes) {
-        const sql = `INSERT OR IGNORE INTO trades_ordered 
-                     (order_id, signal_id, asset, entry_timestamp, direction, amount, entry_price, 
+        const sql = `INSERT OR IGNORE INTO trades_ordered
+                     (order_id, signal_id, asset, entry_timestamp, direction, amount, entry_price,
                       exit_timestamp, exit_price, result, profit_loss, payout, notes)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         try {
@@ -1472,4 +1483,70 @@ class TradingDatabase {
     }
 }
 
-module.exports = { TradingDatabase, getAssetOtcVariants };
+/**
+ * Ensure mcp.db has the required schema.
+ * Called by the bot at startup so the tables exist before any worker query runs.
+ * Safe to call on an existing DB — all statements use IF NOT EXISTS / ignore duplicate columns.
+ */
+function initMcpSchema(mcpDbPath) {
+    return new Promise((resolve, reject) => {
+        const db = new sqlite3.Database(mcpDbPath, (err) => {
+            if (err) return reject(new Error(`[MCP-SCHEMA] Cannot open ${mcpDbPath}: ${err.message}`));
+
+            const stmts = [
+                `CREATE TABLE IF NOT EXISTS mcp_orders (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    asset        TEXT NOT NULL,
+                    direction    TEXT NOT NULL CHECK(direction IN ('CALL','PUT')),
+                    amount       REAL,
+                    signal_ts    INTEGER NOT NULL,
+                    created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                    status       TEXT NOT NULL DEFAULT 'PENDING'
+                                     CHECK(status IN ('PENDING','EXECUTED','SKIPPED','FAILED','CANCELLED')),
+                    status_reason TEXT,
+                    updated_at   INTEGER
+                )`,
+                `CREATE INDEX IF NOT EXISTS idx_mcp_orders_status ON mcp_orders(status, created_at)`,
+                `CREATE INDEX IF NOT EXISTS idx_mcp_orders_asset  ON mcp_orders(asset)`,
+                `CREATE TABLE IF NOT EXISTS asset_controls (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    asset      TEXT NOT NULL,
+                    action     TEXT NOT NULL DEFAULT 'BLOCK',
+                    reason     TEXT,
+                    source     TEXT,
+                    expires_at INTEGER,
+                    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                    active     INTEGER NOT NULL DEFAULT 1
+                )`,
+                `CREATE INDEX IF NOT EXISTS idx_asset_controls_asset ON asset_controls(asset, active)`,
+                `CREATE TABLE IF NOT EXISTS agent_session_log (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent      TEXT NOT NULL,
+                    action     TEXT NOT NULL,
+                    asset      TEXT,
+                    direction  TEXT,
+                    score      REAL,
+                    verdict    TEXT,
+                    reasoning  TEXT,
+                    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+                )`,
+                `CREATE INDEX IF NOT EXISTS idx_agent_log_created ON agent_session_log(created_at)`,
+            ];
+
+            let i = 0;
+            function next() {
+                if (i >= stmts.length) {
+                    db.close();
+                    return resolve();
+                }
+                db.run(stmts[i++], (err) => {
+                    if (err) console.warn(`[MCP-SCHEMA] ${err.message}`); // non-fatal
+                    next();
+                });
+            }
+            next();
+        });
+    });
+}
+
+module.exports = { TradingDatabase, getAssetOtcVariants, initMcpSchema };

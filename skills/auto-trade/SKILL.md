@@ -26,32 +26,31 @@ Before starting, check if the user specified any of these. Use defaults if not:
 | `loop_count` | 1 | How many scan cycles to run (1 = single scan, N = repeat) |
 | `loop_interval_sec` | 60 | Seconds between scan cycles if loop_count > 1 |
 | `direction_filter` | both | Only trade CALL, only PUT, or both |
+| `min_bb_bps` | 10 | Skip assets where BB width < this bps at entry bar — validated gate |
 
 ## Step 1: Pre-flight
 
-Before any scanning, run a quick health check.
-
-Call `po_health` directly (not via an agent).
-
-If bot is not live → tell the user and STOP:
+Call `po_health` directly. If bot not live → STOP:
 > "Bot is not running — no live data. Start pocket-option-bot.js first."
 
-Call `po_drawdown_check` directly.
-
-If verdict is `STOP` → tell the user and STOP:
+Call `po_drawdown_check` directly. If verdict is `STOP` → STOP:
 > "Session safety block: [reason]. No trades will be placed today."
 
-Log the session start:
-Call `po_session_log_write`:
+Call `po_asset_bias(min_trades=3)` — build a bias map of which assets have a preferred direction and which are flagged AVOID or BLOCK_RECOMMENDED. You will use this to filter Scanner output.
+
+Call `po_asset_volatility` — note any assets with BB < 5 bps (dead/flat). These should never be traded regardless of signal.
+
+Log session start via `po_session_log_write`:
 ```json
 {
   "agent": "orchestrator",
   "action": "SCAN",
   "verdict": "SESSION_START",
   "reasoning": {
-    "config": { min_score, max_trades, daily_loss_limit, loop_count },
+    "config": { "min_score": N, "max_trades": N, "daily_loss_limit": N, "min_bb_bps": 10 },
     "drawdown_status": "GO/PAUSE",
-    "bot_live": true
+    "bot_live": true,
+    "flat_assets_noted": ["EURTRY_otc", "SARCNY_otc"]
   }
 }
 ```
@@ -67,15 +66,20 @@ max_candidates: 5
 Return structured JSON with ranked candidates.
 ```
 
-Wait for the Scanner to return.
+Wait for Scanner to return.
 
-**If status is `NO_SIGNAL` or `MARKET_QUIET`:**
-- Tell the user: "No setups found. Market conditions: [note from scanner]"
-- If loop_count > 1, wait loop_interval_sec and rescan
-- Otherwise, end session
+**After receiving candidates, apply bias filters:**
+- Remove any asset with bias verdict `AVOID`
+- Remove any asset with bias verdict `BLOCK_RECOMMENDED` (BB < 5 bps)
+- For remaining assets: if bias shows strong directional preference (CALL_ONLY / PUT_ONLY), only pass that direction to Analyst even if Scanner returned both
+- If `direction_filter=both` but asset bias says `PUT_PREFERRED`, note this in the candidate for the Analyst
+
+**If no candidates after filtering:**
+- Tell user: "No setups found after bias filtering. [note from scanner + bias filter result]"
+- If loop_count > 1, wait and rescan. Otherwise end.
 
 **If candidates found:**
-- Report to user: "Scanner found N candidates. Top: [asset] [direction] score [X]"
+- Report: "Scanner found N candidates. After bias filter: M remain. Top: [asset] [direction] score [X]"
 - Continue to Step 3
 
 ## Step 3: Analyse (Analyst Agent, one per candidate)
@@ -91,6 +95,8 @@ Precision score: {score}
 Layers satisfied: {layers_satisfied}
 Layer details: {layer_details}
 Recent win rate: {recent_win_rate}
+Historical bias: {bias verdict for this asset/direction}
+min_bb_bps gate: 10 — verify BB width at current bar is >= 10 bps before returning TRADE
 
 Return a TRADE / SKIP / WAIT verdict with full reasoning.
 ```
@@ -98,12 +104,12 @@ Return a TRADE / SKIP / WAIT verdict with full reasoning.
 Wait for verdict.
 
 - **SKIP**: Log it, move to next candidate
-- **WAIT**: Log it, note the asset for next cycle
-- **TRADE**: Proceed to Step 4 immediately with this candidate
+- **WAIT**: Log it, note asset for next cycle
+- **TRADE**: Proceed to Step 4 immediately
 
 If all candidates return SKIP or WAIT:
 - Tell user: "All candidates reviewed — no TRADE verdicts. [summary of why]"
-- If loop_count > 1 and any WAIT verdicts, rescan after loop_interval_sec
+- If loop_count > 1 and WAIT verdicts exist, rescan after loop_interval_sec
 
 ## Step 4: Execute (Executor Agent)
 
@@ -115,10 +121,8 @@ Execute this analyst-approved trade:
 Place via po_trade if all safety checks pass.
 ```
 
-Wait for executor result.
-
 **On PLACED:**
-- Tell user: "✓ Trade placed — Order #{order_id}: {asset} {direction}"
+- Tell user: "Trade placed — Order #{order_id}: {asset} {direction}"
 - Increment trades_placed counter
 - If trades_placed >= max_trades → end session
 
@@ -128,11 +132,9 @@ Wait for executor result.
 
 ## Step 5: Session End
 
-After all cycles complete or max_trades reached:
+Call `po_session_log_read(limit=20)` to pull the full decision log.
 
-Call `po_session_log_read(limit=20, agent=null)` to pull the full decision log.
-
-Log session end:
+Log session end via `po_session_log_write`:
 ```json
 {
   "agent": "orchestrator",
@@ -141,6 +143,7 @@ Log session end:
   "reasoning": {
     "cycles_run": N,
     "candidates_found": N,
+    "filtered_by_bias": N,
     "trades_analysed": N,
     "trades_placed": N,
     "trades_blocked": N
@@ -151,20 +154,20 @@ Log session end:
 Report to user:
 ```
 Session complete.
-  Scan cycles: N
-  Candidates found: N
-  Analyst approvals: N
-  Trades placed: N
-  Trades blocked: N
+  Scan cycles:        N
+  Candidates found:   N
+  Filtered by bias:   N
+  Analyst approvals:  N
+  Trades placed:      N
+  Trades blocked:     N
 
 Decision log:
-  [summary of each agent action from po_session_log_read]
+  [summary of each agent action]
 ```
 
 ## Kill Switches
 
-At ANY point during the session, stop immediately if:
-
+Stop immediately at ANY point if:
 1. `po_health` shows bot not live
 2. `po_drawdown_check` returns `STOP`
 3. `trades_placed >= max_trades`
@@ -172,10 +175,9 @@ At ANY point during the session, stop immediately if:
 
 ## Important Notes
 
-- Each agent is independent — do not pass bias between agents
-- The Scanner never knows if Analyst will approve
-- The Analyst never knows if Executor will place
-- The Executor never knows what other candidates exist
-- You (Orchestrator) are the only agent with the full picture
-- Always tell the user what is happening at each step — never go silent
+- Each agent is independent — Scanner doesn't know if Analyst will approve, Analyst doesn't know if Executor will place
+- Orchestrator is the only agent with the full picture
+- Bias filter runs at Orchestrator level — agents do not see rejected candidates
+- BB width gate (>= 10 bps) is enforced both here (via bias/volatility pre-check) and inside the Analyst
+- Always tell the user what is happening — never go silent
 - Log every decision — the audit trail is the memory of the system

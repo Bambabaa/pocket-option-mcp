@@ -30,7 +30,7 @@ export function registerAnalysisTools(server) {
 
   server.tool(
     'po_find_edge',
-    'Deep analysis of ALL historical signals and live trades. Breaks down win rate by: RSI range, Stochastic K range, MA gap range, BB width (flat/weak/marginal/good), hour of day, asset (with per-direction breakdown), and all 4 strategy patterns (CALL_REVERSAL=OVERSOLD, PUT_REVERSAL=OVERBOUGHT, CALL_CONTINUATION=UP TREND, PUT_CONTINUATION=DOWN TREND). Pattern data is sourced from live trades_ordered joined to signals table — shows real executed win rates per pattern, not just replay estimates.',
+    'Deep analysis of ALL historical signals and live trades. Breaks down win rate by: RSI range, Stochastic K range, MA6/MA14 gap range, BB width, hour of day, asset (with per-direction breakdown), all 4 strategy patterns, AND 4 new retracement/context dimensions: (1) retracement depth — how overbought/oversold RSI was in the 10 bars before entry; (2) K extension duration — how many consecutive bars K was extended before the crash; (3) MA gap trend — was the MA6/MA14 gap narrowing (exhaustion) or widening at signal time; (4) BB expansion state — was volatility rising or falling when the signal fired.',
     {},
     async () => {
       try { return jsonResult(core.findEdge()); }
@@ -46,6 +46,29 @@ export function registerAnalysisTools(server) {
     },
     async ({ direction }) => {
       try { return jsonResult(core.optimizeGates(direction)); }
+      catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    }
+  );
+
+  server.tool(
+    'po_simulate',
+    'Replay historical candles with custom MODE D gate thresholds and compare results against the baseline (current live defaults). Shows side-by-side: signal count, win rate, P/L for CALL and PUT — plus delta. Use this to test a gate change before modifying the bot. Example: "what if I raised call_k_crash_min from 25 to 35?" or "what if I added min_bb_bps=5 to skip flat assets?".',
+    {
+      call_rsi_max:         z.coerce.number().optional().describe('Max RSI for CALL entry (default 40)'),
+      call_k_crash_min:     z.coerce.number().optional().describe('Min K drop size for CALL (default 25)'),
+      call_k_oversold_max:  z.coerce.number().optional().describe('Max K at bar0 for CALL (default 25)'),
+      call_k_was_mid_min:   z.coerce.number().optional().describe('Min K at barM1 for CALL (default 50)'),
+      call_ma_trend_min:    z.coerce.number().optional().describe('Min MA6 vs MA14 gap bps for CALL (default -20, negative = MA6 below MA14)'),
+      put_d_min:            z.coerce.number().optional().describe('Min stoch D for PUT entry (default 80)'),
+      put_rsi_velocity_min: z.coerce.number().optional().describe('Min RSI velocity for PUT (default -12)'),
+      put_ma_trend_max:     z.coerce.number().optional().describe('Max MA6 vs MA14 gap bps for PUT (default 20, positive = MA6 above MA14)'),
+      put_k_turn_d_min:     z.coerce.number().optional().describe('Min K at barM1 for PUT turn gate (default 65)'),
+      min_bb_bps:           z.coerce.number().optional().default(0).describe('Skip assets with avg BB width below this bps (asset-level filter, default 0 = no filter).'),
+      bar_bb_bps_min:       z.coerce.number().optional().default(0).describe('Skip individual bars where BB width is below this bps (bar-level filter, default 0 = no filter). Set to 10 to require real volatility at entry. More precise than min_bb_bps.'),
+      amount:               z.coerce.number().positive().optional().default(500).describe('Trade amount for P/L calc (default 500)'),
+    },
+    async (p) => {
+      try { return jsonResult(core.simulateGates(p)); }
       catch (err) { return jsonResult({ success: false, error: err.message }, true); }
     }
   );

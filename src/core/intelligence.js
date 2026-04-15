@@ -352,10 +352,20 @@ function scorePrecision(ind) {
 // ─── recommendTrades() ───────────────────────────────────────────────────────
 
 export async function recommendTrades(minPrecisionScore = 50, minWinRate = 55) {
-    const scan = await scanAllAssets();
+    // Run scan and bias lookup in parallel
+    const [scan, bias] = await Promise.all([
+        scanAllAssets(),
+        assetBias(3).catch(() => null),
+    ]);
     if (!scan.success) return scan;
 
-    const nowSec = Math.floor(Date.now() / 1000);
+    // Build bias lookup: asset → { preferred_direction, verdict, is_flat }
+    const biasMap = new Map();
+    if (bias?.assets) {
+        for (const b of bias.assets) biasMap.set(b.asset, b);
+    }
+
+    const skipped = [];
 
     const recommendations = scan.assets
         .filter(a => {
@@ -367,20 +377,56 @@ export async function recommendTrades(minPrecisionScore = 50, minWinRate = 55) {
             if (!a.precision_direction || a.precision_direction === 'neutral') return false;
             // Win rate threshold
             if (a.recent_win_rate < minWinRate) return false;
+
+            const b = biasMap.get(a.asset);
+            if (b) {
+                // Hard block: flat asset — BB too low for reliable signals
+                if (b.is_flat) {
+                    skipped.push({ asset: a.asset, reason: `flat asset (${b.avg_bb_bps} bps)` });
+                    return false;
+                }
+                // Hard block: consistently losing in both directions
+                if (b.verdict === 'AVOID') {
+                    skipped.push({ asset: a.asset, reason: 'historical AVOID — losing in both directions' });
+                    return false;
+                }
+                // Direction conflict: indicator says CALL but asset only wins PUT, and vice versa
+                if (b.preferred_direction && b.preferred_direction !== a.precision_direction) {
+                    const assetDir = b[a.precision_direction.toLowerCase()];
+                    // Only block if there's meaningful evidence against this direction (5+ trades, <40% WR)
+                    if (assetDir && assetDir.trades >= 5 && parseFloat(assetDir.win_rate) < 40) {
+                        skipped.push({
+                            asset: a.asset,
+                            reason: `indicator says ${a.precision_direction} but historical WR in that direction is ${assetDir.win_rate} (preferred: ${b.preferred_direction})`,
+                        });
+                        return false;
+                    }
+                }
+            }
+
             return true;
         })
-        .map((a, i) => ({
-            rank: i + 1,
-            asset: a.asset,
-            direction: a.precision_direction,
-            precision_score: a.precision_score,
-            layers_satisfied: `${a.layers_satisfied}/${a.layers_total}`,
-            reasons: buildReasons(a),
-            price: a.price,
-            recent_win_rate: a.recent_win_rate,
-            recent_pl: a.recent_pl,
-            streak: a.streak,
-        }));
+        .map((a, i) => {
+            const b = biasMap.get(a.asset);
+            return {
+                rank: i + 1,
+                asset: a.asset,
+                direction: a.precision_direction,
+                precision_score: a.precision_score,
+                layers_satisfied: `${a.layers_satisfied}/${a.layers_total}`,
+                reasons: buildReasons(a),
+                price: a.price,
+                recent_win_rate: a.recent_win_rate,
+                recent_pl: a.recent_pl,
+                // Bias context
+                historical_bias: b ? {
+                    preferred_direction: b.preferred_direction,
+                    verdict: b.verdict,
+                    call_wr: b.call?.win_rate ?? null,
+                    put_wr:  b.put?.win_rate  ?? null,
+                } : null,
+            };
+        });
 
     return {
         success: true,
@@ -388,9 +434,10 @@ export async function recommendTrades(minPrecisionScore = 50, minWinRate = 55) {
         total_candidates: recommendations.length,
         filters: { min_precision_score: minPrecisionScore, min_win_rate: minWinRate },
         recommendations: recommendations.slice(0, 10),
+        skipped_by_bias: skipped,
         note: recommendations.length === 0
-            ? 'No assets meet the precision criteria. The market conditions are not aligned for high-confidence trades.'
-            : `Top ${Math.min(recommendations.length, 10)} opportunities ranked by indicator precision score.`,
+            ? 'No assets meet the precision + bias criteria. Try lowering min_precision_score or check po_asset_bias for blocked assets.'
+            : `Top ${Math.min(recommendations.length, 10)} opportunities — filtered by indicator precision AND historical direction bias.`,
     };
 }
 

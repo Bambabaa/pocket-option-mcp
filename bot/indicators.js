@@ -760,6 +760,8 @@ class Indicators {
         const bbStable = bbWidth > 0 && bbWidth_1 > 0 && bbWidth_2 > 0
             ? Math.abs(bbWidth - bbWidth_1) / bbWidth < 0.05 && Math.abs(bbWidth_1 - bbWidth_2) / bbWidth_1 < 0.05
             : true;
+        const bbWidthBps = bbWidth * 10000;
+        const bbWidthSufficient = bbWidthBps >= 10; // < 10 bps = flat/dead market, 45.8% WR → losing zone
         const closeAboveMid = bb != null && bb.middle != null && closePrice >= bb.middle;
         const closeBelowMid = bb != null && bb.middle != null && closePrice < bb.middle;
         const priceNearLowerBB = bb != null && bb.lower != null
@@ -821,8 +823,8 @@ class Indicators {
             const kWasMidRelaxed = k_1 != null && k_1 >= 40;
             const lookbackRelaxed = (kCrashRelaxed || kDeepOversold) && rsiDown;
 
-            if ((kFlashCrash && kOversold && kWasMid && rsiDown && priceNearLowerBB && bbStable && lookbackOk) ||
-                (kCrashRelaxed && kOversold && kWasMidRelaxed && rsiDown && bbStable && lookbackRelaxed)) {
+            if ((kFlashCrash && kOversold && kWasMid && rsiDown && priceNearLowerBB && bbStable && bbWidthSufficient && lookbackOk) ||
+                (kCrashRelaxed && kOversold && kWasMidRelaxed && rsiDown && bbStable && bbWidthSufficient && lookbackRelaxed)) {
 
                 const candleHour = new Date(candleTs * 1000).getUTCHours();
                 signals.direction = 'CALL'; signals.strategyUsed = 'video2';
@@ -830,7 +832,7 @@ class Indicators {
                 signals.reasons.push('OVERSOLD | Reversal | ' +
                     'K crash ' + kCrash.toFixed(1) + 'pts (' + k_1.toFixed(1) + '->' + stochK.toFixed(1) + ') | ' +
                     'RSI ' + rsi.toFixed(1) + ' (<45) | ' +
-                    'Price near lower BB | BB stable | UTC ' + candleHour);
+                    'Price near lower BB | BB stable | BB ' + bbWidthBps.toFixed(1) + 'bps | UTC ' + candleHour);
                 _updateStreak(); return true;
             }
         }
@@ -878,11 +880,11 @@ class Indicators {
             const kdSpreadRelaxed = kdSpread != null && kdSpread < -2;
 
             if ((rsiWasOverbought1 && rsiWasOverbought2 && notFastDrop &&
-                rsiInReversal && closeAboveMid &&
+                rsiInReversal && closeAboveMid && bbWidthSufficient &&
                 kExitingOB && dLaggingHigh && kBelowD &&
                 lookbackOk) ||
                 (rsiWasHigh1 && rsiWasHigh2 && rsiInReversalRelaxed &&
-                    closeAboveMid && kExitingOBRelaxed && dLaggingRelaxed && kdSpreadRelaxed)) {
+                    closeAboveMid && bbWidthSufficient && kExitingOBRelaxed && dLaggingRelaxed && kdSpreadRelaxed)) {
 
                 const candleHour = new Date(candleTs * 1000).getUTCHours();
                 signals.direction = 'PUT'; signals.strategyUsed = 'video2';
@@ -891,7 +893,7 @@ class Indicators {
                     'RSI ' + rsi.toFixed(1) + ' (from ' + rsi_1.toFixed(1) + ', vel=' + rsiVelocity.toFixed(1) + ') | ' +
                     'K ' + stochK.toFixed(1) + ' (55-80, from ' + k_1.toFixed(1) + ') | ' +
                     'D ' + stochD.toFixed(1) + ' (>=75) | K-D ' + kdSpread.toFixed(1) + ' (<-3) | ' +
-                    'Price >= BB mid | UTC ' + candleHour);
+                    'Price >= BB mid | BB ' + bbWidthBps.toFixed(1) + 'bps | UTC ' + candleHour);
                 _updateStreak(); return true;
             }
         }

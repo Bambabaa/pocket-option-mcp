@@ -7,7 +7,7 @@ const path = require('path');
 const readline = require('readline');
 const sqlite3 = require('sqlite3').verbose();
 const Indicators = require('./indicators');
-const { TradingDatabase } = require('./database');
+const { TradingDatabase, initMcpSchema } = require('./database');
 const { executeOneOrder, syncLiveTradeResultsFromDOM, resetSessionCalibration, getBalanceFromDOM } = require('./scripts/order-executor');
 const { validatePendingSignals } = require('./scripts/validate-signals');
 
@@ -145,7 +145,7 @@ async function runMcpOrdersWorker(page) {
                     [status, reason, row.id]
                 );
             },
-            insertOrderedTradeClosed: async () => {},
+            insertOrderedTradeClosed: async () => { },
         };
 
         try {
@@ -248,21 +248,16 @@ function formatTimestamp(date = new Date()) {
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
 }
 
-// Converts a WebSocket timestamp to UTC (for database storage) using an empirically determined offset.
+// Converts a WebSocket timestamp to local time (UTC-5) for display purposes.
+// Actual timezone conversion for DB storage is handled in database.js via toLocalTimestamp().
 // Maintains original function name (convertToUTC6) for compatibility.
-// Returns integer UTC timestamp (seconds).
 function convertToUTC6(timestamp) {
-    // Upgrade to ms if seconds
     if (timestamp < 1e12) {
         timestamp *= 1000;
     }
-
-    // Pocket Option WebSocket timestamps are already UTC.
-    // Offset set to 0 — no conversion needed.
+    // Offset set to 0 — DB handles timezone conversion
     const OFFSET_SECONDS = 0;
     const offsetMs = OFFSET_SECONDS * 1000;
-
-    // Adjust date with offset
     const corrected = new Date(timestamp + offsetMs);
     return Math.floor(corrected.getTime() / 1000);
 }
@@ -570,7 +565,7 @@ async function processWebSocketMessage(payload, page) {
             if (data.history && Array.isArray(data.history)) {
                 for (const [tstamp, value] of data.history) {
                     const rawTimestamp = parseInt(parseFloat(tstamp));
-                    const timestamp = convertToUTC6(rawTimestamp);  // Convert to UTC
+                    const timestamp = rawTimestamp;  // DB layer handles timezone conversion
                     const candle = [timestamp, value, value, value, value];
 
                     // Update candle based on value
@@ -706,12 +701,10 @@ async function processWebSocketMessage(payload, page) {
             // Round timestamp to nearest second for storage
             const priceTimestamp = Math.floor(timestamp);
             if (priceTimestamp && !isNaN(priceTimestamp) && priceTimestamp > 0) {
-                const convertedTimestamp = convertToUTC6(priceTimestamp);
-                if (convertedTimestamp && !isNaN(convertedTimestamp)) {
-                    priceBatchBuffer.push({ asset, timestamp: convertedTimestamp, price: currentValue });
-                    if (priceBatchBuffer.length >= BATCH_SIZE_LIMIT || (Date.now() - lastBatchFlush) > BATCH_TIME_LIMIT_MS) {
-                        flushPriceBatch(database);
-                    }
+                // DB layer handles timezone conversion
+                priceBatchBuffer.push({ asset, timestamp: priceTimestamp, price: currentValue });
+                if (priceBatchBuffer.length >= BATCH_SIZE_LIMIT || (Date.now() - lastBatchFlush) > BATCH_TIME_LIMIT_MS) {
+                    flushPriceBatch(database);
                 }
             }
 
@@ -843,19 +836,19 @@ async function processWebSocketMessage(payload, page) {
                                                     log(`[BLOCK] Skipping ${asset}: ${blockEntry.reason}`, 'yellow');
                                                     await database.updateOrderStatus(enqResultId, 'SKIPPED', `asset-blocked: ${blockEntry.reason}`);
                                                 } else {
-                                                const order = { id: enqResultId, signal_id: sigId, asset, direction: finalSignals.direction, signal_timestamp: signalTimestamp };
-                                                executionQueue.push({
-                                                    database,
-                                                    order,
-                                                    config: {
-                                                        tradeAmount: STATE.SETTINGS.tradeAmount || 1,
-                                                        skipQualifiedGate: true,
-                                                        riskMax: null,
-                                                        execution: STATE.SETTINGS.execution,
-                                                        requireLiveExecution: true
-                                                    }
-                                                });
-                                                runExecutionWorker(page);
+                                                    const order = { id: enqResultId, signal_id: sigId, asset, direction: finalSignals.direction, signal_timestamp: signalTimestamp };
+                                                    executionQueue.push({
+                                                        database,
+                                                        order,
+                                                        config: {
+                                                            tradeAmount: STATE.SETTINGS.tradeAmount || 1,
+                                                            skipQualifiedGate: true,
+                                                            riskMax: null,
+                                                            execution: STATE.SETTINGS.execution,
+                                                            requireLiveExecution: true
+                                                        }
+                                                    });
+                                                    runExecutionWorker(page);
                                                 } // end !blockEntry
                                             }
                                         }
@@ -887,7 +880,7 @@ async function processWebSocketMessage(payload, page) {
             // Start or update current in-memory candle
             // NOTE: Candles are only stored in database when period completes (fully closed)
             if (isNewPeriod || !currentCandle) {
-                STATE.CURRENT_CANDLE_START[asset] = convertToUTC6(periodStart);  // Store as UTC
+                STATE.CURRENT_CANDLE_START[asset] = periodStart;  // DB layer handles timezone conversion
                 STATE.CURRENT_CANDLE[asset] = {
                     open: currentValue,
                     high: currentValue,
@@ -1071,6 +1064,9 @@ async function main() {
         // Initialize database
         log('Initializing database...', 'cyan');
         await database.initialize();
+
+        // Ensure mcp.db schema exists (safe no-op if tables already present)
+        await initMcpSchema(MCP_DB_PATH).catch(e => console.warn(`[MCP-SCHEMA] ${e.message}`));
 
         let _resultSyncFailureCount = 0;
         // Result sync: poll PO DOM for WIN/LOSS on pending live trades (only when LIVE execution)
