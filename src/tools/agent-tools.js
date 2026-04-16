@@ -6,7 +6,7 @@ export function registerAgentTools(server) {
 
   server.tool(
     'po_signal_context',
-    'Get the full indicator + candle + signal snapshot for an asset in ONE call. Returns: current bar + 3 prior bars of indicators, OHLC candles, latest signal with age, recent win rate, and consecutive loss count. Designed for the Analyst agent — everything needed to evaluate a setup without extra round-trips.',
+    'Get the full MODE D pattern verdict + context for an asset in ONE call. Returns: setup_summary (one-line Analyst briefing), mode_d.ranked_verdicts (all 4 patterns ranked strongest-first with verdict_summary per pattern), lookback_narrative (how the setup formed over prior bars), best_call/best_put verdict, BB bps, recent win rate, consecutive losses, and raw bar data. Designed for the Analyst agent — reads pattern verdicts, not raw indicator numbers.',
     {
       asset: z.string().describe('Asset symbol, e.g. EURUSD_otc'),
     },
@@ -104,6 +104,28 @@ export function registerAgentTools(server) {
     },
     async ({ min_bb_bps }) => {
       try { return jsonResult(core.getAssetVolatility(min_bb_bps ?? 0)); }
+      catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    }
+  );
+
+  server.tool(
+    'po_auto_block_check',
+    'Check if an asset should be auto-blocked based on today\'s performance. Triggers: (A) 3+ consecutive losses today → 120-min block; (B) win rate < 35% with 5+ trades today → 120-min block. Call this after every confirmed trade result. Timed blocks auto-expire after the session — no manual cleanup needed.',
+    {
+      asset: z.string().describe('Asset symbol to check, e.g. EURUSD_otc'),
+    },
+    async ({ asset }) => {
+      try { return jsonResult(core.autoBlockCheck(asset)); }
+      catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    }
+  );
+
+  server.tool(
+    'po_auto_block_sweep',
+    'Scan all assets and auto-block any with average BB width < 5 bps (flat/dead markets). Permanent blocks — flat assets do not recover within a session. Run once at session start before the first trade. Returns blocked_count and list of newly blocked assets with their BB width.',
+    {},
+    async () => {
+      try { return jsonResult(core.autoBlockVolatilitySweep()); }
       catch (err) { return jsonResult({ success: false, error: err.message }, true); }
     }
   );

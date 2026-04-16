@@ -40,6 +40,8 @@ Call `po_asset_bias(min_trades=3)` — build a bias map of which assets have a p
 
 Call `po_asset_volatility` — note any assets with BB < 5 bps (dead/flat). These should never be traded regardless of signal.
 
+Call `po_auto_block_sweep` — automatically blocks all assets with BB < 5 bps that aren't already blocked. Log the result. This runs once and prevents flat assets from appearing in the scan.
+
 Log session start via `po_session_log_write`:
 ```json
 {
@@ -124,6 +126,7 @@ Place via po_trade if all safety checks pass.
 **On PLACED:**
 - Tell user: "Trade placed — Order #{order_id}: {asset} {direction}"
 - Increment trades_placed counter
+- Call `po_auto_block_check(asset)` — if blocked, log it and remove asset from remaining candidates this session
 - If trades_placed >= max_trades → end session
 
 **On ABORTED:**

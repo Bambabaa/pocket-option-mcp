@@ -11,6 +11,7 @@
 
 import { all, get } from '../connection.js';
 import { mcpRun, mcpAll, mcpGet } from '../mcp-db.js';
+import { evaluateModeD } from './intelligence.js';
 
 // ─── po_signal_context ────────────────────────────────────────────────────────
 //
@@ -93,6 +94,10 @@ export async function getSignalContext(asset) {
   // current = indRows[0], bar-1 = indRows[1], bar-2 = indRows[2], bar-3 = indRows[3]
   const [bar0, barM1, barM2, barM3] = indRows;
 
+  // Evaluate all 4 MODE D patterns against current bar window
+  // bars array newest-first matches evaluateModeD() contract
+  const modeD = evaluateModeD(indRows);
+
   return {
     success: true,
     asset,
@@ -131,6 +136,18 @@ export async function getSignalContext(asset) {
     recent_win_rate:  recentWinRate,
     consec_losses:    consecLosses,
     recent_pl:        parseFloat(recentPL.toFixed(2)),
+
+    // MODE D pattern evaluation — all 4 patterns scored against current bars
+    mode_d: modeD.success ? {
+      top_pattern:   modeD.top_pattern,
+      top_direction: modeD.top_direction,
+      best_call:     modeD.best_call,
+      best_put:      modeD.best_put,
+      bb_bps:        modeD.bb_bps,
+      ma_gap_bps:    modeD.ma_gap_bps,
+      lookback:      modeD.lookback,
+      patterns:      modeD.patterns,
+    } : null,
   };
 }
 
@@ -326,6 +343,114 @@ export async function unblockAsset(asset) {
     success: true,
     asset,
     blocks_cleared: result.changes,
+  };
+}
+
+// ─── autoBlockCheck() ────────────────────────────────────────────────────────
+//
+// Called after every executed trade. Checks if the asset has hit an auto-block
+// threshold and blocks it with a timed 120-minute expiry if so.
+//
+// Trigger A: >= 3 consecutive losses today on this asset
+// Trigger B: win rate < 35% with >= 5 trades today on this asset
+//
+// Returns { blocked: true, trigger, reason } or { blocked: false }
+
+export async function autoBlockCheck(asset) {
+  const nowSec     = Math.floor(Date.now() / 1000);
+  const todayStart = nowSec - (nowSec % 86400);
+
+  // Already blocked? Skip.
+  const existing = await mcpAll(
+    `SELECT id FROM asset_controls
+     WHERE asset = ? AND active = 1 AND (expires_at IS NULL OR expires_at > ?)
+     LIMIT 1`,
+    [asset, nowSec]
+  );
+  if (existing.length) return { blocked: false, already_blocked: true };
+
+  // Today's trades for this asset
+  const trades = await all(
+    `SELECT result FROM trades_ordered
+     WHERE asset = ? AND entry_timestamp >= ? AND result IN ('WIN','LOSS')
+     ORDER BY entry_timestamp DESC`,
+    [asset, todayStart]
+  );
+
+  if (!trades.length) return { blocked: false };
+
+  // Trigger A: consecutive losses
+  let consecLosses = 0;
+  for (const t of trades) {
+    if (t.result === 'LOSS') consecLosses++;
+    else break;
+  }
+
+  if (consecLosses >= 3) {
+    const reason = `auto-block: ${consecLosses} consecutive losses today`;
+    await blockAsset(asset, reason, 'auto', 120);
+    return { blocked: true, trigger: 'consecutive_losses', asset, reason, expires_min: 120 };
+  }
+
+  // Trigger B: win rate < 35% with >= 5 trades today
+  if (trades.length >= 5) {
+    const wins = trades.filter(t => t.result === 'WIN').length;
+    const wr   = (wins / trades.length) * 100;
+    if (wr < 35) {
+      const reason = `auto-block: win rate ${wr.toFixed(0)}% on ${trades.length} trades today`;
+      await blockAsset(asset, reason, 'auto', 120);
+      return { blocked: true, trigger: 'low_win_rate', asset, reason, win_rate: wr.toFixed(1), trades: trades.length, expires_min: 120 };
+    }
+  }
+
+  return { blocked: false, asset, consec_losses: consecLosses, trades_today: trades.length };
+}
+
+// ─── autoBlockVolatilitySweep() ───────────────────────────────────────────────
+//
+// Scans all assets and auto-blocks any with avg BB width < 5 bps (flat/dead).
+// Designed to run once at session start before the first trade.
+// Permanent blocks — flat assets don't recover within a session.
+//
+// Returns { blocked_count, blocked_assets: [{ asset, reason, bb_bps }] }
+
+export async function autoBlockVolatilitySweep() {
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  // Get avg BB width per asset from last 100 bars
+  const rows = await all(
+    `SELECT asset,
+            AVG((bb_upper - bb_lower) / bb_middle * 10000) as avg_bb_bps
+     FROM indicators
+     WHERE bb_upper IS NOT NULL AND bb_lower IS NOT NULL AND bb_middle IS NOT NULL AND bb_middle > 0
+     GROUP BY asset
+     HAVING avg_bb_bps IS NOT NULL`
+  );
+
+  // Get already-blocked assets
+  const blockedRows = await mcpAll(
+    `SELECT asset FROM asset_controls WHERE active = 1 AND (expires_at IS NULL OR expires_at > ?)`,
+    [nowSec]
+  );
+  const alreadyBlocked = new Set(blockedRows.map(r => r.asset));
+
+  const blocked_assets = [];
+
+  for (const row of rows) {
+    if (row.avg_bb_bps < 5 && !alreadyBlocked.has(row.asset)) {
+      const reason = `auto-block: BB ${row.avg_bb_bps.toFixed(2)} bps — flat asset (< 5 bps dead zone)`;
+      await blockAsset(row.asset, reason, 'auto', null); // permanent
+      blocked_assets.push({ asset: row.asset, reason, bb_bps: parseFloat(row.avg_bb_bps.toFixed(2)) });
+    }
+  }
+
+  return {
+    success: true,
+    blocked_count: blocked_assets.length,
+    blocked_assets,
+    note: blocked_assets.length === 0
+      ? 'No new flat assets found — all assets above 5 bps or already blocked'
+      : `Auto-blocked ${blocked_assets.length} flat asset(s) — permanent blocks`,
   };
 }
 

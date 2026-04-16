@@ -28,7 +28,7 @@ export function registerIntelligenceTools(server) {
 
   server.tool(
     'po_risk_check',
-    'Check the risk level before trading an asset. Evaluates: current indicator precision score (7 layers), direction alignment, recent win rate, consecutive losses. Returns a score 0-100 and verdict: GOOD / CAUTION / RISKY / AVOID.',
+    'Pre-trade audit for an asset. Evaluates all 4 MODE D patterns against current bar data, scores each (gates passed, gates failed, strength), and returns: verdict GOOD/CAUTION/RISKY/AVOID, score 0-100, trade_verdict (one sentence on the requested direction\'s pattern), mode_d.ranked_verdicts (strongest pattern first with verdict_summary), lookback_narrative (how the setup formed), and warnings. Lead field for the Analyst is trade_verdict — reads pattern verdicts, not raw numbers.',
     {
       asset: z.string().describe('Asset symbol to check, e.g. EURUSD_otc'),
       direction: z.enum(['CALL', 'PUT']).optional().describe('Trade direction to check against precision score direction'),
