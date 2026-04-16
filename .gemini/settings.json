@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "pocket-option": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\msonk\\Documents\\GitHub\\pocket-option-mcp\\src\\server.js"
+      ],
+      "env": {
+        "PO_DB_PATH": "C:\\Users\\msonk\\Documents\\GitHub\\pocket-option-mcp\\data\\trading_data.db",
+        "MCP_DB_PATH": "C:\\Users\\msonk\\Documents\\GitHub\\pocket-option-mcp\\data\\mcp.db"
+      },
+      "trust": true
+    }
+  }
+}

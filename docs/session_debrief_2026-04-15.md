@@ -203,6 +203,7 @@ MADUSD, USDCAD, CADJPY, GBPJPY, LBPUSD, AUDUSD, CHFNOK, AUDCHF, EURCHF, NZDUSD, 
 The most important cross-dimensional finding:
 
 **CALL signals:**
+
 | BB | K zone | Win% | P&L | Verdict |
 |---|---|---|---|---|
 | 40–100 | K 0–20 | **80.0%** | +$1,340 | Best CALL setup |
@@ -213,6 +214,7 @@ The most important cross-dimensional finding:
 | 20–40 | K 20–35 | 45.8% ❌ | -$1,440 | Danger zone confirmed |
 
 **PUT signals:**
+
 | BB | K zone | Win% | P&L | Verdict |
 |---|---|---|---|---|
 | **40–100** | **K 35–65** | **83.3%** | **+$7,200** | Best PUT setup in dataset |
@@ -259,6 +261,7 @@ The most important cross-dimensional finding:
 | 75–100 | TREND | 50.0% | 50.0% (50tr) | — | -$1,000 |
 
 **Critical patterns:**
+
 - **RSI 0–15 TREND PUT = 71.8%** — strongest RSI bucket in entire dataset (39 trades). Deep oversold trend continuation PUTs are the best signal type.
 - **RSI 45–60 TREND = 46.7%** — the mid-RSI dead zone loses money for both directions
 - **RSI 60–75 REVERSAL PUT = 63.0%** — overbought reversal PUTs at RSI 60–75 work well (27 trades)
@@ -319,6 +322,7 @@ Based on full edge report (398 signals):
 | 7 | **REVERSAL PUT only on expanding BB** | New gate | 68.4% vs 45.0% contracting |
 
 **Immediate po_simulate tests:**
+
 ```
 # Test 1: Block K danger zone
 call_k_oversold_max: 20  (only CALL when K < 20, not 20-35)
@@ -345,6 +349,7 @@ call_k_crash_min: 30, put_d_min: 85, bar_bb_bps_min: 15
 ### H. Why the Bot Generates More CALLs Than PUTs
 
 **Signal generation totals (all-time):**
+
 - CALL: **388 signals fired** (54.1%)
 - PUT: **329 signals fired** (45.9%)
 
@@ -378,6 +383,7 @@ CALL has a low-barrier TREND path (RSI > 50 + K > 30 = broadly satisfied in any 
 | UTC 12h | 13 | **15%** ❌ | **-$4,580** | 29 | **69%** | **+$4,700** |
 
 **Key hourly findings:**
+
 - **UTC 12h is catastrophic for CALLs (15%, -$4,580)** but excellent for PUTs (69%, +$4,700) — the market is in a consistent downward/consolidation phase at this hour
 - **UTC 02h and 08h** both directions lose — low-edge sessions, likely low liquidity or choppy conditions
 - **UTC 09h** is the only hour where CALLs (59%) outperform PUTs (48%) — the only hour where CALL has a consistent edge
@@ -414,10 +420,12 @@ CALL has a low-barrier TREND path (RSI > 50 + K > 30 = broadly satisfied in any 
 | BB > 20 + K 65–80 | 34 | **44.1%** ❌ | -$2,600 |
 
 **The only CALL conditions worth keeping:**
+
 1. **K flash crash ≥ 30 pts down to K < 25** — 80% win rate (tiny sample, but consistent with MODE D gate intent)
 2. **RSI 60–80 + TREND signal** — 66 trades at 59.1%, the most reliable high-volume CALL setup. This is the uptrend continuation: RSI in momentum zone, not yet extreme
 
 **The CALL conditions to suppress:**
+
 - RSI < 30 + K crash < 30 pts — looks oversold but not enough momentum (50% = coin flip)
 - BB > 20 + K 65–80 — overbought CALL at moderate BB = 44.1%
 - Any CALL at UTC 12h regardless of conditions
@@ -469,6 +477,7 @@ CALL has a low-barrier TREND path (RSI > 50 + K > 30 = broadly satisfied in any 
 | K crash 30 + D85 + BB100 | 0 | N/A | $0 | 0 | N/A | $0 | $0 | +$1,160 |
 
 **Key simulator findings:**
+
 - `put_d_min=85` blocks 3 losing PUT signals while keeping all 5 CALL winners → best single-param improvement (+$1,500)
 - `call_k_crash_min=30` hurts in MODE D because it removes 2 winning CALLs — confirm against signal_outcomes before applying
 - `bar_bb_bps_min=100` blocks everything in MODE D — not practical for live strategy
@@ -548,7 +557,7 @@ CALL has a low-barrier TREND path (RSI > 50 + K > 30 = broadly satisfied in any 
 | Win rate | 54.5% | 51.3% | -3.2 ppts |
 | P&L | +$9,320 | -$1,640 | **-$10,960** ❌ |
 
-**Result: BACKFIRES.** Raising D min from 80 to 85 blocks 172 trades — and the blocked signals were profitable PUT entries (D in 80–84 range winning at ~60%). The gate is too tight. The 80–84 bps D zone is a strong PUT confirmation zone, not a weak one. 
+**Result: BACKFIRES.** Raising D min from 80 to 85 blocks 172 trades — and the blocked signals were profitable PUT entries (D in 80–84 range winning at ~60%). The gate is too tight. The 80–84 bps D zone is a strong PUT confirmation zone, not a weak one.
 
 Note: MODE D simulator showed +$1,500 improvement for this test, but that result is based on only 3 signals and is statistically meaningless. The signal_outcomes dataset (398 trades) is the correct reference. **Do not raise put_d_min beyond 80.**
 
