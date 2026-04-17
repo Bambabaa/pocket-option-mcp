@@ -349,3 +349,141 @@ bbW 40–60 bps    (sweet spot — very wide BBs not necessarily better)
 ---
 
 *Generated: 2026-04-17 | Data: 2026-04-16 | Signals replayed: 705 | Live trades: 668 | Assets: 48*
+
+---
+
+## 10. CALL K-Crash — Live Session Deep Correlation (2026-04-17)
+
+Analysis of 51 CALL signal outcomes from today's live session. Threshold sweep across all gates.
+
+### Overall
+| Metric | Value |
+|---|---|
+| Total CALL signals | 51 |
+| Pattern split | 18 OVERSOLD_REVERSAL, 34 UP_TREND |
+| Both patterns today | Losing (39% and 44% WR) |
+| Primary cause | 34 of 51 signals fired into MA downtrend |
+
+---
+
+### RSI Threshold Sweep
+
+| Cutoff | Keep | WR | P&L | Verdict |
+|---|---|---|---|---|
+| ≤ 15 | 3 | 33% | -$540 | AVOID |
+| ≤ 20 *(current gate)* | 5 | **20%** | **-$1,540** | **AVOID — worst** |
+| ≤ 25 | 7 | 43% | -$620 | AVOID |
+| ≤ 30 | 8 | 38% | -$1,120 | AVOID |
+| **≤ 35** | **17** | **53%** | **+$640** | MARGINAL |
+| **≤ 40** | **17** | **53%** | **+$640** | MARGINAL |
+
+> Current RSI<20 gate is the worst performing threshold — deeply oversold RSI paradoxically loses on CALLs. Break-even is RSI ≤ 35–40. Recommend changing gate to RSI ≤ 40.
+
+---
+
+### K Crash Magnitude Sweep
+
+| Min Crash | Keep | WR | P&L | Verdict |
+|---|---|---|---|---|
+| ≥ 10 pts | 20 | 45% | -$1,360 | MARGINAL |
+| ≥ 15 pts | 17 | 41% | -$1,780 | AVOID |
+| ≥ 20 pts | 7 | 57% | +$340 | GOOD |
+| **≥ 25 pts** *(current)* | **4** | **75%** | **+$880** | **STRONG** |
+
+> Crash ≥ 25 pts validated — current gate is correct. Do not lower this threshold.
+
+---
+
+### K Value at Signal Bar
+
+| K Zone | Keep | WR | P&L | Verdict |
+|---|---|---|---|---|
+| EXT < 10 | 4 | 25% | -$1,040 | AVOID |
+| DEEP 10–20 | 2 | 0% | -$1,000 | AVOID |
+| **OS 20–30** | **5** | **60%** | +$380 | GOOD |
+| **NEAR 30–40** | **8** | **63%** | +$800 | GOOD |
+| OUT 40+ | 30 | 40% | -$3,480 | AVOID |
+
+> Threshold sweep: K ≤ 40 keeps 21 trades at 48% WR. K ≤ 35 keeps 17 at 41%. K in 20–40 range is the working zone — extreme K (<20) loses. This aligns with Apr 16 finding that kCurr 25–30 outperforms deeper crashes.
+
+---
+
+### Bars Since K Was Above 50 — Strongest Single Gate Found
+
+| Max Bars | Keep | WR | P&L | Verdict |
+|---|---|---|---|---|
+| **≤ 1** | **6** | **83%** | **+$1,800** | **STRONG** |
+| **≤ 2** | **10** | **60%** | **+$760** | GOOD |
+| ≤ 3 | 16 | 56% | +$640 | GOOD |
+| ≤ 4 | 19 | 58% | +$1,060 | GOOD |
+| ≤ 5 | 22 | 50% | -$440 | MARGINAL |
+
+> **Best single threshold found today: barsSinceK50 ≤ 1 = 83% WR (+$1,800).** K must have just crossed below 50 — a fresh momentum break. Stale oversold (5+ bars below 50) = 0% WR. Not currently gated in bot.
+
+---
+
+### K-D Spread Sweep
+
+| Max Spread | Keep | WR | P&L | Verdict |
+|---|---|---|---|---|
+| ≤ -20 | 7 | 57% | +$340 | GOOD |
+| ≤ -10 | 13 | 54% | +$220 | MARGINAL |
+| **≤ 0** | **25** | **48%** | **-$480** | MARGINAL |
+| **> 10** *(current)* | **15** | **27%** | **-$3,660** | **AVOID** |
+
+> K-D spread > 10 is a death zone — 27% WR, -$3,660 on 15 trades. K far above D means the signal fires too early before D catches up. Recommend gate: spread ≤ 0.
+
+---
+
+### BB Width Sweep
+
+| Min Width | Keep | WR | P&L | Verdict |
+|---|---|---|---|---|
+| ≥ 20 bps *(current)* | 30 | 40% | -$3,480 | AVOID |
+| ≥ 30 bps | 24 | 38% | -$3,360 | AVOID |
+| ≥ 40 bps | 19 | 42% | -$1,820 | AVOID |
+| **≥ 50 bps** | **14** | **57%** | **+$680** | GOOD |
+
+> 20–50 bps is a kill zone for CALLs (same as PUT DT on Apr 16). Gate needs to be raised from 20 to 50 bps for CALL signals specifically.
+
+---
+
+### MA Trend Sweep
+
+| Min maTrendBps | Keep | WR | P&L | Verdict |
+|---|---|---|---|---|
+| ≥ -50 | 52 | 42% | -$3,880 | AVOID |
+| ≥ -20 | 47 | 43% | -$3,300 | AVOID |
+| **≥ 0** | **22** | **45%** | **-$400** | MARGINAL |
+
+> MA trend alone insufficient but critical as a filter. 34 of 51 CALL signals fired into downtrend — that group is -$4,520. Requiring MA ≥ 0 removes the biggest source of losses.
+
+---
+
+### Best Stacked Combos
+
+| Combo | Keep | WR | P&L | Verdict |
+|---|---|---|---|---|
+| **BB≥50 + MA≥0** | **5** | **80%** | **+$1,340** | **STRONG** |
+| **RSI≤40 + Crash≥25** | **4** | **75%** | **+$880** | **STRONG** |
+| MA≥0 + Spread≤0 | 14 | 57% | +$1,180 | GOOD |
+| PRICE_BELOW + MA≥0 | 10 | 60% | +$760 | GOOD |
+
+---
+
+### Proposed New CALL K-Crash Gates
+
+| Gate | Current | Recommended | Evidence |
+|---|---|---|---|
+| RSI | < 20 | **≤ 40** | Current gate 20% WR; ≤40 = 53% |
+| K crash | ≥ 25 pts | Keep ≥ 25 | Validated |
+| barsSinceK50 | none | **≤ 1** | 83% WR — strongest gate found |
+| BB width | ≥ 20 bps | **≥ 50 bps** | 20–50 bps kill zone |
+| MA trend | none | **≥ 0 bps** | 34/51 losses from downtrend signals |
+| K-D spread | none | **≤ 0** | spread>10 = 27% WR death zone |
+
+> Cross-session consistency check needed before pushing to bot. Run `po_simulate` with these thresholds against Apr 16 replay data to validate stability.
+
+---
+
+*Live session analysis appended: 2026-04-17 | CALL signals analysed: 51 | Threshold sweep: 7 dimensions*

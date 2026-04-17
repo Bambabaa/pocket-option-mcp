@@ -126,13 +126,13 @@ const CALL_GATES = {
         const g2_kCrash = kCrash > 25;
         const g3_kOversold = i0.stochastic_k_v2 < 25;
         const g4_kWasMid = i1.stochastic_k_v2 >= 50;
-        const g5_rsiDown = i0.rsi_5 != null && i0.rsi_5 < 40;
+        const g5_rsiDown = i0.rsi_5 != null && i0.rsi_5 < 20; // Change 4: tightened from 40 → 20
         const maTrendBps = i0.ma1 != null && i0.ma3 != null
             ? ((i0.ma1 - i0.ma3) / i0.ma3) * 10000 : null;
         const g6_maNotDeep = maTrendBps != null && maTrendBps > -20;
         const bbBps = i0.bb_upper != null && i0.bb_lower != null && i0.bb_middle != null && i0.bb_middle > 0
             ? (i0.bb_upper - i0.bb_lower) / i0.bb_middle * 10000 : null;
-        const g7_bbWide = bbBps != null && bbBps >= 10;
+        const g7_bbWide = bbBps != null && bbBps >= 20; // Change 2: tightened from 10 → 20 bps
 
         const pass = g1_maStack && g2_kCrash && g3_kOversold && g4_kWasMid && g5_rsiDown && g6_maNotDeep && g7_bbWide;
 
@@ -156,6 +156,7 @@ const PUT_GATES = {
         const i2 = barM2, i1 = barM1, i0 = bar0;
         if (i2.rsi_5 == null || i1.rsi_5 == null) return { pass: false, gates: {}, values: {} };
 
+        const g0_rsiPriorOB = i2.rsi_5 > 80; // Change 3: bar-2 RSI must have been genuinely overbought (>80)
         const g1_rsiBaseline = i2.rsi_5 > 70 && i1.rsi_5 > 70 &&
             !(i1.rsi_5 >= 75 && i1.rsi_5 < 80);
         const rsiFalling = i0.rsi_5 != null && i0.rsi_5 < i1.rsi_5;
@@ -178,13 +179,13 @@ const PUT_GATES = {
         const g7_maTrendWeak = maTrendBps != null && maTrendBps < 20;
         const bbBps = i0.bb_upper != null && i0.bb_lower != null && i0.bb_middle != null && i0.bb_middle > 0
             ? (i0.bb_upper - i0.bb_lower) / i0.bb_middle * 10000 : null;
-        const g8_bbWide = bbBps != null && bbBps >= 10;
+        const g8_bbWide = bbBps != null && bbBps >= 20; // Change 2: tightened from 10 → 20 bps
 
-        const pass = g1_rsiBaseline && g2_rsiRecovery && g3_kTurn && g4_dPosition && g5_maStack && g6_kdCross && g7_maTrendWeak && g8_bbWide;
+        const pass = g0_rsiPriorOB && g1_rsiBaseline && g2_rsiRecovery && g3_kTurn && g4_dPosition && g5_maStack && g6_kdCross && g7_maTrendWeak && g8_bbWide;
 
         return {
             pass, direction: 'PUT', patternName: 'LATE_OVERBOUGHT',
-            gates: { g1_rsiBaseline, g2_rsiRecovery, g3_kTurn, g4_dPosition, g5_maStack, g6_kdCross, g7_maTrendWeak, g8_bbWide },
+            gates: { g0_rsiPriorOB, g1_rsiBaseline, g2_rsiRecovery, g3_kTurn, g4_dPosition, g5_maStack, g6_kdCross, g7_maTrendWeak, g8_bbWide },
             values: {
                 rsi_m2: i2.rsi_5, rsi_m1: i1.rsi_5, rsi_0: i0.rsi_5,
                 rsiVelocity, closeAboveMid,
@@ -210,7 +211,7 @@ export async function replayCandles(asset = null, params = {}) {
 
     const rows = await all(`
         SELECT c.asset, c.timestamp, c.open, c.high, c.low, c.close, c.volume,
-               i.rsi_5, i.stochastic_k_v2 AS stochastic_k, i.stochastic_d_v2 AS stochastic_d,
+               i.rsi_5, i.stochastic_k_v2, i.stochastic_d_v2,
                i.ma1, i.ma2, i.ma3, i.bb_middle, i.bb_upper, i.bb_lower
         FROM candles c
         LEFT JOIN indicators i
@@ -231,7 +232,7 @@ export async function replayCandles(asset = null, params = {}) {
     const signals = [];
     let totalCandles = 0, candlesWithIndicators = 0, candlesWithHistory = 0;
     const callRejections = { g1_maStack: 0, g2_kCrash: 0, g3_kOversold: 0, g4_kWasMid: 0, g5_rsiDown: 0, g6_maNotDeep: 0, g7_bbWide: 0 };
-    const putRejections  = { g1_rsiBaseline: 0, g2_rsiRecovery: 0, g3_kTurn: 0, g4_dPosition: 0, g5_maStack: 0, g6_kdCross: 0, g7_maTrendWeak: 0, g8_bbWide: 0 };
+    const putRejections  = { g0_rsiPriorOB: 0, g1_rsiBaseline: 0, g2_rsiRecovery: 0, g3_kTurn: 0, g4_dPosition: 0, g5_maStack: 0, g6_kdCross: 0, g7_maTrendWeak: 0, g8_bbWide: 0 };
 
     for (const [assetName, candles] of Object.entries(byAsset)) {
         for (let t = 2; t < candles.length; t++) {
@@ -822,7 +823,7 @@ export async function optimizeGates(direction = 'both') {
 // Returns side-by-side comparison: signal count, win rate, P/L per direction.
 //
 // Supported params:
-//   call_rsi_max         (default 40)   — max RSI for CALL (g5_rsiDown)
+//   call_rsi_max         (default 20)   — max RSI for CALL (g5_rsiDown)
 //   call_k_crash_min     (default 25)   — min K drop size (g2_kCrash)
 //   call_k_oversold_max  (default 25)   — max K at bar0 (g3_kOversold)
 //   call_k_was_mid_min   (default 50)   — min K at barM1 (g4_kWasMid)
@@ -836,7 +837,7 @@ export async function optimizeGates(direction = 'both') {
 
 export async function simulateGates(params = {}) {
     const {
-        call_rsi_max        = 40,
+        call_rsi_max        = 20,
         call_k_crash_min    = 25,
         call_k_oversold_max = 25,
         call_k_was_mid_min  = 50,
@@ -914,8 +915,9 @@ export async function simulateGates(params = {}) {
                     kCrash > 25 &&
                     i0.stochastic_k_v2 < 25 &&
                     i1.stochastic_k_v2 >= 50 &&
-                    (i0.rsi_5 != null && i0.rsi_5 < 40) &&
-                    (maTrendBps != null && maTrendBps > -20);
+                    (i0.rsi_5 != null && i0.rsi_5 < 20) &&
+                    (maTrendBps != null && maTrendBps > -20) &&
+                    (barBbBps >= 20);
                 if (basePass) {
                     const result = !isGap ? (nextBar.close > bar0.close ? 'WIN' : 'LOSS') : null;
                     baselineSigs.call.push({ asset: assetName, result, pl: result === 'WIN' ? amount * 0.92 : result === 'LOSS' ? -amount : 0 });
@@ -948,6 +950,7 @@ export async function simulateGates(params = {}) {
                 const closeAboveMid = i0.close != null && i0.bb_middle != null && i0.close >= i0.bb_middle;
                 const kdSpread = i0.stochastic_k_v2 != null && i0.stochastic_d_v2 != null ? i0.stochastic_k_v2 - i0.stochastic_d_v2 : null;
                 const basePass =
+                    (i2.rsi_5 > 80) &&
                     (i2.rsi_5 > 70 && i1.rsi_5 > 70 && !(i1.rsi_5 >= 75 && i1.rsi_5 < 80)) &&
                     (i0.rsi_5 != null && i0.rsi_5 >= 38 && i0.rsi_5 < 70 && !(i0.rsi_5 >= 55 && i0.rsi_5 < 65) &&
                      rsiVelocity != null && rsiVelocity > -12 && closeAboveMid) &&
@@ -955,7 +958,8 @@ export async function simulateGates(params = {}) {
                     (i0.stochastic_d_v2 != null && i0.stochastic_d_v2 >= 80) &&
                     (i0.ma1 != null && i0.ma3 != null && i0.ma1 > i0.ma3) &&
                     (kdSpread != null && kdSpread < -3) &&
-                    (maTrendBps != null && maTrendBps < 20);
+                    (maTrendBps != null && maTrendBps < 20) &&
+                    (barBbBps >= 20);
                 if (basePass) {
                     const result = !isGap ? (nextBar.close < bar0.close ? 'WIN' : 'LOSS') : null;
                     baselineSigs.put.push({ asset: assetName, result, pl: result === 'WIN' ? amount * 0.92 : result === 'LOSS' ? -amount : 0 });
