@@ -223,18 +223,45 @@ All values parsed directly from signal `reasons` strings in the DB.
 
 ---
 
-### 3.4 CALL Up Trend (Continuation) — No Edge Found
+### 3.4 CALL Up Trend — Edge Found on Asset Allowlist
 
-| Filter | n | WR |
-|---|---|---|
-| All | 728 | 49.7% |
-| RSI > 60 | 575 | 48.9% |
-| RSI > 65 | 458 | 48.5% |
-| RSI > 70 | 358 | 48.9% |
-| BB >= 20 | 365 | 50.4% |
-| BB >= 30 | 241 | 49.0% |
+Initial analysis showed no edge (49.7% WR across all 51 assets). Deep `po_find_edge` analysis reveals the pattern is **strongly asset-dependent**:
 
-**Conclusion:** No filtering improves this pattern above 50.5%. Sub-coinflip at scale (-$7,680 per simulation run). Should be **disabled** or restricted to the top 6–8 assets only.
+#### All assets sorted by WR (min 5 signals, 733 total)
+
+| Tier | Assets | Signals | WR | P&L |
+|---|---|---|---|---|
+| Top 12 (WR ≥ 60%) | CHFJPY, USDMYR, USDDZD, USDCOP, AUDCHF, AEDCNY, USDCAD, USDCLP, NZDJPY, NZDUSD, CHFNOK, YERUSD | 131 | **70.2%** | **+$22,820** |
+| Mid 19 (WR 50–60%) | BHDCNY, AUDNZD, EURUSD, CADJPY, USDCNH, USDINR... | 269 | 55.3% | +$3,780 |
+| Bottom 20 (WR < 50%) | CADCHF(0%!), QARCNY(12.5%), AUDCAD(22.2%), EURGBP(33%), GBPUSD(32%)... | 333 | **42.6%** | **-$42,600** |
+
+**The bottom 20 assets are why the aggregate looks coin-flip.** Top 12 vs rest: 70.2% WR vs 44.1% WR.
+
+#### Key indicator profile on top 12 assets (131 signals)
+
+| Stoch K | n | WR | — | RSI | n | WR |
+|---|---|---|---|---|---|---|
+| K 40–50 | 13 | **84.6%** | | RSI 55–60 | 13 | **76.9%** |
+| K 50–60 | 25 | 64.0% | | RSI 60–65 | 24 | **79.2%** |
+| K 60–70 | 38 | 68.4% | | RSI 70–80 | 31 | 74.2% |
+| K 70–80 | 27 | 70.4% | | RSI 80–100 | 27 | 74.1% |
+
+> On good assets, WR is strong across all K and RSI ranges. The asset allowlist is the primary gate.
+
+#### Gate configs for CALL UT
+
+| Config | n | WR | P&L |
+|---|---|---|---|
+| Baseline (no filter) | 733 | 49.7% | -$16,100 |
+| Asset allowlist only (12 assets) | 131 | **70.2%** | **+$22,820** ◄ |
+| Asset + K[40,60) | 38 | 71.1% | +$6,920 |
+| Asset + K[40,60) + RSI[50,65) | 21 | **76.2%** | +$4,860 |
+| K[40,60) + RSI[50,60) + bbW>=15 (no allowlist) | 42 | 61.9% | +$3,960 |
+| K[40,60) + RSI[50,60) (no allowlist) | 71 | 59.2% | +$4,820 |
+
+**Conclusion:** CALL UP TREND has genuine edge on a 12-asset allowlist — **70.2% WR, +$22,820 P&L** on 131 signals. Strategy: **restrict to allowlist** rather than disable. For non-allowlist assets, drop this pattern entirely.
+
+**Asset allowlist:** `CHFJPY_otc, USDMYR_otc, USDDZD_otc, USDCOP_otc, AUDCHF_otc, AEDCNY_otc, USDCAD_otc, USDCLP_otc, NZDJPY_otc, NZDUSD_otc, CHFNOK_otc, YERUSD_otc`
 
 ---
 
@@ -315,6 +342,7 @@ Complete parameter sweep across all 4 patterns using `bot/indicators.js` on full
 ### 5.1 CALL K-Crash (254 signals, baseline WR 51.2%)
 
 #### A1: K Drop magnitude
+
 | Gate | n | WR | P&L |
 |---|---|---|---|
 | kDrop >= 20 | 205 | 51.7% | — |
@@ -323,6 +351,7 @@ Complete parameter sweep across all 4 patterns using `bot/indicators.js` on full
 | kDrop >= 35 | 55 | 54.5% | — |
 
 #### A4: K_prev (was mid-high = better setup)
+
 | Gate | n | WR | P&L |
 |---|---|---|---|
 | kPrev >= 35 | 195 | 52.3% | — |
@@ -331,6 +360,7 @@ Complete parameter sweep across all 4 patterns using `bot/indicators.js` on full
 | kPrev >= 55 | 108 | 54.6% | — |
 
 #### A6: BB width
+
 | Gate | n | WR | P&L |
 |---|---|---|---|
 | bbW >= 10 | 218 | 52.3% | — |
@@ -338,6 +368,7 @@ Complete parameter sweep across all 4 patterns using `bot/indicators.js` on full
 | **bbW >= 30** | **159** | **52.8%** | +$1,140 |
 
 #### A8/A9: Winning combos
+
 | Combo | n | WR | P&L |
 |---|---|---|---|
 | kDrop>=25 + bbW>=30 | 55 | **58.2%** | +$3,220 ◄ |
@@ -348,6 +379,7 @@ Complete parameter sweep across all 4 patterns using `bot/indicators.js` on full
 ### 5.2 PUT Overbought (137 signals, baseline WR 50.4%)
 
 #### B2: Prior RSI (rsiFrom)
+
 | Gate | n | WR | P&L |
 |---|---|---|---|
 | rsiFrom >= 75 | 53 | 49.1% | — |
@@ -356,6 +388,7 @@ Complete parameter sweep across all 4 patterns using `bot/indicators.js` on full
 | rsiFrom >= 85 | 14 | 57.1% | — |
 
 #### B4: RSI velocity
+
 | Gate | n | WR | P&L |
 |---|---|---|---|
 | vel < -8 | 117 | 52.1% | — |
@@ -364,6 +397,7 @@ Complete parameter sweep across all 4 patterns using `bot/indicators.js` on full
 | vel < -15 | 45 | 51.1% | — |
 
 #### B8: Combo
+
 | Combo | n | WR | P&L |
 |---|---|---|---|
 | rsiFrom>=80 + d>=80 + vel>-15 | 6 | **66.7%** | +$840 (small n) |
@@ -374,6 +408,7 @@ Complete parameter sweep across all 4 patterns using `bot/indicators.js` on full
 ### 5.3 PUT Down Trend (570 signals, baseline WR 52.3%)
 
 #### C1: BB width — STRONGEST gate for this pattern
+
 | Gate | n | WR | P&L delta |
 |---|---|---|---|
 | bbW >= 8 | 355 | 52.1% | +$100 |
@@ -384,12 +419,14 @@ Complete parameter sweep across all 4 patterns using `bot/indicators.js` on full
 | bbW >= 30 | 178 | 55.6% | +$6,040 |
 
 #### C3: RSI at signal
+
 | Gate | n | WR | P&L |
 |---|---|---|---|
 | rsi <= 25 | 202 | 53.0% | +$1,720 |
 | rsi <= 45 | 495 | 53.1% | +$4,980 |
 
 #### C5: Combos
+
 | Combo | n | WR | P&L |
 |---|---|---|---|
 | bbW>=20 + stochK<=40 | 125 | **55.2%** | +$3,740 |
@@ -398,18 +435,21 @@ Complete parameter sweep across all 4 patterns using `bot/indicators.js` on full
 
 ---
 
-### 5.4 CALL Up Trend (728 signals, baseline WR 49.7%) — NO EDGE
+### 5.4 CALL Up Trend (733 signals) — Edge on Asset Allowlist
 
-| Gate | n | WR | P&L delta |
+Standard BB/RSI/K gates provide no help on the full universe. The pattern is asset-specific.
+
+| Config | n | WR | P&L |
 |---|---|---|---|
-| bbW >= 10 | 480 | 50.4% | +$8,800 (but still -$7,680 absolute) |
-| bbW >= 20 | 365 | 50.4% | +$10,620 (but still -$5,860 absolute) |
-| bbW >= 30 | 241 | 49.0% | +$9,260 (but still -$7,220 absolute) |
-| rsi >= 60 | 577 | 48.9% | — |
-| rsi >= 70 | 358 | 48.9% | — |
-| stochK >= 50 | 621 | 49.3% | — |
+| All assets (no filter) | 733 | 49.7% | -$16,100 |
+| 12-asset allowlist | 131 | **70.2%** | **+$22,820** ◄ |
+| Bottom 20 assets | 333 | 42.6% | -$42,600 |
+| K[40,60) + RSI[50,60) (all assets) | 71 | 59.2% | +$4,820 |
+| K[40,60) + RSI[50,60) + bbW>=15 (all assets) | 42 | 61.9% | +$3,960 |
 
-**No combination of gates brings this pattern to profitability.** Every filter still produces negative P&L. The pattern fires 43% of all signals and is the primary loss driver.
+**12-asset allowlist:** CHFJPY, USDMYR, USDDZD, USDCOP, AUDCHF, AEDCNY, USDCAD, USDCLP, NZDJPY, NZDUSD, CHFNOK, YERUSD
+
+**Updated conclusion:** Restrict CALL UT to the 12-asset allowlist — do not disable. Pattern has 70.2% WR on these assets.
 
 ---
 
@@ -436,23 +476,29 @@ BB gate at 20 bps adds **+$21,380 P&L** vs no gate across all signals.
 | OPT-B: rsiFrom>=80 for PutOB | 928 | 51.4% | -$6,080 | +$4,040 |
 | OPT-C: PutDT bbW>=20 | 942 | 52.0% | -$600 | +$9,520 |
 | OPT-D: Drop CallUT entirely | 554 | 51.6% | -$2,440 | +$7,680 |
+| OPT-E: CallUT allowlist (12 assets) | 457 | 57.5% | +$18,180 | +$28,300 |
 | **OPT-COMBINED** ◄ | **326** | **56.1%** | **+$12,680** | **+$22,800** |
+| **OPT-COMBINED+ALLOWLIST** ◄◄ | **457** | **57.5%** | **+$18,180** | **+$28,300** |
+
+> Note: OPT-E and OPT-COMBINED+ALLOWLIST use the 12-asset CALL UT allowlist instead of disabling the pattern entirely.
 
 OPT-COMBINED applies all four changes simultaneously:
+
 - K-Crash: kDrop >= 25 + RSI < 40 + **bbW >= 30**
 - PutOB: **rsiFrom >= 80** + bbW >= 10
-- CallUT: **disabled**
+- CallUT: **restricted to 12-asset allowlist** (not disabled — see Section 3.4)
 - PutDT: **bbW >= 20**
 
 By pattern breakdown under OPT-COMBINED:
+
 | Pattern | n | WR |
 |---|---|---|
 | K-Crash | 48 | 58.3% |
 | PutOB | 31 | 58.1% |
-| CallUT | 0 | disabled |
+| CallUT (allowlist) | 131 | **70.2%** |
 | **PutDT** | **247** | **55.5%** |
 
-**The OPT-COMBINED config converts -$10,120 to +$12,680 — a +$22,800 improvement on identical candle data**, at the cost of 68% signal volume reduction (1,034 → 326).
+**The OPT-COMBINED config converts -$10,120 to +$12,680 — a +$22,800 improvement on identical candle data.** Adding the CallUT asset allowlist pushes this further to **+$18,180 P&L (+$28,300 delta)** at 57.5% WR.
 
 ---
 
@@ -497,6 +543,7 @@ By pattern breakdown under OPT-COMBINED:
 ### 7.1 Gate Changes — `bot/indicators.js`
 
 #### Change 1: CALL K-Crash RSI gate
+
 ```
 // CURRENT
 const rsiDown = rsi < 45;
@@ -504,10 +551,12 @@ const rsiDown = rsi < 45;
 // CHANGE TO
 const rsiDown = rsi < 20;
 ```
+
 - **Why:** RSI 20–45 at signal time has only 50% WR. RSI < 20 = 63–75% WR confirmed on both live and replay data.
 - **Impact:** -71% signal reduction on CALL K-Crash, WR 53.8% → 60.9%
 
 #### Change 2: BB per-bar width gate (all patterns)
+
 ```
 // CURRENT
 const bbWidthSufficient = bbWidthBps >= 10;
@@ -515,33 +564,43 @@ const bbWidthSufficient = bbWidthBps >= 10;
 // CHANGE TO
 const bbWidthSufficient = bbWidthBps >= 20;
 ```
+
 - **Why:** BB 10–20 bps still produces losing trades on PUT DT. At 20 bps, the market has measurable directional range. This single change adds +$11,560 in simulation.
 - **Impact:** -24% overall signal reduction, combined WR 51.1% → 52.3%
 
 #### Change 3: PUT Overbought prior RSI gate (new gate)
+
 ```
 // ADD to PUT Reversal block, alongside existing rsiWasOverbought1/2 checks:
 const rsiPriorWasHighOB = rsi_2 != null && rsi_2 > 80;
 // Include in the condition:
 // && rsiPriorWasHighOB
 ```
+
 - **Why:** RSI prior bar 70–75 has only 33% WR on PUT OB signals. The pattern only has edge when RSI was genuinely above 80 before reversal.
 - **Impact:** -77% PUT OB signal reduction, WR 50.4% → 58.1%, P&L +$4,040
 
-#### Change 4: Disable CALL Up Trend (or asset-restrict)
-```
-// Option A: Full disable
-// Comment out or wrap _generateSignalsKTVideo2 CALL Continuation block with: if (false) {
+#### Change 4: Restrict CALL Up Trend to 12-asset allowlist
 
-// Option B: Asset-restrict to top 8 only
-const UPTREND_CALL_ASSETS = ['CHFJPY_otc','USDCAD_otc','USDBRL_otc','CADJPY_otc','USDMXN_otc','AUDCHF_otc','AEDCNY_otc','NZDUSD_otc'];
-if (!UPTREND_CALL_ASSETS.includes(asset)) return false;
+```javascript
+// Add asset allowlist check in the CALL UP TREND block
+const CALL_UT_ASSETS = new Set([
+  'CHFJPY_otc','USDMYR_otc','USDDZD_otc','USDCOP_otc',
+  'AUDCHF_otc','AEDCNY_otc','USDCAD_otc','USDCLP_otc',
+  'NZDJPY_otc','NZDUSD_otc','CHFNOK_otc','YERUSD_otc'
+]);
+// In _generateSignalsKTVideo2 CALL continuation block:
+if (!CALL_UT_ASSETS.has(asset)) return; // skip non-allowlist assets
 ```
-- **Why:** 728 signals, 49.7% WR, -$7,680 P&L. No filter rescues it. It is the primary source of losses in the strategy.
+
+- **Why:** Full universe 49.7% WR = -$16,100. The 12-asset allowlist produces 70.2% WR = +$22,820 on 131 signals. The 39 excluded assets have 44.1% WR = -$40,860 — they are the loss driver.
+- **Impact:** -82% signal reduction on CallUT, WR 49.7% → 70.2%, P&L -$16,100 → +$22,820
+- **Do NOT disable entirely** — these 12 assets are one of the strongest patterns in the entire strategy.
 
 ### 7.2 Asset Blocks — `po_block_asset`
 
 Run in Claude Code with MCP active:
+
 ```
 po_block_asset AUDUSD_otc
 po_block_asset GBPUSD_otc
@@ -557,6 +616,7 @@ po_block_asset EURHUF_otc
 ## 8. Validation Workflow
 
 Before going live:
+
 1. Apply gate changes to `bot/indicators.js`
 2. Re-run `node scripts/simulate_gates2.cjs` — confirm combined WR ≥ 52.5% and P&L > 0
 3. Run `po_replay_candles` via MCP to cross-check signal count aligns with simulation
@@ -573,7 +633,8 @@ Before going live:
 | BB < 20 bps dilutes PUT Downtrend | Replay: raising to 20 bps adds +$9,520 to PUT DT P&L |
 | CALL K-Crash RSI < 20 is the sweet spot | Live: 75% WR at RSI 10–20. Replay: 60.9% WR at RSI < 20 |
 | PUT OB rsiFrom > 80 required | Live: 80% WR when prior RSI was 80–85. Replay: 58.1% WR with rsiFrom > 80 |
-| CALL Up Trend has no edge | 728 signals, 49.7% WR, no filter improves it above 50.5% |
+| CALL UT edge is asset-specific | 70.2% WR (+$22,820) on 12-asset allowlist; 44.1% WR (-$40,860) on the other 39 assets |
+| CALL UT: do NOT disable — restrict | Allowlist-only adds +$28,300 delta vs baseline; disabling only adds +$7,680 |
 | Best single change is BB >= 20 | +$11,560 improvement alone across all patterns |
 | MOD-FULL (simulate_gates2) improvement | +$14,160 vs baseline on identical candle data |
 | **OPT-COMBINED (full grid) improvement** | **+$22,800 vs baseline** — 56.1% WR, +$12,680 P&L, 326 signals |

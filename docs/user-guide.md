@@ -91,25 +91,62 @@ po_recommend
 
 ### 6. Asset Controls — Blocking
 
-Use these to stop the bot trading specific assets.
+Use these to stop the bot trading specific assets. All blocks must have a `duration_minutes` — no permanent blocks.
 
 | Tool | What it does |
 |---|---|
-| `po_block_asset asset reason` | Block an asset. Bot skips it before every order. Supports optional duration in minutes. |
-| `po_unblock_asset asset` | Remove an active block |
+| `po_block_asset asset reason duration_minutes` | Block an asset for N minutes. Bot skips it before every order. |
+| `po_unblock_asset asset` | Remove an active block (non-session blocks only — see session monitor below) |
 | `po_asset_volatility` | See which assets are flat/pegged (candidates for blocking) |
+| `po_auto_block_sweep` | Block all assets with BB < 5 bps at session start — use once before first trade |
+| `po_auto_block_check asset` | Check if asset should be blocked after a trade result (3 consec losses or WR < 35%) |
 
-**Block the 8 known flat assets** (consistent losers with BB < 5 bps):
+**Block source reference:**
+
+| source | Written by | Cleared by |
+|---|---|---|
+| `session` | session-monitor (3 consec losses) | session-monitor restart only |
+| `auto` | po_auto_block_sweep / autoBlockCheck | 10-min unblock sweep or expiry |
+| `claude` | po_block_asset (you or Claude) | 10-min unblock sweep or po_unblock_asset |
+
+---
+
+### 6a. Session Monitor — Autonomous Block/Unblock Loop
+
+Run this alongside the bot and MCP server:
 
 ```
-po_block_asset EURTRY_otc "flat asset — BB 0.12 bps"
-po_block_asset JODCNY_otc "flat asset — BB 0.30 bps"
-po_block_asset USDCNH_otc "flat asset — BB 0.52 bps"
-po_block_asset USDPHP_otc "flat asset — BB 0.57 bps"
-po_block_asset USDTHB_otc "flat asset — BB 0.75 bps"
-po_block_asset SARCNY_otc "flat asset — BB 0.80 bps"
-po_block_asset BHDCNY_otc "flat asset — BB 4.56 bps"
-po_block_asset USDRUB_otc "flat asset — BB 1.40 bps"
+node src/scripts/session-monitor.js
+```
+
+**What it does:**
+
+| Timer | Behaviour |
+|---|---|
+| On startup | Clears all `source='session'` blocks from the prior run — fresh slate |
+| Every 2 min | Checks every asset that has traded today for consecutive losses |
+| Every 10 min | Re-evaluates all non-session blocks — unblocks if conditions have recovered |
+
+**Loss monitor logic (every 2 min):**
+- 2 consecutive losses → `WARNING` log (no block yet)
+- 3 consecutive losses → `session` block with no expiry — asset blocked for rest of session
+
+**Unblock sweep logic (every 10 min):**
+Unblocks a `claude` or `auto` block only if ALL pass:
+1. BB width >= 10 bps (current indicator)
+2. Indicator data < 5 minutes old
+3. Fewer than 3 consecutive losses today
+
+Session blocks (`source='session'`) are **never** touched by the sweep. Only a restart clears them.
+
+**Session boundary = restarting the session monitor.** On restart it clears all session blocks and starts fresh. Restart it each trading day.
+
+**Console output examples:**
+```
+[LOSS-MONITOR] WARNING CADCHF_otc — 2 consecutive losses (1 more = session block)
+[LOSS-MONITOR] BLOCKED CADCHF_otc — loss-monitor: 3 consecutive losses — session block
+[UNBLOCK-SWEEP] CADCHF_otc stays blocked: BB 4.2 bps < 10 threshold
+[UNBLOCK-SWEEP] UNBLOCKED EURUSD_otc — all conditions passed
 ```
 
 ---
@@ -258,14 +295,15 @@ Positive = MA6 above MA14 = uptrend. Negative = downtrend.
 | g2 | K_prev - K_curr > 25 | K crashed 25+ pts in one bar |
 | g3 | K_curr < 25 | Currently oversold |
 | g4 | K_prev >= 50 | Crashed from mid/high, not already oversold |
-| g5 | RSI < 40 | RSI confirms pullback |
+| g5 | RSI < 20 | RSI deeply oversold (tightened from 40) |
 | g6 | maTrendBps > -20 | Not deeply bearish (MA6 not more than 20 bps below MA14) |
-| g7 | BB width >= 10 bps | Real volatility at entry bar — below 10 bps = flat/dead market (45.8% WR) |
+| g7 | BB width >= 20 bps | Real volatility at entry bar (tightened from 10 bps) |
 
 ### PUT — Late Overbought Reversal
 
 | Gate | Condition | Meaning |
 |---|---|---|
+| g0 | RSI[-2] > 80 | Bar-2 RSI genuinely overbought — confirms prior peak (new gate) |
 | g1 | RSI[-2] > 70, RSI[-1] > 70, exclude [75,80) | Two bars of sustained overbought |
 | g2 | RSI falling, in [38,70), exclude [55,65), velocity > -12, close >= BB mid | Controlled RSI descent |
 | g3 | K_prev > 65, K falling, K_curr in [55,80) | K exiting overbought zone |
@@ -273,7 +311,7 @@ Positive = MA6 above MA14 = uptrend. Negative = downtrend.
 | g5 | ma1 > ma3 | MA6 above MA14 — trend was up, now reversing |
 | g6 | K-D spread < -3 | Confirmed K/D cross, not whipsaw |
 | g7 | maTrendBps < 20 | Not a strong uptrend (MA6 not more than 20 bps above MA14) |
-| g8 | BB width >= 10 bps | Real volatility at entry bar — below 10 bps = flat/dead market (45.8% WR) |
+| g8 | BB width >= 20 bps | Real volatility at entry bar (tightened from 10 bps) |
 
 ---
 
@@ -382,5 +420,5 @@ These are plain English prompts you can type directly. Claude will pick the righ
 - **Blocked assets are skipped automatically** — both MCP manual orders and bot-generated signals check asset_controls before executing
 - **`po_rolling_summary days=0`** — gives all-time stats
 - **`summary=true` on `po_candles`** — saves context window
-- **BB width gate is live at 10 bps** — bot skips CALL and PUT reversal signals where BB < 10 bps at entry bar. Validated on 135 signals: below 10 bps = 45.8% WR (-$3,580), above 10 bps = 61.8% WR (+$7,120). Gate logs `BB 14.3bps` in signal reasons for verification.
+- **BB width gate is live at 20 bps** — bot skips CALL and PUT signals where BB < 20 bps at entry bar (tightened from 10 bps per 2026-04-16 session report). Gate logs `BB XX.Xbps` in signal reasons for verification.
 - **Use `po_simulate bar_bb_bps_min=N` to test threshold changes** before touching bot/indicators.js — always validate on data first
