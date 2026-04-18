@@ -778,7 +778,16 @@ async function processWebSocketMessage(payload, page) {
                 }
 
                 // Push finalized candle to STATE.CANDLES for indicators [timestamp, open, close, high, low]
+                // Guard 2: skip the entire indicator + signal pipeline if this candle timestamp is already
+                // the last entry in STATE.CANDLES — the feed is frozen and re-firing the same bar.
+                // Asset volatility fluctuates; we never hardcode asset lists — all filtering is data-driven.
                 if (!STATE.CANDLES[asset]) STATE.CANDLES[asset] = [];
+                const _lastEntry = STATE.CANDLES[asset][STATE.CANDLES[asset].length - 1];
+                const _isDupCandle = _lastEntry && _lastEntry[0] === STATE.CURRENT_CANDLE_START[asset];
+                if (_isDupCandle) {
+                    log(`[STALE] Skipping duplicate candle push for ${asset} @ ${STATE.CURRENT_CANDLE_START[asset]} — feed may be frozen`, 'yellow');
+                } else {
+
                 STATE.CANDLES[asset].push([
                     STATE.CURRENT_CANDLE_START[asset],
                     currentCandle.open,
@@ -815,6 +824,19 @@ async function processWebSocketMessage(payload, page) {
                             try {
                                 const finalSignals = indicatorData.signals;
                                 const signalTimestamp = STATE.CURRENT_CANDLE_START[asset];
+
+                                // Guard 1: reject signal if the candle array hasn't advanced.
+                                // Compare the signal timestamp against the second-to-last candle in the
+                                // array. If they match, the finalizer just re-fired on the same bar it
+                                // fired on last time — the feed is frozen.
+                                // Uses only DB-relative timestamps so no wall-clock alignment needed.
+                                const _candleArr = STATE.CANDLES[asset] || [];
+                                const _prevCandle = _candleArr.length >= 2 ? _candleArr[_candleArr.length - 2] : null;
+                                const _isStale = _prevCandle && _prevCandle[0] === signalTimestamp;
+                                if (_isStale) {
+                                    log(`[STALE] Signal blocked for ${asset}: same candle timestamp ${signalTimestamp} fired again — feed frozen`, 'red');
+                                } else {
+
                                 const insertResult = await database.insertSignal(asset, signalTimestamp, {
                                     ...finalSignals
                                 });
@@ -858,6 +880,8 @@ async function processWebSocketMessage(payload, page) {
                                 if (DEBUG_OHLC) {
                                     log(`✅ Signal stored for ${asset}: ${indicatorData.signals.direction}`, 'green');
                                 }
+
+                                } // end Guard 1 stale-signal check
                             } catch (error) {
                                 // Log error but don't spam console - only log if it's not a duplicate
                                 if (!error.message || !error.message.includes('UNIQUE constraint')) {
@@ -875,6 +899,8 @@ async function processWebSocketMessage(payload, page) {
                         log(`⚠️  Not enough candles for ${asset} on finalize: ${candlesArr.length} < ${minCandles}`, 'yellow');
                     }
                 }
+
+                } // end Guard 2: else (not a duplicate candle push)
             }
 
             // Start or update current in-memory candle

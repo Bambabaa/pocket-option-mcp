@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const Indicators = require('../bot/indicators.js');
-const db = new Database('data/trading_data.db', { readonly: true });
+const dbPath = process.argv[2] || 'data/trading_data.db';
+const db = new Database(dbPath, { readonly: true });
 const assets = db.prepare('SELECT DISTINCT asset FROM candles GROUP BY asset HAVING COUNT(*) >= 80').all().map(r => r.asset);
 const AMOUNT = 500, PAYOUT = 0.92;
 // NOTE: No static asset allowlists or blocklists.

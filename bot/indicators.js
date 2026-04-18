@@ -796,10 +796,10 @@ class Indicators {
         // ═════════════════════════════════════════════════════════════════════
         if (!streakBlocked && rsi < 80) {
             const kCrash = k_1 != null && stochK != null ? k_1 - stochK : null;
-            const kFlashCrash = kCrash != null && kCrash > 20;
-            const kOversold = stochK != null && stochK < 30;
+            const kFlashCrash = kCrash != null && kCrash >= 25; // replay 2026-04-17: >=30 killed pattern (1 signal/3d); relaxed to 25
+            const kOversold = stochK != null && stochK >= 25 && stochK < 30; // session_report_2026-04-17: 25-30 landing zone = 58.9% WR
             const kWasMid = k_1 != null && k_1 >= 50;
-            const rsiDown = rsi < 45;
+            const rsiDown = rsi < 30; // replay 2026-04-17: <20 killed pattern; relaxed to <30 (still tighter than original <45)
 
             // 3-bar lookback for CALL reversal confirmation
             let lookbackOk = false;
@@ -817,10 +817,11 @@ class Indicators {
                 lookbackOk = rsiAllLow && crashRecent && noPrematureCross;
             }
 
-            // Relaxed: allow K crash ≥15 or K<20 without full crash, or K was just ≥40
-            const kCrashRelaxed = kCrash != null && kCrash >= 15;
-            const kDeepOversold = stochK != null && stochK < 20;
-            const kWasMidRelaxed = k_1 != null && k_1 >= 40;
+            // Relaxed: align with tightened strict branch — no looser kCrash/K/RSI than validated
+            // replay 2026-04-17: relaxed from kDrop>=30 to >=25 after signal-count collapse
+            const kCrashRelaxed = kCrash != null && kCrash >= 25;
+            const kDeepOversold = stochK != null && stochK >= 25 && stochK < 30;
+            const kWasMidRelaxed = k_1 != null && k_1 >= 50;
             const lookbackRelaxed = (kCrashRelaxed || kDeepOversold) && rsiDown;
 
             if ((kFlashCrash && kOversold && kWasMid && rsiDown && priceNearLowerBB && bbStable && bbWidthSufficient && lookbackOk) ||
@@ -845,10 +846,10 @@ class Indicators {
         // ═════════════════════════════════════════════════════════════════════
         if (!streakBlocked && isRed) {
             const rsiWasOverbought1 = rsi_1 != null && rsi_1 > 70;
-            const rsiWasOverbought2 = rsi_2 != null && rsi_2 > 70;
+            const rsiWasOverbought2 = rsi_2 != null && rsi_2 >= 80; // session_report_2026-04-17: 88.9% WR at rsiFrom 80-82
             const notFastDrop = rsi_1 == null || !(rsi_1 >= 75 && rsi_1 < 80);
             const rsiInReversal = rsiFalling && rsi >= 38 && rsi < 70 &&
-                !(rsi >= 55 && rsi < 65) && rsiVelocity > -15;
+                !(rsi >= 55 && rsi < 65) && rsiVelocity >= -15 && rsiVelocity <= -8; // session_report_2026-04-17: vel -15 to -8 = golden band
             const kExitingOB = k_1 != null && k_1 > 65 && kFalling &&
                 stochK != null && stochK >= 55 && stochK < 80;
             const dLaggingHigh = stochD != null && stochD >= 75;
@@ -870,10 +871,11 @@ class Indicators {
                 lookbackOk = rsiAllHigh && stochAllOB && noEarlyBullishCross;
             }
 
-            // Relaxed: allow RSI falling from >65 (not just >70), or K exiting from >60
-            const rsiWasHigh1 = rsi_1 != null && rsi_1 > 65;
-            const rsiWasHigh2 = rsi_2 != null && rsi_2 > 65;
-            const rsiInReversalRelaxed = rsiFalling && rsi >= 35 && rsi < 70 && rsiVelocity > -20;
+            // Relaxed: align with tightened strict branch — prior bar RSI must confirm true overbought
+            // session_report_2026-04-17: golden band requires RSI[-2] >= 80 and velocity in [-15,-8]
+            const rsiWasHigh1 = rsi_1 != null && rsi_1 > 70;
+            const rsiWasHigh2 = rsi_2 != null && rsi_2 >= 80;
+            const rsiInReversalRelaxed = rsiFalling && rsi >= 35 && rsi < 70 && rsiVelocity >= -15 && rsiVelocity <= -8;
             const kExitingOBRelaxed = k_1 != null && k_1 > 60 && kFalling &&
                 stochK != null && stochK >= 50 && stochK < 80;
             const dLaggingRelaxed = stochD != null && stochD >= 70;
@@ -938,6 +940,9 @@ class Indicators {
                 (ma6ConvergingUpRelaxed && rsiBullish && stochRising &&
                     lookbackRelaxed && currentGap <= maxGap * 2)) {
 
+                // session_gemini_2026-04-17 (replay-verified): K>=85 + bbW<=30 flips CALL UT from -$29.5k/4d to +$1.9k/4d
+                if (!(stochK != null && stochK >= 85 && bbWidthBps <= 30)) return false;
+
                 const candleHour = new Date(candleTs * 1000).getUTCHours();
                 signals.direction = 'CALL'; signals.strategyUsed = 'video2';
                 signals.buy = true; signals.sell = false;
@@ -955,7 +960,8 @@ class Indicators {
         // MA6 > MA14 converging down, price < MA14, RSI falling from >50, Stoch <70 falling
         // 3-bar lookback: MA6 stays above MA14, gap shrinks, Stoch pops but resumes <70
         // ═════════════════════════════════════════════════════════════════════
-        if (!streakBlocked && isRed) {
+        // session_report_2026-04-17: PUT DT kill zone bbW 10-30 (27-38% WR); 30-60 = 67.6% WR
+        if (!streakBlocked && isRed && bbWidthBps >= 30) {
             const ma6AboveMa14 = ma6 > ma14;
             const ma6ConvergingDown = ma6AboveMa14 && ma6Falling;
             const priceBelowMa14 = closePrice < ma14;
