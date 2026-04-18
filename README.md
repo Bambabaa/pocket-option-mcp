@@ -35,7 +35,7 @@ Claude Code  ←→  pocket-option-mcp (MCP stdio)
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/pocket-option-mcp
+git clone https://github.com/Bambabaa/pocket-option-mcp
 cd pocket-option-mcp
 npm install
 ```
