@@ -794,7 +794,9 @@ class Indicators {
         // K crash 20+pts into <30 from >=50, RSI <45, price near lower BB, BB stable
         // 3-bar lookback: crash within 3-4 bars, RSI stayed <45, no premature bullish cross
         // ═════════════════════════════════════════════════════════════════════
-        if (!streakBlocked && rsi < 80) {
+        // DISABLED 2026-04-18: negative on all 4 DBs (−$19k cumulative live trades).
+        // No parameter sweet spot survives multi-DB validation. See session_debrief_2026-04-18.md §12.
+        if (false && !streakBlocked && rsi < 80) {
             const kCrash = k_1 != null && stochK != null ? k_1 - stochK : null;
             const kFlashCrash = kCrash != null && kCrash >= 25; // replay 2026-04-17: >=30 killed pattern (1 signal/3d); relaxed to 25
             const kOversold = stochK != null && stochK >= 25 && stochK < 30; // session_report_2026-04-17: 25-30 landing zone = 58.9% WR
@@ -888,6 +890,9 @@ class Indicators {
                 (rsiWasHigh1 && rsiWasHigh2 && rsiInReversalRelaxed &&
                     closeAboveMid && bbWidthSufficient && kExitingOBRelaxed && dLaggingRelaxed && kdSpreadRelaxed)) {
 
+                // session_debrief_2026-04-18 §12: bbW≥50 wins on all 4 DBs; bbW[10,30) is kill zone
+                if (bbWidthBps < 50) return false;
+
                 const candleHour = new Date(candleTs * 1000).getUTCHours();
                 signals.direction = 'PUT'; signals.strategyUsed = 'video2';
                 signals.sell = true; signals.buy = false;
@@ -940,8 +945,9 @@ class Indicators {
                 (ma6ConvergingUpRelaxed && rsiBullish && stochRising &&
                     lookbackRelaxed && currentGap <= maxGap * 2)) {
 
-                // session_gemini_2026-04-17 (replay-verified): K>=85 + bbW<=30 flips CALL UT from -$29.5k/4d to +$1.9k/4d
-                if (!(stochK != null && stochK >= 85 && bbWidthBps <= 30)) return false;
+                // session_debrief_2026-04-18 §11: K>=85 alone wins on all 4 DBs (+$7,180); bbW<=30 cap hurt v2_13-15.
+                // §12: RSI[60,70) loses on all 4 DBs (−$2,700 cumulative) — exclude it.
+                if (!(stochK != null && stochK >= 85 && !(rsi >= 60 && rsi < 70))) return false;
 
                 const candleHour = new Date(candleTs * 1000).getUTCHours();
                 signals.direction = 'CALL'; signals.strategyUsed = 'video2';
