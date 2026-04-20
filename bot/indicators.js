@@ -794,9 +794,7 @@ class Indicators {
         // K crash 20+pts into <30 from >=50, RSI <45, price near lower BB, BB stable
         // 3-bar lookback: crash within 3-4 bars, RSI stayed <45, no premature bullish cross
         // ═════════════════════════════════════════════════════════════════════
-        // DISABLED 2026-04-18: negative on all 4 DBs (−$19k cumulative live trades).
-        // No parameter sweet spot survives multi-DB validation. See session_debrief_2026-04-18.md §12.
-        if (false && !streakBlocked && rsi < 80) {
+        if (!streakBlocked && rsi < 80) {
             const kCrash = k_1 != null && stochK != null ? k_1 - stochK : null;
             const kFlashCrash = kCrash != null && kCrash >= 25; // replay 2026-04-17: >=30 killed pattern (1 signal/3d); relaxed to 25
             const kOversold = stochK != null && stochK >= 25 && stochK < 30; // session_report_2026-04-17: 25-30 landing zone = 58.9% WR

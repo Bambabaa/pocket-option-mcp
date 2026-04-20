@@ -29,13 +29,13 @@ Claude Code  ←→  pocket-option-mcp (MCP stdio)
 ## Prerequisites
 
 - Node.js 18+
-- `pocket-option-bot.js` running (from `socket_option/determ/`)
+- `pocket-option-bot.js`
 - A valid Pocket Option account (the bot handles browser login)
 
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/pocket-option-mcp
+git clone https://github.com/bambabaa/pocket-option-mcp
 cd pocket-option-mcp
 npm install
 ```
@@ -134,11 +134,6 @@ po_mcp_orders                                  # check your manual order status
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `po_qualified_assets` | — | Assets on the bot's trading allow-list (2+ consecutive wins) |
-| `po_asset_streaks` | `asset?` | Current consecutive win streak per asset |
-| `po_streak_leaderboard` | `min_wins?` | Rank assets by active win streak |
-| `po_qualification_outcomes` | `asset?`, `limit?` | Full signal validation history (entry/exit price, WIN/LOSS) |
-| `po_asset_trades` | `asset?`, `limit?` | Trade outcomes for qualified assets only, with win rate |
 | `po_validation_stats` | `asset?` | Aggregate win rate and P/L from the validation layer |
 | `po_pending_signals` | `look_ahead_seconds?`, `limit?` | Signals past expiry with no validation outcome yet |
 
@@ -181,10 +176,6 @@ data/
 | `orders_queue` | bot DB | bot | `po_bot_orders` |
 | `trades_ordered` | bot DB | bot | `po_trades_ordered`, `po_pnl_summary` |
 | `qualification_outcomes` | bot DB | bot | `po_qualification_outcomes`, `po_validation_stats` |
-| `qualified_assets` | bot DB | bot | `po_qualified_assets` |
-| `asset_streaks` | bot DB | bot | `po_asset_streaks`, `po_streak_leaderboard` |
-| `assets_trades` | bot DB | bot | `po_asset_trades` |
-| `performance` | bot DB | bot | `po_performance` |
 | `mcp_orders` | **MCP DB** | **MCP server** | `po_mcp_orders`, bot execution worker |
 
 The MCP server has **zero write access** to the bot's database.

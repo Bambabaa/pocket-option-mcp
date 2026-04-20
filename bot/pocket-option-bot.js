@@ -638,6 +638,24 @@ async function processWebSocketMessage(payload, page) {
                         }
                     }
 
+                    // Backfill indicator rows for every prior candle that has enough lookback.
+                    // Keeps the candles ↔ indicators table 1:1 across restarts (warmup floor unavoidable).
+                    let backfilled = 0;
+                    for (let i = minCandles - 1; i < candles.length - 1; i++) {
+                        const window = candles.slice(0, i + 1);
+                        const ind = indicators.calculateAll(data.asset, window, STATE.SETTINGS);
+                        if (!ind) continue;
+                        try {
+                            await database.insertIndicators(data.asset, candles[i][0], ind);
+                            backfilled++;
+                        } catch (err) {
+                            if (!err.message || !err.message.includes('UNIQUE constraint')) {
+                                console.error(`   ❌ Backfill ${data.asset} @ ${candles[i][0]}: ${err.message}`);
+                            }
+                        }
+                    }
+                    if (backfilled > 0) log(`   ↩️  Backfilled ${backfilled} historical indicator rows for ${data.asset}`, 'cyan');
+
                     // Store signal in database if not NEUTRAL and direction is valid
                     if (indicatorData.signals &&
                         indicatorData.signals.direction &&
@@ -754,7 +772,16 @@ async function processWebSocketMessage(payload, page) {
                 const hasVariation = (currentCandle.high !== currentCandle.low);
                 const shouldStore = tickCount >= 2 || hasVariation;
 
-                if (shouldStore) {
+                // Reset tick counter regardless of whether the candle is persisted
+                STATE.CURRENT_CANDLE_TICKS[asset] = 0;
+
+                if (!shouldStore) {
+                    // Low-quality candle (1 tick AND flat). Drop from DB AND from STATE.CANDLES so
+                    // indicator history stays bidirectionally aligned with the candles table.
+                    if (DEBUG_OHLC) {
+                        log(`⏭️  Drop low-quality candle ${asset} @ ${STATE.CURRENT_CANDLE_START[asset]} (ticks<2 && flat)`, 'gray');
+                    }
+                } else {
                     try {
                         await database.insertCandle(
                             asset,
@@ -768,10 +795,6 @@ async function processWebSocketMessage(payload, page) {
                     } catch (err) {
                         // ignore duplicates
                     }
-                }
-
-                // Reset tick counter for next candle
-                STATE.CURRENT_CANDLE_TICKS[asset] = 0;
 
                 if (DEBUG_OHLC) {
                     log(`✅ Finalize ${asset} @ ${STATE.CURRENT_CANDLE_START[asset]} O=${currentCandle.open} H=${currentCandle.high} L=${currentCandle.low} C=${currentCandle.close}`, 'green');
@@ -901,6 +924,7 @@ async function processWebSocketMessage(payload, page) {
                 }
 
                 } // end Guard 2: else (not a duplicate candle push)
+                } // end shouldStore else (candle persisted → push + recompute indicators)
             }
 
             // Start or update current in-memory candle

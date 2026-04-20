@@ -75,10 +75,10 @@ function replay(scenario) {
             if (!sigObj.buy && !sigObj.sell) continue;
 
             const signalCandle = candles[i];
-            const nextCandle   = candles[i + 1];
+            const nextCandle = candles[i + 1];
             const entry = signalCandle[2];
-            const exit  = nextCandle[2];
-            const dir   = sigObj.direction;
+            const exit = nextCandle[2];
+            const dir = sigObj.direction;
             const baseOutcome = dir === 'CALL'
                 ? (exit > entry ? 'WIN' : 'LOSS')
                 : (exit < entry ? 'WIN' : 'LOSS');
@@ -89,18 +89,18 @@ function replay(scenario) {
                 : 999;
 
             // Parsed values from reasons string
-            const kDropM    = reasons.match(/K crash ([0-9.]+)pts/);
-            const rsiM      = reasons.match(/RSI ([0-9.]+)/);
-            const rsiFromM  = reasons.match(/RSI [0-9.]+ \(from ([0-9.]+)/);
+            const kDropM = reasons.match(/K crash ([0-9.]+)pts/);
+            const rsiM = reasons.match(/RSI ([0-9.]+)/);
+            const rsiFromM = reasons.match(/RSI [0-9.]+ \(from ([0-9.]+)/);
 
-            const kDrop   = kDropM   ? parseFloat(kDropM[1])   : null;
-            const rsi     = rsiM     ? parseFloat(rsiM[1])     : null;
+            const kDrop = kDropM ? parseFloat(kDropM[1]) : null;
+            const rsi = rsiM ? parseFloat(rsiM[1]) : null;
             const rsiFrom = rsiFromM ? parseFloat(rsiFromM[1]) : null;
 
-            const isKCrash    = reasons.includes('K crash');
-            const isPutOB     = reasons.includes('OVERBOUGHT');
-            const isCallUT    = reasons.includes('UP TREND');
-            const isPutDT     = reasons.includes('DOWN TREND');
+            const isKCrash = reasons.includes('K crash');
+            const isPutOB = reasons.includes('OVERBOUGHT');
+            const isCallUT = reasons.includes('UP TREND');
+            const isPutDT = reasons.includes('DOWN TREND');
 
             // Apply scenario gates
             let pass = true;
@@ -108,10 +108,10 @@ function replay(scenario) {
             // BB gate (applies to all patterns)
             if (scenario.bar_bb_bps_min > 0 && bbW < scenario.bar_bb_bps_min) pass = false;
 
-            // CALL K-Crash specific gates
+            // CALL Reversal specific gates
             if (pass && isKCrash) {
                 if (kDrop !== null && kDrop < scenario.call_k_crash_min) pass = false;
-                if (rsi   !== null && rsi   >= scenario.call_rsi_max)    pass = false;
+                if (rsi !== null && rsi >= scenario.call_rsi_max) pass = false;
             }
 
             // PUT Overbought specific gates
@@ -124,20 +124,20 @@ function replay(scenario) {
             const pl = baseOutcome === 'WIN' ? AMOUNT * PAYOUT : -AMOUNT;
             const entry_ = { asset, outcome: baseOutcome, pl };
 
-            if (isKCrash)     sigs.call.push(entry_);
+            if (isKCrash) sigs.call.push(entry_);
             else if (isPutOB) sigs.put.push(entry_);
             else if (isCallUT) sigs.callUT.push(entry_);
-            else if (isPutDT)  sigs.putDT.push(entry_);
+            else if (isPutDT) sigs.putDT.push(entry_);
         }
     }
     return sigs;
 }
 
 function summarize(arr) {
-    const wins   = arr.filter(s => s.outcome === 'WIN').length;
+    const wins = arr.filter(s => s.outcome === 'WIN').length;
     const losses = arr.filter(s => s.outcome === 'LOSS').length;
-    const total  = wins + losses;
-    const pl     = arr.reduce((s, x) => s + x.pl, 0);
+    const total = wins + losses;
+    const pl = arr.reduce((s, x) => s + x.pl, 0);
     return { total, wins, losses, wr: total ? (100 * wins / total).toFixed(1) : '—', pl: pl.toFixed(0) };
 }
 
@@ -151,8 +151,8 @@ const results = [];
 for (const scenario of SCENARIOS) {
     process.stdout.write('  Running: ' + scenario.label + '...');
     const sigs = replay(scenario);
-    const cC  = summarize(sigs.call);
-    const cP  = summarize(sigs.put);
+    const cC = summarize(sigs.call);
+    const cP = summarize(sigs.put);
     const cUT = summarize(sigs.callUT);
     const cDT = summarize(sigs.putDT);
     const allValid = sigs.call.concat(sigs.put, sigs.callUT, sigs.putDT);
@@ -163,7 +163,7 @@ for (const scenario of SCENARIOS) {
 
 console.log('');
 console.log('─────────────────────────────────────────────────────────────────────');
-console.log('  Pattern: CALL K-CRASH REVERSAL');
+console.log('  Pattern: CALL OVERSOLD REVERSAL');
 console.log('─────────────────────────────────────────────────────────────────────');
 console.log('  Scenario                          n     WR       P&L');
 for (const r of results) {

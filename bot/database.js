@@ -117,23 +117,6 @@ class TradingDatabase {
                 FOREIGN KEY (asset, timestamp) REFERENCES candles(asset, timestamp)
             )`,
 
-            // 4. Trades table - stores executed trades
-            `CREATE TABLE IF NOT EXISTS trades (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                asset TEXT NOT NULL,
-                entry_timestamp INTEGER NOT NULL,
-                exit_timestamp INTEGER,
-                direction TEXT NOT NULL,
-                entry_price REAL NOT NULL,
-                exit_price REAL,
-                amount REAL NOT NULL,
-                signal_strength INTEGER,
-                result TEXT,
-                profit_loss REAL,
-                notes TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`,
-
             // 5. Prices table - stores real-time price updates (every second)
             `CREATE TABLE IF NOT EXISTS prices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,22 +125,6 @@ class TradingDatabase {
                 price REAL NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(asset, timestamp)
-            )`,
-
-            // 6. Performance table - stores performance metrics
-            `CREATE TABLE IF NOT EXISTS performance (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date DATE NOT NULL,
-                total_trades INTEGER DEFAULT 0,
-                winning_trades INTEGER DEFAULT 0,
-                losing_trades INTEGER DEFAULT 0,
-                win_rate REAL DEFAULT 0,
-                total_profit_loss REAL DEFAULT 0,
-                best_trade REAL DEFAULT 0,
-                worst_trade REAL DEFAULT 0,
-                average_profit REAL DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(date)
             )`,
 
             // 7. Signal outcomes — every validated signal (validation loop writes here for analysis)
@@ -198,6 +165,14 @@ class TradingDatabase {
             // Video2 stochastic (5,3,3) — separate columns to avoid overwriting Video1 (13,3,3)
             `ALTER TABLE indicators ADD COLUMN stochastic_k_v2 REAL`,
             `ALTER TABLE indicators ADD COLUMN stochastic_d_v2 REAL`,
+
+            // candle_id soft FK → candles.id. Stable now that insertCandle uses ON CONFLICT DO UPDATE.
+            // Backfilled by migrateBackfillCandleId(); populated on new inserts by app code.
+            `ALTER TABLE indicators       ADD COLUMN candle_id INTEGER`,
+            `ALTER TABLE signals          ADD COLUMN candle_id INTEGER`,
+            `ALTER TABLE signal_outcomes  ADD COLUMN candle_id INTEGER`,
+            `ALTER TABLE orders_queue     ADD COLUMN candle_id INTEGER`,
+            `ALTER TABLE trades_ordered   ADD COLUMN candle_id INTEGER`,
 
             // 8. Orders queue - two-process executor: bot enqueues, executor claims and executes
             `CREATE TABLE IF NOT EXISTS orders_queue (
@@ -244,16 +219,18 @@ class TradingDatabase {
             'CREATE INDEX IF NOT EXISTS idx_signals_asset_timestamp ON signals(asset, timestamp DESC)',
             'CREATE INDEX IF NOT EXISTS idx_signals_direction ON signals(direction)',
             'CREATE INDEX IF NOT EXISTS idx_prices_asset_timestamp ON prices(asset, timestamp DESC)',
-            'CREATE INDEX IF NOT EXISTS idx_trades_asset ON trades(asset)',
-            'CREATE INDEX IF NOT EXISTS idx_trades_result ON trades(result)',
-            'CREATE INDEX IF NOT EXISTS idx_performance_date ON performance(date DESC)',
             'CREATE INDEX IF NOT EXISTS idx_signal_outcomes_asset ON signal_outcomes(asset)',
             'CREATE INDEX IF NOT EXISTS idx_signal_outcomes_signal_ts ON signal_outcomes(signal_timestamp DESC)',
             'CREATE INDEX IF NOT EXISTS idx_orders_queue_status_created ON orders_queue(status, created_at)',
             'CREATE INDEX IF NOT EXISTS idx_trades_ordered_order_id ON trades_ordered(order_id)',
             'CREATE INDEX IF NOT EXISTS idx_trades_ordered_signal_id ON trades_ordered(signal_id)',
             'CREATE INDEX IF NOT EXISTS idx_trades_ordered_result ON trades_ordered(result)',
-            'CREATE INDEX IF NOT EXISTS idx_trades_ordered_entry_ts ON trades_ordered(entry_timestamp DESC)'
+            'CREATE INDEX IF NOT EXISTS idx_trades_ordered_entry_ts ON trades_ordered(entry_timestamp DESC)',
+            'CREATE INDEX IF NOT EXISTS idx_indicators_candle_id      ON indicators(candle_id)',
+            'CREATE INDEX IF NOT EXISTS idx_signals_candle_id         ON signals(candle_id)',
+            'CREATE INDEX IF NOT EXISTS idx_signal_outcomes_candle_id ON signal_outcomes(candle_id)',
+            'CREATE INDEX IF NOT EXISTS idx_orders_queue_candle_id    ON orders_queue(candle_id)',
+            'CREATE INDEX IF NOT EXISTS idx_trades_ordered_candle_id  ON trades_ordered(candle_id)'
         ];
 
         // Separate ALTER TABLE migrations (idempotent: silently ignored if column already exists)
@@ -286,6 +263,10 @@ class TradingDatabase {
             // Schema migrations: drop deprecated columns from indicators/signals tables if present
             await this.migrateIndicatorsDropLegacyColumns();
             await this.migrateSignalsDropStrengthColumns();
+
+            // Backfill candle_id on rows inserted before the soft-FK column existed.
+            // No-op after first successful run (every UPDATE has WHERE candle_id IS NULL).
+            await this.migrateBackfillCandleId();
 
             // Create indexes
             for (const sql of indexes) {
@@ -349,9 +330,17 @@ class TradingDatabase {
      * Insert candle data
      */
     async insertCandle(asset, timestamp, open, high, low, close, volume = 0) {
-        const sql = `INSERT OR REPLACE INTO candles
-                     (asset, timestamp, open, high, low, close, volume)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)`;
+        // ON CONFLICT DO UPDATE keeps candles.id stable across re-inserts so that
+        // FK columns (indicators.candle_id, signals.candle_id, etc.) never dangle.
+        // INSERT OR REPLACE deletes-and-reinserts → id changes → FKs break.
+        const sql = `INSERT INTO candles (asset, timestamp, open, high, low, close, volume)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(asset, timestamp) DO UPDATE SET
+                       open = excluded.open,
+                       high = excluded.high,
+                       low = excluded.low,
+                       close = excluded.close,
+                       volume = excluded.volume`;
 
         try {
             const result = await this.run(sql, [asset, timestamp, open, high, low, close, volume]);
@@ -540,8 +529,10 @@ class TradingDatabase {
                       stochastic_k, stochastic_d,
                       stochastic_k_v2, stochastic_d_v2,
                       keltner_upper, keltner_lower,
-                      schaff_value)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                      schaff_value,
+                      candle_id)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                             (SELECT id FROM candles WHERE asset = ? AND timestamp = ?))`;
 
         const params = [
             asset,
@@ -566,7 +557,8 @@ class TradingDatabase {
             // keltner/schaff — null when not available
             keltner?.upper,   // ?? null
             keltner?.lower,   // ?? null
-            schaff?.value     // ?? null
+            schaff?.value,    // ?? null
+            asset, timestamp  // ← subquery params for candle_id resolution
         ];
 
         try {
@@ -602,15 +594,17 @@ class TradingDatabase {
         if (strategy === 'video3') strategy = 'Cyclical Sniper';
 
         const sql = `INSERT OR IGNORE INTO signals
-                     (asset, timestamp, direction, strategy_used, reasons)
-                     VALUES (?, ?, ?, ?, ?)`;
+                     (asset, timestamp, direction, strategy_used, reasons, candle_id)
+                     VALUES (?, ?, ?, ?, ?,
+                             (SELECT id FROM candles WHERE asset = ? AND timestamp = ?))`;
 
         const params = [
             asset,
             timestamp,
             signal.direction,
             strategy,
-            JSON.stringify(signal.reasons || [])
+            JSON.stringify(signal.reasons || []),
+            asset, timestamp  // ← subquery params for candle_id
         ];
 
         try {
@@ -801,6 +795,66 @@ class TradingDatabase {
     }
 
     /**
+     * Backfill candle_id on rows that pre-date the soft-FK column.
+     * Each UPDATE filters WHERE candle_id IS NULL → no-op on subsequent startups.
+     * Indicators/signals join candles by (asset, timestamp); downstream tables
+     * (signal_outcomes, orders_queue, trades_ordered) prefer the signal_id path
+     * with a natural-key fallback for any rows whose signal_id is missing.
+     */
+    async migrateBackfillCandleId() {
+        const start = Date.now();
+        const stmts = [
+            // Tier 1: direct natural-key resolution
+            `UPDATE indicators SET candle_id = (SELECT id FROM candles
+                  WHERE candles.asset = indicators.asset AND candles.timestamp = indicators.timestamp)
+              WHERE candle_id IS NULL`,
+            `UPDATE signals SET candle_id = (SELECT id FROM candles
+                  WHERE candles.asset = signals.asset AND candles.timestamp = signals.timestamp)
+              WHERE candle_id IS NULL`,
+
+            // Tier 2: downstream via signal_id → signals.candle_id
+            `UPDATE signal_outcomes SET candle_id = (SELECT s.candle_id FROM signals s
+                  WHERE s.id = signal_outcomes.signal_id)
+              WHERE candle_id IS NULL AND signal_id IS NOT NULL`,
+            `UPDATE signal_outcomes SET candle_id = (SELECT id FROM candles
+                  WHERE candles.asset = signal_outcomes.asset AND candles.timestamp = signal_outcomes.signal_timestamp)
+              WHERE candle_id IS NULL`,
+
+            `UPDATE orders_queue SET candle_id = (SELECT s.candle_id FROM signals s
+                  WHERE s.id = orders_queue.signal_id)
+              WHERE candle_id IS NULL`,
+            `UPDATE orders_queue SET candle_id = (SELECT id FROM candles
+                  WHERE candles.asset = orders_queue.asset AND candles.timestamp = orders_queue.signal_timestamp)
+              WHERE candle_id IS NULL`,
+
+            `UPDATE trades_ordered SET candle_id = (SELECT s.candle_id FROM signals s
+                  WHERE s.id = trades_ordered.signal_id)
+              WHERE candle_id IS NULL AND signal_id IS NOT NULL`,
+            `UPDATE trades_ordered SET candle_id = (SELECT oq.candle_id FROM orders_queue oq
+                  WHERE oq.id = trades_ordered.order_id)
+              WHERE candle_id IS NULL AND order_id IS NOT NULL`,
+        ];
+
+        let totalChanged = 0;
+        for (const sql of stmts) {
+            try {
+                const r = await this.run(sql);
+                totalChanged += (r.changes || 0);
+            } catch (e) {
+                // Likely "no such column" on the very first run before ALTER TABLE landed,
+                // or on DBs missing one of the downstream tables. Safe to ignore — a later
+                // startup (after ALTERs are applied) will backfill.
+                if (!/no such column|no such table/i.test(e.message || '')) {
+                    console.warn(`   ⚠️  candle_id backfill: ${e.message}`);
+                }
+            }
+        }
+        if (totalChanged > 0) {
+            console.log(`✅ candle_id backfill: ${totalChanged} rows updated in ${Date.now() - start}ms`);
+        }
+    }
+
+    /**
      * Migration: drop legacy non-KT columns from indicators table using ALTER TABLE DROP COLUMN.
      * Safe to run multiple times; ignores errors when columns are already gone or DROP COLUMN is unsupported.
      */
@@ -821,152 +875,6 @@ class TradingDatabase {
         }
     }
 
-    // ==================== TRADE OPERATIONS ====================
-
-    /**
-     * Insert trade execution
-     */
-    async insertTrade(asset, entryTimestamp, direction, entryPrice, amount, signalStrength = null, notes = null) {
-        const sql = `INSERT INTO trades
-                     (asset, entry_timestamp, direction, entry_price, amount, signal_strength, notes)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)`;
-
-        try {
-            const result = await this.run(sql, [asset, entryTimestamp, direction, entryPrice, amount, signalStrength, notes]);
-            return result.id; // Return trade ID
-        } catch (error) {
-            console.error('Error inserting trade:', error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * Update trade with exit information
-     */
-    async updateTradeExit(tradeId, exitTimestamp, exitPrice, result, profitLoss) {
-        const sql = `UPDATE trades
-                     SET exit_timestamp = ?, exit_price = ?, result = ?, profit_loss = ?
-                     WHERE id = ?`;
-
-        try {
-            await this.run(sql, [exitTimestamp, exitPrice, result, profitLoss, tradeId]);
-        } catch (error) {
-            console.error('Error updating trade:', error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * Get all trades
-     */
-    async getTrades(asset = null, limit = 100) {
-        let sql;
-        let params = [];
-
-        if (asset) {
-            sql = `SELECT * FROM trades WHERE asset = ? ORDER BY entry_timestamp DESC LIMIT ?`;
-            params = [asset, limit];
-        } else {
-            sql = `SELECT * FROM trades ORDER BY entry_timestamp DESC LIMIT ?`;
-            params = [limit];
-        }
-
-        return await this.all(sql, params);
-    }
-
-    /**
-     * Get open trades (not yet closed)
-     */
-    async getOpenTrades(asset = null) {
-        let sql;
-        let params = [];
-
-        if (asset) {
-            sql = `SELECT * FROM trades WHERE asset = ? AND exit_timestamp IS NULL ORDER BY entry_timestamp DESC`;
-            params = [asset];
-        } else {
-            sql = `SELECT * FROM trades WHERE exit_timestamp IS NULL ORDER BY entry_timestamp DESC`;
-        }
-
-        return await this.all(sql, params);
-    }
-
-    /**
-     * Get trade performance statistics
-     */
-    async getTradeStats(asset = null) {
-        let sql;
-        let params = [];
-
-        if (asset) {
-            sql = `SELECT
-                       COUNT(*) as total_trades,
-                       SUM(CASE WHEN result = 'WIN' THEN 1 ELSE 0 END) as winning_trades,
-                       SUM(CASE WHEN result = 'LOSS' THEN 1 ELSE 0 END) as losing_trades,
-                       ROUND(AVG(CASE WHEN result = 'WIN' THEN 1.0 ELSE 0 END) * 100, 2) as win_rate,
-                       SUM(profit_loss) as total_profit_loss,
-                       MAX(profit_loss) as best_trade,
-                       MIN(profit_loss) as worst_trade,
-                       AVG(profit_loss) as avg_profit
-                   FROM trades
-                   WHERE asset = ? AND result IS NOT NULL`;
-            params = [asset];
-        } else {
-            sql = `SELECT
-                       COUNT(*) as total_trades,
-                       SUM(CASE WHEN result = 'WIN' THEN 1 ELSE 0 END) as winning_trades,
-                       SUM(CASE WHEN result = 'LOSS' THEN 1 ELSE 0 END) as losing_trades,
-                       ROUND(AVG(CASE WHEN result = 'WIN' THEN 1.0 ELSE 0 END) * 100, 2) as win_rate,
-                       SUM(profit_loss) as total_profit_loss,
-                       MAX(profit_loss) as best_trade,
-                       MIN(profit_loss) as worst_trade,
-                       AVG(profit_loss) as avg_profit
-                   FROM trades
-                   WHERE result IS NOT NULL`;
-        }
-
-        return await this.get(sql, params);
-    }
-
-    // ==================== PERFORMANCE OPERATIONS ====================
-
-    /**
-     * Update daily performance metrics
-     */
-    async updateDailyPerformance(date, metrics) {
-        const sql = `INSERT OR REPLACE INTO performance
-                     (date, total_trades, winning_trades, losing_trades,
-                      win_rate, total_profit_loss, best_trade, worst_trade, average_profit)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-
-        const params = [
-            date,
-            metrics.totalTrades || 0,
-            metrics.winningTrades || 0,
-            metrics.losingTrades || 0,
-            metrics.winRate || 0,
-            metrics.totalProfitLoss || 0,
-            metrics.bestTrade || 0,
-            metrics.worstTrade || 0,
-            metrics.averageProfit || 0
-        ];
-
-        try {
-            await this.run(sql, params);
-        } catch (error) {
-            console.error('Error updating performance:', error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * Get performance history
-     */
-    async getPerformanceHistory(limit = 30) {
-        const sql = `SELECT * FROM performance ORDER BY date DESC LIMIT ?`;
-        return await this.all(sql, [limit]);
-    }
-
     // ==================== UTILITY OPERATIONS ====================
 
     /**
@@ -978,8 +886,6 @@ class TradingDatabase {
         stats.candles = await this.get('SELECT COUNT(*) as count FROM candles');
         stats.indicators = await this.get('SELECT COUNT(*) as count FROM indicators');
         stats.signals = await this.get('SELECT COUNT(*) as count FROM signals');
-        stats.trades = await this.get('SELECT COUNT(*) as count FROM trades');
-        stats.performance = await this.get('SELECT COUNT(*) as count FROM performance');
 
         return stats;
     }
@@ -1257,9 +1163,12 @@ class TradingDatabase {
         const now = Math.floor(Date.now() / 1000);
         await this.run(
             `INSERT OR IGNORE INTO signal_outcomes
-             (asset, signal_timestamp, signal_id, direction, entry_price, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [asset, signalTimestamp, signalId, direction, entryPrice, now]
+             (asset, signal_timestamp, signal_id, direction, entry_price, updated_at, candle_id)
+             VALUES (?, ?, ?, ?, ?, ?,
+                     COALESCE((SELECT candle_id FROM signals WHERE id = ?),
+                              (SELECT id FROM candles WHERE asset = ? AND timestamp = ?)))`,
+            [asset, signalTimestamp, signalId, direction, entryPrice, now,
+             signalId, asset, signalTimestamp]
         );
         if (result != null) {
             await this.run(
@@ -1324,10 +1233,13 @@ class TradingDatabase {
      */
     async enqueueOrder(signalId, asset, direction, signalTimestamp) {
         const sql = `INSERT OR IGNORE INTO orders_queue
-                     (signal_id, asset, direction, signal_timestamp, status)
-                     VALUES (?, ?, ?, ?, 'PENDING')`;
+                     (signal_id, asset, direction, signal_timestamp, status, candle_id)
+                     VALUES (?, ?, ?, ?, 'PENDING',
+                             COALESCE((SELECT candle_id FROM signals WHERE id = ?),
+                                      (SELECT id FROM candles WHERE asset = ? AND timestamp = ?)))`;
         try {
-            const result = await this.run(sql, [signalId, asset, direction, signalTimestamp]);
+            const result = await this.run(sql, [signalId, asset, direction, signalTimestamp,
+                                                signalId, asset, signalTimestamp]);
             if (!result.id || result.id === 0) {
                 const row = await this.get('SELECT id FROM orders_queue WHERE asset = ? AND signal_timestamp = ?', [asset, signalTimestamp]);
                 if (row) return row.id;
@@ -1381,10 +1293,13 @@ class TradingDatabase {
     async insertOrderedTradeClosed(orderId, signalId, asset, entryTimestamp, direction, amount, entryPrice, exitTimestamp, exitPrice, result, profitLoss, payout, notes) {
         const sql = `INSERT OR IGNORE INTO trades_ordered
                      (order_id, signal_id, asset, entry_timestamp, direction, amount, entry_price,
-                      exit_timestamp, exit_price, result, profit_loss, payout, notes)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                      exit_timestamp, exit_price, result, profit_loss, payout, notes, candle_id)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                             COALESCE((SELECT candle_id FROM signals WHERE id = ?),
+                                      (SELECT candle_id FROM orders_queue WHERE id = ?)))`;
         try {
-            await this.run(sql, [orderId, signalId, asset, entryTimestamp, direction, amount, entryPrice, exitTimestamp, exitPrice, result, profitLoss, payout, notes]);
+            await this.run(sql, [orderId, signalId, asset, entryTimestamp, direction, amount, entryPrice, exitTimestamp, exitPrice, result, profitLoss, payout, notes,
+                                  signalId, orderId]);
         } catch (error) {
             console.error('Error inserting ordered trade:', error.message);
             throw error;

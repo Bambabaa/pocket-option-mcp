@@ -42,12 +42,9 @@ The bot (`pocket-option-bot.js`) runs independently as a Puppeteer browser autom
 │                          Keltner, Schaff 30-55-8             │
 │  6. Runs KT video2 strategy → generates signals              │
 │                          → writes to signals table           │
-│  7. Qualification layer: validates signals on demo first     │
-│     → tracks consecutive wins → qualified_assets table       │
-│     → tracks streaks        → asset_streaks table            │
-│  8. Executes qualified signals via DOM clicks                │
+│  7. Executes qualified signals via DOM clicks                │
 │     → writes to orders_queue → trades_ordered (WIN/LOSS)     │
-│  9. MCP Orders Worker (every 5s):                            │
+│  8. MCP Orders Worker (every 5s):                            │
 │     → polls mcp.db for PENDING manual orders                 │
 │     → claims atomically (SKIPPED status)                     │
 │     → executes via DOM click                                 │
@@ -91,18 +88,6 @@ The bot (`pocket-option-bot.js`) runs independently as a Puppeteer browser autom
 | `po_signals(asset?, limit, direction?)` | Recent CALL/PUT signals from KT strategy |
 | `po_pending_signals(lookAheadSeconds)` | Signals past expiry not yet validated |
 
-### Assets & Qualification
-
-| Tool | Purpose |
-|---|---|
-| `po_tracked_assets` | All assets with candle counts and latest timestamp |
-| `po_qualified_assets` | Currently allowed-to-trade assets (passed validation) |
-| `po_asset_streaks(asset?)` | Consecutive win streak per asset |
-| `po_streak_leaderboard(minWins)` | Rank assets by streak |
-| `po_qualification_outcomes(asset?, limit)` | Full signal validation history |
-| `po_asset_trades(asset?, limit)` | Trade outcomes for qualified assets |
-| `po_validation_stats(asset?)` | Aggregate win rates by asset |
-
 ### Orders & Trades
 
 | Tool | Purpose |
@@ -136,6 +121,7 @@ The bot (`pocket-option-bot.js`) runs independently as a Puppeteer browser autom
 Scans all 77 assets in parallel and returns a ranked list.
 
 **What it gathers per asset:**
+
 - Latest price + age
 - Fresh signal (last 5 minutes)
 - Current win streak
@@ -144,6 +130,7 @@ Scans all 77 assets in parallel and returns a ranked list.
 - Recent P/L
 
 **Scoring algorithm:**
+
 ```
 Score = qualified(25pts)
       + fresh_signal(30pts)
@@ -157,6 +144,7 @@ Score = qualified(25pts)
 ### `po_recommend` — "What Should I Trade Right Now?"
 
 Runs `po_scan_all` then filters by:
+
 - Asset is qualified
 - Fresh signal (< 2 min old, configurable)
 - Win rate >= 60% (configurable)
@@ -167,6 +155,7 @@ Runs `po_scan_all` then filters by:
 ### `po_risk_check` — "Is This Trade Safe?"
 
 Pre-trade risk audit that checks:
+
 1. Asset tracked? (if no → BLOCKED)
 2. Qualified? (-25pts if no)
 3. Streak status (-10 if zero, bonus if hot)
@@ -179,6 +168,7 @@ Pre-trade risk audit that checks:
 ### `po_market_state` — "How's the Market?"
 
 **Returns:**
+
 - Active assets (candles in last 5 min)
 - Signals in last hour (by CALL/PUT direction)
 - Today's trades: count, win rate, P/L, ROI
@@ -282,12 +272,12 @@ Claude periodically calls:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    PocketOption.com                          │
+│                    PocketOption.com                         │
 └──────────────────────┬──────────────────────────────────────┘
                        │ Puppeteer (DOM reads + clicks)
                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│              pocket-option-bot.js (24/7)                     │
+┌────────────────────────────────────────────────────────────┐
+│              pocket-option-bot.js (24/7)                   │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐  │
 │  │ Scrape   │  │ Indicate │  │ Signal   │  │ Execute    │  │
 │  │ prices   │  │ rs       │  │ Gen      │  │ trades     │  │
@@ -295,14 +285,14 @@ Claude periodically calls:
 └───────┼─────────────┼─────────────┼──────────────┼─────────┘
         ▼             ▼             ▼              ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              trading_data.db (READONLY for MCP)              │
+│              trading_data.db (READONLY for MCP)             │
 │  prices │ candles │ indicators │ signals │ orders_queue     │
-│  trades_ordered │ qualified_assets │ asset_streaks          │
+│  trades_ordered │                                           │
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              MCP Server (27 tools)                           │
+│              MCP Server (27 tools)                          │
 │  ┌────────────┐  ┌────────────┐  ┌───────────────────────┐  │
 │  │ Read Tools │  │ Write      │  │ Intelligence Layer    │  │
 │  │ (23 tools) │  │ (2 tools)  │  │ (4 tools)             │  │
@@ -315,7 +305,7 @@ Claude periodically calls:
                        │ stdio (MCP protocol)
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    Claude Code                               │
+│                    Claude Code                              │
 │  "Scan the market" → po_scan_all → ranked list              │
 │  "What should I trade?" → po_recommend → top picks          │
 │  "Is this safe?" → po_risk_check → score + verdict          │
@@ -376,7 +366,6 @@ pocket-option-mcp/
 | Market Data | 4 | `po_prices`, `po_candles`, `po_price_history`, `po_indicators` |
 | Signals | 2 | `po_signals`, `po_pending_signals` |
 | Assets | 4 | `po_tracked_assets`, `po_qualified_assets`, `po_asset_streaks`, `po_streak_leaderboard` |
-| Qualification | 3 | `po_qualification_outcomes`, `po_asset_trades`, `po_validation_stats` |
 | Orders | 4 | `po_bot_orders`, `po_mcp_orders`, `po_trades_ordered`, `po_pnl_summary` |
 | Trade Execution | 2 | `po_trade`, `po_cancel_order` |
 | Performance | 3 | `po_rolling_summary`, `po_performance`, `po_hourly_breakdown` |

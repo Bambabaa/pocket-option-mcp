@@ -294,11 +294,11 @@ const allCombos = [
   ['PUT OB  | vel[-15,-12)',              putOB.filter(s => s.vel !== null && s.vel >= -15 && s.vel < -12)],
   ['PUT OB  | rsiFrom>=80+bbW>=30',      putOB.filter(s => s.rsiFrom >= 80 && s.bbW >= 30)],
   ['PUT OB  | rsiFrom[75,80)+vel<-12',   putOB.filter(s => s.rsiFrom >= 75 && s.rsiFrom < 80 && s.vel !== null && s.vel < -12)],
-  // K-Crash
-  ['K-CRASH | kDrop>=25+rsi<20',         kCrash.filter(s => s.kDrop >= 25 && s.rsi !== null && s.rsi < 20)],
-  ['K-CRASH | kCurr<20+kDrop>=20',       kCrash.filter(s => s.kCurr !== null && s.kCurr < 20 && s.kDrop !== null && s.kDrop >= 20)],
-  ['K-CRASH | kPrev>=60+kDrop>=20',      kCrash.filter(s => s.kPrev !== null && s.kPrev >= 60 && s.kDrop !== null && s.kDrop >= 20)],
-  ['K-CRASH | bbW>=50+rsi<30',           kCrash.filter(s => s.bbW >= 50 && s.rsi !== null && s.rsi < 30)],
+  // CALL Reversal
+  ['CALL REV | kDrop>=25+rsi<20',        kCrash.filter(s => s.kDrop >= 25 && s.rsi !== null && s.rsi < 20)],
+  ['CALL REV | kCurr<20+kDrop>=20',      kCrash.filter(s => s.kCurr !== null && s.kCurr < 20 && s.kDrop !== null && s.kDrop >= 20)],
+  ['CALL REV | kPrev>=60+kDrop>=20',     kCrash.filter(s => s.kPrev !== null && s.kPrev >= 60 && s.kDrop !== null && s.kDrop >= 20)],
+  ['CALL REV | bbW>=50+rsi<30',          kCrash.filter(s => s.bbW >= 50 && s.rsi !== null && s.rsi < 30)],
   // PUT DT
   ['PUT DT  | bbW>=30+rsi<=40',          putDT.filter(s => s.bbW >= 30 && s.rsi !== null && s.rsi <= 40)],
   ['PUT DT  | bbW>=50+rsi<=40',          putDT.filter(s => s.bbW >= 50 && s.rsi !== null && s.rsi <= 40)],

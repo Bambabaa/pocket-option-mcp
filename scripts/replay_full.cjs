@@ -85,13 +85,13 @@ console.log('╚═════════════════════�
 console.log('── PATTERN SUMMARY ─────────────────────────────────────────────────');
 console.log('  Pattern                              n       WR        P&L');
 console.log(pr('ALL SIGNALS', all));
-console.log(pr('CALL K-Crash Reversal', kCrash));
-console.log(pr('PUT Overbought Reversal', putOB));
+console.log(pr('CALL Reversal', kCrash));
+console.log(pr('PUT Reversal', putOB));
 console.log(pr('CALL Up Trend', callUT));
 console.log(pr('PUT Down Trend', putDT));
 
-// ── K-Crash
-console.log('\n── K-CRASH: GATE BREAKDOWN ─────────────────────────────────────────');
+// ── CALL Reversal
+console.log('\n── CALL REVERSAL: GATE BREAKDOWN ───────────────────────────────────');
 console.log('  K Drop:');
 [[0,20],[20,25],[25,30],[30,35],[35,99]].forEach(([lo, hi]) => {
   const f = kCrash.filter(s => s.kDrop !== null && s.kDrop >= lo && s.kDrop < hi);
@@ -215,7 +215,7 @@ ranked.slice(-8).forEach(r => {
 
 // ── Hour breakdown
 console.log('\n── HOUR-BY-HOUR (UTC) ──────────────────────────────────────────────');
-console.log('  Hour   All                  PutDT              KCrash');
+console.log('  Hour   All                  PutDT              CallRev');
 for (let h = 0; h <= 23; h++) {
   const hs  = all.filter(s => s.hour === h);
   if (hs.length === 0) continue;

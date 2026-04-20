@@ -20,7 +20,7 @@ const server = new McpServer(
     instructions: `Pocket Option MCP — 43 tools for reading, analyzing, and controlling a live Pocket Option trading bot.
 
 DATABASE MODEL:
-- Bot DB (readonly): candles, prices, indicators, signals, orders_queue, trades_ordered, qualification data
+- Bot DB (readonly): candles, prices, indicators, signals, orders_queue, trades_ordered
 - MCP DB (writable): mcp_orders — manual trades Claude enqueues, separate from bot-generated signals
 
 IMPORTANT: The bot (pocket-option-bot.js) must be running for live data. Use po_health first to confirm.
@@ -47,7 +47,7 @@ Analysis & Backtesting (AI research — find the edge):
 Reading market data:
 - po_candles → OHLC bars. Use summary=true unless you need individual bars
 - po_price_history → tick-level prices over a time window
-- po_indicators → latest MA1/2/3, RSI, Bollinger Bands, Stochastic, Keltner, Schaff values
+- po_indicators → latest MA1/2/3, RSI 5, Bollinger Bands, Stochastic (5,3,3) _v2, Keltner, Schaff values
 
 Reading signals:
 - po_signals → CALL/PUT signals from the KT strategy pipeline (filter by asset or direction)
