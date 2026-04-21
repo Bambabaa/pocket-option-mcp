@@ -1,0 +1,92 @@
+
+═══ v2_13-15 ═══
+  BEFORE  n=614  WR=52.4%  PF=1.01  P/L=$2120  CI=[48.5,56.4]
+  AFTER   n=190  WR=53.2%  PF=1.04  P/L=$1960  CI=[46.1,60.1]
+  REMOVED n=424  WR=52.1%  PF=1.00  P/L=$160   ← prevented
+  Δ WR = 0.7pp   Δ PF = 0.03   avoided loss ≈ -160
+
+═══ V3_16 ═══
+  BEFORE  n=701  WR=49.8%  PF=0.91  P/L=$-15460  CI=[46.1,53.5]
+  AFTER   n=220  WR=51.8%  PF=0.99  P/L=$-560  CI=[45.2,58.3]
+  REMOVED n=481  WR=48.9%  PF=0.88  P/L=$-14900   ← prevented
+  Δ WR = 2.0pp   Δ PF = 0.08   avoided loss ≈ 14900
+
+═══ V3_17 ═══
+  BEFORE  n=79  WR=54.4%  PF=1.10  P/L=$1780  CI=[43.5,65.0]
+  AFTER   n=0  WR=0.0%  PF=0.00  P/L=$0  CI=[0.0,0.0]
+  REMOVED n=79  WR=54.4%  PF=1.10  P/L=$1780   ← prevented
+  Δ WR = -54.4pp   Δ PF = -1.10   avoided loss ≈ -1780
+
+═══ V4_17 ═══
+  BEFORE  n=225  WR=50.7%  PF=0.94  P/L=$-3060  CI=[44.2,57.1]
+  AFTER   n=84  WR=48.8%  PF=0.88  P/L=$-2640  CI=[38.4,59.3]
+  REMOVED n=141  WR=51.8%  PF=0.99  P/L=$-420   ← prevented
+  Δ WR = -1.9pp   Δ PF = -0.07   avoided loss ≈ 420
+
+═══ current ═══
+  BEFORE  n=94  WR=60.6%  PF=1.42  P/L=$7720  CI=[50.5,69.9]
+  AFTER   n=37  WR=59.5%  PF=1.35  P/L=$2620  CI=[43.5,73.7]
+  REMOVED n=57  WR=61.4%  PF=1.46  P/L=$5100   ← prevented
+  Δ WR = -1.2pp   Δ PF = -0.07   avoided loss ≈ -5100
+
+═══ AGGREGATE ═══
+BEFORE  n=1713  WR=51.7%  P/L=$-6900
+AFTER   n=531  WR=52.4%  P/L=$1380
+REMOVED n=1182  WR=51.4%  P/L=$-8280
+Δ WR = 0.7pp
+Avoided loss = 8280
+
+═══ PER-PATTERN IMPACT ═══
+  PUT_DT      BEFORE n=801 WR=52.3% PF=1.01 P/L=$1740   AFTER n=258 WR=54.3% PF=1.09 P/L=$5400   Δ WR=2.0pp
+  CALL_REV    BEFORE n=403 WR=47.1% PF=0.82 P/L=$-19100   AFTER n=141 WR=48.2% PF=0.86 P/L=$-5220   Δ WR=1.1pp
+  PUT_REV     BEFORE n=140 WR=56.4% PF=1.19 P/L=$5840   AFTER n=47 WR=51.1% PF=0.96 P/L=$-460   Δ WR=-5.4pp
+  CALL_UT     BEFORE n=369 WR=53.4% PF=1.05 P/L=$4620   AFTER n=85 WR=54.1% PF=1.09 P/L=$1660   Δ WR=0.7pp
+
+═══ JSON SPEC ═══
+{
+  "name": "universal_asset_quality_filter",
+  "conditions": [
+    {
+      "trait": "range_cov",
+      "operator": "<=",
+      "value": 0.326
+    },
+    {
+      "trait": "ma_chop",
+      "operator": "<=",
+      "value": 0.085
+    },
+    {
+      "trait": "tick_autocorr",
+      "operator": ">=",
+      "value": 0
+    }
+  ],
+  "action": "block_signal",
+  "window": {
+    "ticks": 20000,
+    "candles": 2000,
+    "indicators": 2000
+  },
+  "validated_dbs": [
+    "v2_13-15",
+    "V3_16",
+    "V3_17",
+    "V4_17",
+    "current"
+  ],
+  "aggregate_impact": {
+    "before": {
+      "n": 1713,
+      "wr_pct": 51.7,
+      "pnl": -6900
+    },
+    "after": {
+      "n": 531,
+      "wr_pct": 52.4,
+      "pnl": 1380
+    },
+    "avoided_loss": 8280,
+    "wr_improvement_pp": 0.7
+  }
+}

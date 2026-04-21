@@ -1,0 +1,298 @@
+[v2_13-15] 717 signals — extracting 10-bar fingerprints
+[V3_16] 784 signals — extracting 10-bar fingerprints
+[V3_17] 124 signals — extracting 10-bar fingerprints
+[V4_17] 244 signals — extracting 10-bar fingerprints
+[current] 105 signals — extracting 10-bar fingerprints
+
+Total fingerprints: 1974
+
+════════════════════════════════════════════════════════════════════
+PHASE 1 — PRE-SIGNAL FEATURE FINGERPRINT (per pattern, mean ± std)
+════════════════════════════════════════════════════════════════════
+
+PUT_REV (n=156)
+  body_pct_atr           0.480 ±   0.295   med=   0.425
+  exhaustion             1.461 ±   3.918   med=   0.348
+  rejection              1.556 ±   5.309   med=   0.474
+  dir                   -1.000 ±   0.000   med=  -1.000
+  close_pos              0.267 ±   0.211   med=   0.238
+  streak                 1.250 ±   0.666   med=   1.000
+  hh                     0.372 ±   0.483   med=   0.000
+  ll                     0.058 ±   0.233   med=   0.000
+  engulf                 0.353 ±   0.478   med=   0.000
+  inside                 0.115 ±   0.319   med=   0.000
+  nr7                    0.122 ±   0.327   med=   0.000
+  wr7                    0.096 ±   0.295   med=   0.000
+  rsi_now               62.768 ±   4.814   med=  63.219
+  rsi_slope             -3.037 ±   3.933   med=  -3.967
+  rsi_accel             -3.140 ±  12.571   med=  -3.930
+  k_now                 67.722 ±   7.401   med=  67.982
+  k_slope               -2.188 ±   3.440   med=  -2.751
+  k_accel               -9.857 ±   6.912   med=  -8.928
+  kd_spread            -11.134 ±   4.852   med= -10.890
+  kd_spread_prev        -2.165 ±   5.210   med=  -2.703
+  bbw_now               81.551 ± 173.990   med=  39.432
+  bbw_expand             0.196 ±   0.282   med=   0.197
+  pctB                   0.739 ±   0.089   med=   0.761
+  ma_conv_speed          0.421 ±   2.621   med=   0.025
+  atr                    0.481 ±   1.537   med=   0.001
+
+PUT_DT (n=918)
+  body_pct_atr           0.772 ±   0.439   med=   0.741
+  exhaustion             0.662 ±   1.907   med=   0.183
+  rejection              0.731 ±   2.086   med=   0.176
+  dir                   -1.000 ±   0.000   med=  -1.000
+  close_pos              0.185 ±   0.189   med=   0.127
+  streak                 1.723 ±   0.976   med=   1.000
+  hh                     0.169 ±   0.375   med=   0.000
+  ll                     0.326 ±   0.469   med=   0.000
+  engulf                 0.235 ±   0.424   med=   0.000
+  inside                 0.123 ±   0.329   med=   0.000
+  nr7                    0.161 ±   0.368   med=   0.000
+  wr7                    0.142 ±   0.349   med=   0.000
+  rsi_now               27.649 ±  14.884   med=  28.939
+  rsi_slope             -8.562 ±   5.246   med=  -9.103
+  rsi_accel             -9.885 ±  29.374   med=  -6.450
+  k_now                 34.568 ±  17.127   med=  34.877
+  k_slope               -7.615 ±   5.392   med=  -8.251
+  k_accel               -8.093 ±  14.220   med=  -7.063
+  kd_spread            -14.448 ±   8.384   med= -14.742
+  kd_spread_prev        -9.184 ±  11.521   med= -10.257
+  bbw_now               30.704 ±  35.715   med=  24.755
+  bbw_expand            -0.055 ±   0.452   med=  -0.052
+  pctB                   0.440 ±   0.197   med=   0.472
+  ma_conv_speed         -0.326 ±   0.369   med=  -0.288
+  atr                    0.252 ±   1.152   med=   0.001
+
+CALL_REV (n=469)
+  body_pct_atr           0.622 ±   0.444   med=   0.546
+  exhaustion             1.850 ±   5.648   med=   0.333
+  rejection              1.271 ±   4.039   med=   0.200
+  dir                   -0.486 ±   0.873   med=  -1.000
+  close_pos              0.302 ±   0.296   med=   0.185
+  streak                 2.154 ±   0.894   med=   2.000
+  hh                     0.013 ±   0.112   med=   0.000
+  ll                     0.680 ±   0.466   med=   1.000
+  engulf                 0.115 ±   0.319   med=   0.000
+  inside                 0.060 ±   0.237   med=   0.000
+  nr7                    0.145 ±   0.352   med=   0.000
+  wr7                    0.194 ±   0.395   med=   0.000
+  rsi_now               25.172 ±  13.321   med=  27.132
+  rsi_slope             -8.092 ±   6.154   med=  -8.613
+  rsi_accel              6.061 ±  28.679   med=   2.932
+  k_now                 23.078 ±   6.945   med=  24.077
+  k_slope               -8.996 ±   5.176   med= -10.320
+  k_accel               -1.791 ±  15.523   med=  -1.054
+  kd_spread            -22.899 ±   6.251   med= -23.351
+  kd_spread_prev       -15.990 ±   8.793   med= -17.703
+  bbw_now               52.016 ±  82.175   med=  32.760
+  bbw_expand            -0.031 ±   0.252   med=  -0.023
+  pctB                   0.275 ±   0.261   med=   0.252
+  ma_conv_speed          0.868 ±  15.237   med=  -0.164
+  atr                    0.394 ±   1.472   med=   0.001
+
+CALL_UT (n=431)
+  body_pct_atr           0.647 ±   0.402   med=   0.591
+  exhaustion             1.286 ±   6.723   med=   0.227
+  rejection              1.274 ±   4.645   med=   0.294
+  dir                    0.995 ±   0.096   med=   1.000
+  close_pos              0.802 ±   0.199   med=   0.861
+  streak                 1.928 ±   1.041   med=   2.000
+  hh                     0.480 ±   0.500   med=   0.000
+  ll                     0.107 ±   0.309   med=   0.000
+  engulf                 0.204 ±   0.403   med=   0.000
+  inside                 0.088 ±   0.284   med=   0.000
+  nr7                    0.167 ±   0.373   med=   0.000
+  wr7                    0.142 ±   0.349   med=   0.000
+  rsi_now               76.763 ±  14.146   med=  76.642
+  rsi_slope              9.920 ±   5.381   med=  10.275
+  rsi_accel              3.745 ±  24.361   med=   2.095
+  k_now                 75.005 ±  16.758   med=  79.823
+  k_slope                9.785 ±   5.646   med=  11.158
+  k_accel                2.428 ±  13.317   med=   0.004
+  kd_spread             16.039 ±   7.755   med=  16.824
+  kd_spread_prev        13.854 ±  11.226   med=  16.459
+  bbw_now               27.380 ±  54.246   med=  16.932
+  bbw_expand            -0.064 ±   0.178   med=  -0.040
+  pctB                   0.616 ±   0.210   med=   0.586
+  ma_conv_speed         -0.369 ±   0.675   med=  -0.368
+  atr                    0.399 ±   1.474   med=   0.001
+
+════════════════════════════════════════════════════════════════════
+PHASE 2 — K-MEANS CLUSTERING (k=6, features z-scored)
+════════════════════════════════════════════════════════════════════
+
+CLUSTER 0 (n=433) dominant: CALL_UT:414 PUT_REV:9 PUT_DT:7 CALL_REV:3
+  kd_spread          z=+1.58
+  dir                z=+1.53
+  rsi_slope          z=+1.51
+  k_slope            z=+1.51
+  rsi_now            z=+1.42
+  close_pos          z=+1.33
+
+CLUSTER 1 (n=1) dominant: CALL_REV:1
+  ma_conv_speed      z=+43.91
+  ll                 z=+1.39
+  close_pos          z=-1.08
+  k_now              z=-0.96
+  bbw_expand         z=-0.95
+  pctB               z=-0.94
+
+CLUSTER 2 (n=1) dominant: PUT_DT:1
+  bbw_expand         z=+33.60
+  wr7                z=+2.38
+  rsi_accel          z=-2.22
+  hh                 z=+1.91
+  k_now              z=+0.99
+  k_accel            z=-0.91
+
+CLUSTER 3 (n=9) dominant: CALL_REV:3 PUT_REV:3 CALL_UT:2 PUT_DT:1
+  bbw_now            z=+11.43
+  pctB               z=+0.82
+  rejection          z=+0.81
+  rsi_now            z=+0.62
+  hh                 z=+0.56
+  body_pct_atr       z=-0.49
+
+CLUSTER 4 (n=8) dominant: CALL_REV:4 CALL_UT:3 PUT_REV:1
+  exhaustion         z=+10.31
+  rejection          z=+9.58
+  body_pct_atr       z=-1.56
+  dir                z=+1.05
+  streak             z=+0.55
+  k_accel            z=+0.53
+
+CLUSTER 5 (n=1522) dominant: PUT_DT:909 CALL_REV:458 PUT_REV:143 CALL_UT:12
+  kd_spread          z=-0.45
+  dir                z=-0.44
+  rsi_slope          z=-0.43
+  k_slope            z=-0.43
+  rsi_now            z=-0.41
+  close_pos          z=-0.38
+
+════════════════════════════════════════════════════════════════════
+PHASE 3 — DISTANCE-TO-TRIGGER (PUT_REV, pooled across all DBs)
+════════════════════════════════════════════════════════════════════
+All bars n=35101
+  mean=1.74  median=1.7563471954018604  p90=3  p99=4.537859177220358
+Near actual PUT_REV signals n=156
+  mean=4.33  median=4.472065248995737
+Bars with perfect score 5/5: 186 (0.530%)
+Bars scoring 4+: 1369
+
+════════════════════════════════════════════════════════════════════
+PHASE 4 — N-GRAM SEQUENCE MINING (3-bar direction signature)
+════════════════════════════════════════════════════════════════════
+
+PUT_REV — direction (t-3, t-2, t-1) distribution
+  dir=-1 streak=1          n=123
+  dir=-1 streak=2          n=22
+  dir=-1 streak=3          n=5
+  dir=-1 streak=0          n=3
+  dir=-1 streak=4          n=2
+  dir=-1 streak=5          n=1
+  --- morphology signature top 6 ---
+    eng=0 ins=0 nr7=0 hh=1 ll=0              n=38
+    eng=0 ins=0 nr7=0 hh=0 ll=0              n=35
+    eng=1 ins=0 nr7=0 hh=0 ll=0              n=30
+    eng=1 ins=0 nr7=0 hh=1 ll=0              n=13
+    eng=0 ins=1 nr7=0 hh=0 ll=0              n=9
+    eng=0 ins=0 nr7=1 hh=1 ll=0              n=6
+
+PUT_DT — direction (t-3, t-2, t-1) distribution
+  dir=-1 streak=1          n=486
+  dir=-1 streak=2          n=242
+  dir=-1 streak=3          n=124
+  dir=-1 streak=4          n=49
+  dir=-1 streak=0          n=9
+  dir=-1 streak=5          n=5
+  dir=-1 streak=6          n=2
+  dir=-1 streak=7          n=1
+  --- morphology signature top 6 ---
+    eng=0 ins=0 nr7=0 hh=0 ll=1              n=209
+    eng=0 ins=0 nr7=0 hh=0 ll=0              n=200
+    eng=1 ins=0 nr7=0 hh=0 ll=0              n=116
+    eng=0 ins=0 nr7=0 hh=1 ll=0              n=97
+    eng=0 ins=1 nr7=0 hh=0 ll=0              n=62
+    eng=0 ins=0 nr7=1 hh=0 ll=1              n=54
+
+════════════════════════════════════════════════════════════════════
+PHASE 5 — SYNTHETIC FEATURES (separation vs null hypothesis)
+════════════════════════════════════════════════════════════════════
+  rsi_per_bbw           PUT_REV μ=624.841  others μ=1700.018  Cohen's d=0.221
+  stoch_mom_div         PUT_REV μ=0.213  others μ=0.560  Cohen's d=0.491
+  candle_efficiency     PUT_REV μ=0.480  others μ=0.704  Cohen's d=0.599
+  exhaustion_comp       PUT_REV μ=0.241  others μ=0.229  Cohen's d=0.009
+  compression           PUT_REV μ=0.555  others μ=0.525  Cohen's d=0.112
+  rsi_momentum_neg      PUT_REV μ=3.725  others μ=3.232  Cohen's d=0.068
+
+════════════════════════════════════════════════════════════════════
+PHASE 6 — "ALMOST" ANALYSIS (bars meeting PUT_REV core gates but no signal)
+════════════════════════════════════════════════════════════════════
+Almost-PUT_REV (core gates met, no signal): n=291
+  bbw    μ=106.8  vs fired μ=81.6
+  k      μ=74.0  vs fired μ=67.7
+  kd_spr μ=-3.77 vs fired μ=-11.13
+  (fired PUT_REV n=156)
+  Inference: the 1.8653846153846154x gap between almost and fired = effect of auxiliary gates (K_prev>65, D≥75, K-D<-3, RSI[-2]≥80, candle red, 3-bar lookback)
+
+════════════════════════════════════════════════════════════════════
+PHASE 7 — LEAD/LAG (mean feature per lag, PUT_REV)
+════════════════════════════════════════════════════════════════════
+  lag   RSI        StochK     BBW       K-D
+    -5    69.6       69.5       68.3       6.32
+    -4    77.5       78.4       69.5       7.78
+    -3    83.9       84.0       72.5       6.53
+    -2    85.2       86.4       78.9       3.49
+    -1    75.5       82.0       81.4      -2.22
+     0    62.7       67.7       81.9     -11.15
+
+════════════════════════════════════════════════════════════════════
+PHASE 8 — ASCII VISUAL SIGNATURE (top PUT_REV-dominant cluster)
+════════════════════════════════════════════════════════════════════
+Top PUT_REV-dominant cluster: #3  n=9  PUT_REV=3  density=33.3%
+Mean streak before signal: 2.3 bars same direction
+Signal candle: body/ATR=0.26 exhaustion_wick=1.32 rejection=7.75
+Mental model: extended green run → tall upper wick → red engulfing → PUT_REV trigger
+ASCII:  ▲ ▲ ▲ ▲  |  ┃ (upper wick)  |  ▼ (red close)
+
+════════════════════════════════════════════════════════════════════
+PHASE 9 — DECISION TREE (predict pattern from 25 features, 70/30 split)
+════════════════════════════════════════════════════════════════════
+Train n=1381  Test n=593  Accuracy=90.6%
+Confusion (actual→predicted):
+  PUT_DT→PUT_DT                  251
+  CALL_UT→CALL_UT                134
+  CALL_REV→CALL_REV              99
+  PUT_REV→PUT_REV                53
+  PUT_DT→CALL_REV                26
+  CALL_REV→PUT_DT                22
+  PUT_REV→PUT_DT                 3
+  CALL_UT→PUT_DT                 2
+  CALL_REV→CALL_UT               2
+  CALL_UT→PUT_REV                1
+
+Learned decision tree:
+rsi_now <= 50.685  [n=1381, gain=0.216]
+  ├─ T: k_now <= 29.833  [n=967, gain=0.151]
+  ├─ T:   ├─ T: ma_conv_speed <= -0.212  [n=581, gain=0.095]
+  ├─ T:   ├─ T:   ├─ T: kd_spread <= -14.643  [n=349, gain=0.096]
+  ├─ T:   ├─ T:   ├─ T:   ├─ T: k_now <= 19.809  [n=245, gain=0.107]
+  ├─ T:   ├─ T:   ├─ T:   ├─ T:   ├─ T: → PUT_DT (n=123, {"PUT_DT":84,"CALL_REV":39})
+  ├─ T:   ├─ T:   ├─ T:   ├─ T:   └─ F: → CALL_REV (n=122, {"CALL_REV":95,"PUT_DT":27})
+  ├─ T:   ├─ T:   ├─ T:   └─ F: k_accel <= -6.786  [n=104, gain=0.024]
+  ├─ T:   ├─ T:   ├─ T:   └─ F:   ├─ T: → PUT_DT (n=21, {"PUT_DT":15,"CALL_REV":6})
+  ├─ T:   ├─ T:   ├─ T:   └─ F:   └─ F: → PUT_DT (n=83, {"PUT_DT":82,"CALL_REV":1})
+  ├─ T:   ├─ T:   └─ F: bbw_now <= 6.019  [n=232, gain=0.052]
+  ├─ T:   ├─ T:   └─ F:   ├─ T: → PUT_DT (n=24, {"PUT_DT":15,"CALL_REV":9})
+  ├─ T:   ├─ T:   └─ F:   └─ F: ma_conv_speed <= 0.010  [n=208, gain=0.012]
+  ├─ T:   ├─ T:   └─ F:   └─ F:   ├─ T: → CALL_REV (n=125, {"CALL_REV":105,"PUT_DT":20})
+  ├─ T:   ├─ T:   └─ F:   └─ F:   └─ F: → CALL_REV (n=83, {"CALL_REV":83})
+  ├─ T:   └─ F: k_now <= 32.119  [n=386, gain=0.004]
+  ├─ T:   └─ F:   ├─ T: → PUT_DT (n=39, {"CALL_REV":6,"PUT_DT":33})
+  ├─ T:   └─ F:   └─ F: → PUT_DT (n=347, {"PUT_DT":344,"PUT_REV":1,"CALL_UT":1,"CALL_REV":1})
+  └─ F: dir <= -1.000  [n=414, gain=0.351]
+  └─ F:   ├─ T: rsi_now <= 55.000  [n=120, gain=0.233]
+  └─ F:   ├─ T:   ├─ T: → PUT_DT (n=25, {"PUT_DT":21,"PUT_REV":4})
+  └─ F:   ├─ T:   └─ F: → PUT_REV (n=95, {"PUT_REV":95})
+  └─ F:   └─ F: → CALL_UT (n=294, {"CALL_REV":1,"CALL_UT":293})
