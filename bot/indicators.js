@@ -848,8 +848,8 @@ class Indicators {
             const rsiWasOverbought1 = rsi_1 != null && rsi_1 > 70;
             const rsiWasOverbought2 = rsi_2 != null && rsi_2 >= 80; // session_report_2026-04-17: 88.9% WR at rsiFrom 80-82
             const notFastDrop = rsi_1 == null || !(rsi_1 >= 75 && rsi_1 < 80);
-            const rsiInReversal = rsiFalling && rsi >= 38 && rsi < 70 &&
-                !(rsi >= 55 && rsi < 65) && rsiVelocity >= -15 && rsiVelocity <= -8; // session_report_2026-04-17: vel -15 to -8 = golden band
+            // 2026-04-20 QA2 (5-DB pooled, n=35): vel<-12 open-ended x RSI[60,70) = 85.7% WR +$11,300
+            const rsiInReversal = rsiFalling && rsi >= 60 && rsi < 70 && rsiVelocity <= -12;
             const kExitingOB = k_1 != null && k_1 > 65 && kFalling &&
                 stochK != null && stochK >= 55 && stochK < 80;
             const dLaggingHigh = stochD != null && stochD >= 75;
@@ -865,10 +865,7 @@ class Indicators {
                 // Stochastic remained overbought the whole time before exit
                 const stochAllOB = k_1 > 65 && k_2 > 65 && k_3 > 65;
 
-                // No early bullish Stoch crossover during overbought phase
-                const noEarlyBullishCross = !(k_1 < d_1 && k_2 >= d_2);
-
-                lookbackOk = rsiAllHigh && stochAllOB && noEarlyBullishCross;
+                lookbackOk = rsiAllHigh && stochAllOB;
             }
 
             // Relaxed: align with tightened strict branch — prior bar RSI must confirm true overbought
@@ -888,8 +885,9 @@ class Indicators {
                 (rsiWasHigh1 && rsiWasHigh2 && rsiInReversalRelaxed &&
                     closeAboveMid && bbWidthSufficient && kExitingOBRelaxed && dLaggingRelaxed && kdSpreadRelaxed)) {
 
-                // session_debrief_2026-04-18 §12: bbW≥50 wins on all 4 DBs; bbW[10,30) is kill zone
-                if (bbWidthBps < 50) return false;
+                // 2026-04-20 synthesis: QA2 combo bbw>=30 x vel<-12 x RSI[60,70) = 85.7% WR n=35 +$11,300
+                // pooled across 4 DBs. bbw[30,50) is the sweet spot previously blocked by bbw>=50.
+                if (bbWidthBps < 30) return false;
 
                 const candleHour = new Date(candleTs * 1000).getUTCHours();
                 signals.direction = 'PUT'; signals.strategyUsed = 'video2';
@@ -925,11 +923,8 @@ class Indicators {
                 const ma14FlatOrRising = ma14 >= ma14_3;
 
                 const stochAbove30 = stochK > 30 && k_1 > 30 && k_2 > 30 && k_3 > 30;
-                const stochRecovering = stochK > k_2;
 
-                const noBearishCross = !(k_1 > d_1 && stochK <= stochD);
-
-                lookbackOk = gapShrinking && ma14FlatOrRising && stochAbove30 && stochRecovering && noBearishCross;
+                lookbackOk = gapShrinking && ma14FlatOrRising && stochAbove30;
             }
 
             // Relaxed: MA convergence with RSI bullish and Stoch rising
@@ -946,6 +941,14 @@ class Indicators {
                 // session_debrief_2026-04-18 §11: K>=85 alone wins on all 4 DBs (+$7,180); bbW<=30 cap hurt v2_13-15.
                 // §12: RSI[60,70) loses on all 4 DBs (−$2,700 cumulative) — exclude it.
                 if (!(stochK != null && stochK >= 85 && !(rsi >= 60 && rsi < 70))) return false;
+
+                // 2026-04-20 Phase 7 (n=70 pooled): candle_efficiency = |close-open| / (high-low).
+                // threshold <=0.55 raises WR 52.9%->66.7%, avoids $3,680. Strong directional body
+                // signals trend-chasing; we want indecision/rejection at the top.
+                const _range = candle[3] - candle[4];
+                const _body = Math.abs(candle[2] - candle[1]);
+                const _candleEfficiency = _range > 0 ? _body / _range : 0;
+                if (_candleEfficiency > 0.55) return false;
 
                 const candleHour = new Date(candleTs * 1000).getUTCHours();
                 signals.direction = 'CALL'; signals.strategyUsed = 'video2';
@@ -983,11 +986,8 @@ class Indicators {
                 const ma14FlatOrFalling = ma14 <= ma14_3;
 
                 const stochBelow70 = stochK < 70 && k_1 < 70 && k_2 < 70 && k_3 < 70;
-                const stochResumingDown = stochK < k_2;
 
-                const noBullishCross = !(k_1 < d_1 && stochK >= stochD);
-
-                lookbackOk = gapShrinking && ma14FlatOrFalling && stochBelow70 && stochResumingDown && noBullishCross;
+                lookbackOk = gapShrinking && ma14FlatOrFalling && stochBelow70;
             }
 
             // Relaxed: MA divergence with RSI bearish and Stoch falling
