@@ -1,34 +1,46 @@
-// Decision-tree leaf sweep. Replays the 10 directionally-unambiguous leaves
-// from docs/ML_REPORT_LEAF_PATTERN.MD (all WR ≥ 60%). Measures claim-vs-actual
-// to expose overfitting. Does NOT modify paper_reversal_sweep.cjs.
-// Usage: node scripts/paper_reversal_leaves.cjs [dbPath] [outCsv]
+// Decision-tree leaf sweep — CORR report revision.
+// Implements only the 3 leaves with adequate sample size (n≥50) from
+// docs/ML_REPORT_LEAF_PATTERN-CORR.MD. Expiry fixed at 2m (model was 2m).
+//
+// Single DB:  node scripts/paper_reversal_leaves.cjs [dbPath] [outCsv]
+// All DBs:    node scripts/paper_reversal_leaves.cjs --all [outCsv]
 const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
 
-const dbPath = process.argv[2] || 'data/trading_data.db';
-const outCsv = process.argv[3] || 'data/paper_reversal_leaves.csv';
-const db = new Database(dbPath, { readonly: true });
-const AMOUNT = 500, PAYOUT = 0.92;
-const EXPIRIES = [1, 2, 3, 5];
+const ALL_DBS = [
+  'data/trading_data_v1.db',
+  'data/trading_data_v2_13-15.db',
+  'data/trading_data_V3_16.db',
+  'data/trading_data_V3_17.db',
+  'data/trading_data_V4_17.db',
+  'data/trading_data-V4_18.db',
+  'data/trading_data.db',
+];
 
-// Feature engineering. Adds bb_position and stc_stoch_diff used by leaves.
+const runAll  = process.argv[2] === '--all';
+const dbPaths = runAll ? ALL_DBS : [process.argv[2] || 'data/trading_data.db'];
+const outCsv  = (runAll ? process.argv[3] : process.argv[3]) || 'data/paper_reversal_leaves.csv';
+
+const AMOUNT = 500, PAYOUT = 0.92;
+const EXPIRY = 2; // minutes — model was trained on 2m expiry only
+
 function computeFeatures(r) {
   const close_to_lower = ((r.close - r.bb_lower) / r.bb_middle) * 10000;
   const close_to_upper = ((r.bb_upper - r.close) / r.bb_middle) * 10000;
-  const bb_width_bps = ((r.bb_upper - r.bb_lower) / r.bb_middle) * 10000;
-  const bbRange = r.bb_upper - r.bb_lower;
-  const bb_position = bbRange > 0 ? (r.close - r.bb_lower) / bbRange : null;
-  const stoch_kd_diff = (r.stochastic_k_v2 != null && r.stochastic_d_v2 != null)
+  const bb_width_bps   = ((r.bb_upper - r.bb_lower) / r.bb_middle) * 10000;
+  const bbRange        = r.bb_upper - r.bb_lower;
+  const bb_position    = bbRange > 0 ? (r.close - r.bb_lower) / bbRange : null;
+  const stoch_kd_diff  = (r.stochastic_k_v2 != null && r.stochastic_d_v2 != null)
     ? r.stochastic_k_v2 - r.stochastic_d_v2 : null;
   const stc_stoch_diff = (r.schaff_value != null && r.stochastic_k_v2 != null)
     ? r.schaff_value - r.stochastic_k_v2 : null;
-  const ma_trend_bps = (r.ma1 != null && r.ma3 != null && r.ma3)
+  const ma_trend_bps   = (r.ma1 != null && r.ma3 != null && r.ma3)
     ? ((r.ma1 - r.ma3) / r.ma3) * 10000 : 0;
   return {
     rsi: r.rsi_5,
-    k: r.stochastic_k_v2,
-    d: r.stochastic_d_v2,
+    k:   r.stochastic_k_v2,
+    d:   r.stochastic_d_v2,
     stc: r.schaff_value,
     close_to_lower, close_to_upper,
     bb_width_bps, ma_trend_bps,
@@ -36,64 +48,83 @@ function computeFeatures(r) {
   };
 }
 
-// Required-field guard per leaf. Returns false if any needed feature is null.
 const has = (v) => v != null;
 
-// 10 leaves with WR ≥ 60% from LEAF_PATTERN report §4.
-// Thresholds copied verbatim. Direction inferred from oversold/overbought semantics.
+// ── Leaves from ML_REPORT_LEAF_PATTERN-CORR.MD (2-minute model, 26,377 rows)
+// Only leaves with n≥50. Razor-band leaves (n<20 or band<1 unit) excluded.
+//
+// L16 CALL (n=86, WR=68.6%)
+//   IF bb_position <= 0.021859
+//   AND stoch_kd_diff > -1.668935
+//   AND close_to_lower <= -1.013379
+//   AND rsi_5 <= 5.787841
+//   AND rsi_5 <= 2.679860          ← tighter of the two RSI splits
+//   AND stoch_d_v2 > 4.079007
+//
+// L41 PUT (n=50, WR=76.0%)
+//   IF bb_position > 0.021859
+//   AND stoch_kd_diff <= 22.493945
+//   AND stc_stoch_diff > -58.236702
+//   AND rsi_5 <= 17.150460
+//   AND stoch_kd_diff <= -16.898592
+//   AND bb_position > 0.352286
+//
+// L65 PUT (n=323, WR=63.8%)
+//   IF bb_position > 0.021859
+//   AND stoch_kd_diff > 22.493945
+//   AND stoch_kd_diff > 22.671788  ← the razor split that produces L55/L56 is *before* this
+//   AND bb_position <= 0.721175
+//   AND schaff_value > 0.000060
+//   AND stoch_kd_diff > 24.659285  ← final gate: K running well ahead of D
+
 const LEAVES = [
-  { id: 2, dir: 'CALL', wr_reported: 1.00, n_reported: 24, test: (f) =>
-      has(f.rsi) && has(f.k) && has(f.d) && has(f.bb_position) &&
-      f.rsi <= 1.8098 && f.k <= 9.6 && f.d > 5.7217 && f.d <= 15.3208 &&
-      f.close_to_lower <= -2.111 && f.bb_position <= 0.1198 },
-
-  { id: 6, dir: 'CALL', wr_reported: 0.92, n_reported: 25, test: (f) =>
-      has(f.k) && has(f.stoch_kd_diff) && has(f.bb_position) &&
-      f.k <= 9.6 && f.close_to_lower > -2.111 && f.bb_width_bps <= 12.8662 &&
-      f.stoch_kd_diff > -2.8832 && f.stoch_kd_diff <= -0.8091 && f.bb_position <= 0.1198 },
-
-  { id: 31, dir: 'PUT', wr_reported: 0.8824, n_reported: 17, test: (f) =>
-      has(f.stc) && has(f.stc_stoch_diff) && has(f.stoch_kd_diff) && has(f.bb_position) &&
-      f.stc > 88.8626 && f.stc <= 98.6049 && f.bb_width_bps > 0.5241 &&
-      f.stc_stoch_diff > 64.7924 && f.stoch_kd_diff > -8.7362 && f.bb_position > 0.1198 },
-
-  { id: 21, dir: 'PUT', wr_reported: 0.8786, n_reported: 140, test: (f) =>
-      has(f.k) && has(f.stc_stoch_diff) && has(f.bb_position) &&
-      f.k <= 90.466 && f.close_to_lower <= 29.4479 && f.close_to_upper <= 6.7463 &&
-      f.bb_width_bps > 0.5241 && f.stc_stoch_diff <= 64.7924 && f.bb_position > 0.1198 },
-
-  { id: 27, dir: 'PUT', wr_reported: 0.8116, n_reported: 69, test: (f) =>
-      has(f.k) && has(f.stc) && has(f.stc_stoch_diff) && has(f.bb_position) &&
-      f.k > 90.466 && f.stc > 99.7811 && f.bb_width_bps > 0.5241 &&
-      f.stc_stoch_diff <= 64.7924 && f.bb_position > 0.1198 && f.bb_position <= 1.0691 },
-
-  { id: 3, dir: 'CALL', wr_reported: 0.80, n_reported: 15, test: (f) =>
-      has(f.rsi) && has(f.k) && has(f.d) && has(f.bb_position) &&
-      f.rsi > 1.8098 && f.k <= 9.6 && f.d > 5.7217 && f.d <= 15.3208 &&
-      f.close_to_lower <= -2.111 && f.bb_position <= 0.1198 },
-
-  { id: 24, dir: 'PUT', wr_reported: 0.7447, n_reported: 47, test: (f) =>
-      has(f.k) && has(f.stc_stoch_diff) && has(f.bb_position) &&
-      f.k <= 90.466 && f.close_to_upper > 21.9194 && f.bb_width_bps > 0.5241 &&
-      f.stc_stoch_diff <= 64.7924 && f.bb_position > 0.1198 },
-
-  { id: 25, dir: 'PUT', wr_reported: 0.6422, n_reported: 109, test: (f) =>
-      has(f.k) && has(f.stc) && has(f.stc_stoch_diff) && has(f.bb_position) &&
-      f.k > 90.466 && f.stc <= 96.513 && f.bb_width_bps > 0.5241 &&
-      f.stc_stoch_diff <= 64.7924 && f.bb_position > 0.1198 },
-
-  { id: 1, dir: 'CALL', wr_reported: 0.619, n_reported: 21, test: (f) =>
-      has(f.k) && has(f.d) && has(f.bb_position) &&
-      f.k <= 9.6 && f.d <= 5.7217 && f.close_to_lower <= -2.111 && f.bb_position <= 0.1198 },
-
-  { id: 5, dir: 'CALL', wr_reported: 0.6154, n_reported: 52, test: (f) =>
-      has(f.k) && has(f.stoch_kd_diff) && has(f.bb_position) &&
-      f.k <= 9.6 && f.close_to_lower > -2.111 && f.bb_width_bps <= 12.8662 &&
-      f.stoch_kd_diff <= -2.8832 && f.bb_position <= 0.1198 },
+  {
+    id: 'L16', dir: 'CALL', wr_reported: 0.6860, n_reported: 86,
+    test: (f) =>
+      has(f.bb_position) && has(f.rsi) && has(f.d) && has(f.stoch_kd_diff) &&
+      f.bb_position    <= 0.021859  &&
+      f.stoch_kd_diff  > -1.668935 &&
+      f.close_to_lower <= -1.013379 &&
+      f.rsi            <= 2.679860  &&  // combines both RSI splits (≤5.788 AND ≤2.680)
+      f.d              >  4.079007,
+  },
+  {
+    id: 'L41', dir: 'PUT', wr_reported: 0.7600, n_reported: 50,
+    test: (f) =>
+      has(f.bb_position) && has(f.rsi) && has(f.stoch_kd_diff) && has(f.stc_stoch_diff) &&
+      f.bb_position    >   0.021859   &&
+      f.stc_stoch_diff >  -58.236702  &&
+      f.rsi            <=  17.150460  &&
+      f.stoch_kd_diff  <= -16.898592  &&  // also satisfies ≤22.493945
+      f.bb_position    >   0.352286,
+  },
+  {
+    id: 'L65', dir: 'PUT', wr_reported: 0.6378, n_reported: 323,
+    test: (f) =>
+      has(f.bb_position) && has(f.stoch_kd_diff) && has(f.stc) &&
+      f.bb_position   >   0.021859  &&
+      f.bb_position   <=  0.721175  &&
+      f.stoch_kd_diff >   24.659285 &&  // supersedes the two earlier ≥22.49/22.67 splits
+      f.stc           >   0.000060,
+  },
 ];
 
-// ── Load rows ───────────────────────────────────────────────────────────
-const rows = db.prepare(`
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function fmt(arr) {
+  const n  = arr.length;
+  const w  = arr.filter(x => x.outcome === 'WIN').length;
+  const pl = arr.reduce((s, x) => s + x.pl, 0);
+  const wr = n ? (100 * w / n).toFixed(1) : '-';
+  return { n, wr: String(wr), pl };
+}
+
+const fmtCsv = (v) => {
+  if (v === null || v === undefined || v === '') return '';
+  if (typeof v === 'number') return Number.isInteger(v) ? v.toString() : v.toFixed(6);
+  return String(v);
+};
+
+const SQL = `
   SELECT i.asset, i.timestamp,
          c.open, c.close, c.high, c.low,
          i.rsi_5, i.stochastic_k_v2, i.stochastic_d_v2,
@@ -105,18 +136,11 @@ const rows = db.prepare(`
   WHERE i.rsi_5 IS NOT NULL AND i.stochastic_k_v2 IS NOT NULL
     AND i.bb_upper IS NOT NULL AND i.bb_middle IS NOT NULL
   ORDER BY i.asset, i.timestamp ASC
-`).all();
+`;
 
-const closeByKey = new Map();
-for (const r of rows) closeByKey.set(r.asset + '|' + r.timestamp, r.close);
-
-// trades[leafKey][expiry] = [{outcome, pl, hour, dir, asset}, ...]
-const trades = {};
-for (const L of LEAVES) { trades['L' + L.id] = {}; for (const e of EXPIRIES) trades['L' + L.id][e] = []; }
-trades['COMBINED'] = {};
-for (const e of EXPIRIES) trades['COMBINED'][e] = [];
-
+// ── Accumulate across all DBs ─────────────────────────────────────────────────
 const csvHeader = [
+  'db_source',
   'timestamp_utc', 'asset', 'leaf_id', 'direction', 'wr_reported', 'n_reported',
   'open', 'high', 'low', 'close',
   'rsi_5', 'stoch_k_v2', 'stoch_d_v2',
@@ -125,137 +149,160 @@ const csvHeader = [
   'close_to_lower', 'close_to_upper',
   'schaff_value', 'stc_zone',
   'bb_position', 'stc_stoch_diff', 'stoch_kd_diff',
+  'exit_2m', 'pnl_2m', 'win_2m',
 ];
-for (const e of EXPIRIES) csvHeader.push(`exit_${e}m`, `pnl_${e}m`, `win_${e}m`);
 const csvLines = [csvHeader.join(',')];
-const fmtCsv = (v) => {
-  if (v === null || v === undefined || v === '') return '';
-  if (typeof v === 'number') return Number.isInteger(v) ? v.toString() : v.toFixed(6);
-  return String(v);
-};
 
-for (const r of rows) {
-  const f = computeFeatures(r);
-  const hour = new Date(r.timestamp * 1000).getUTCHours();
-  let firstFired = null;
+// global trade accumulators (across all DBs)
+const allTrades = {};
+for (const L of LEAVES) allTrades[L.id] = [];
+allTrades['COMBINED'] = [];
 
-  for (const L of LEAVES) {
-    if (!L.test(f)) continue;
-    if (!firstFired) firstFired = L;
+for (const dbPath of dbPaths) {
+  const dbFile = dbPath.split(/[\\/]/).pop();
+  const db = new Database(dbPath, { readonly: true });
+  const rows = db.prepare(SQL).all();
+  db.close();
 
-    const stcZone = f.stc == null ? '' :
-      (f.stc < 25 ? 'oversold' : f.stc > 75 ? 'overbought' : 'neutral');
+  const closeByKey = new Map();
+  for (const r of rows) closeByKey.set(r.asset + '|' + r.timestamp, r.close);
 
-    const csvRow = [
-      new Date(r.timestamp * 1000).toISOString(), r.asset, L.id, L.dir, L.wr_reported, L.n_reported,
-      r.open, r.high, r.low, r.close,
-      r.rsi_5, r.stochastic_k_v2, r.stochastic_d_v2,
-      r.bb_upper, r.bb_middle, r.bb_lower, f.bb_width_bps,
-      r.ma1, r.ma3, f.ma_trend_bps,
-      f.close_to_lower, f.close_to_upper,
-      r.schaff_value, stcZone,
-      f.bb_position, f.stc_stoch_diff, f.stoch_kd_diff,
-    ];
+  // per-DB trade accumulators for console output
+  const dbTrades = {};
+  for (const L of LEAVES) dbTrades[L.id] = [];
+  dbTrades['COMBINED'] = [];
 
-    for (const e of EXPIRIES) {
-      const exit = closeByKey.get(r.asset + '|' + (r.timestamp + e * 60));
-      if (exit == null) { csvRow.push('', '', ''); continue; }
-      const win = L.dir === 'CALL' ? exit > r.close : exit < r.close;
-      const pl = win ? AMOUNT * PAYOUT : -AMOUNT;
-      trades['L' + L.id][e].push({ outcome: win ? 'WIN' : 'LOSS', pl, hour, dir: L.dir, asset: r.asset });
-      csvRow.push(exit, pl, win ? 1 : 0);
+  for (const r of rows) {
+    const f = computeFeatures(r);
+    const hour = new Date(r.timestamp * 1000).getUTCHours();
+    const exit = closeByKey.get(r.asset + '|' + (r.timestamp + EXPIRY * 60));
+    let firstFired = null;
+
+    for (const L of LEAVES) {
+      if (!L.test(f)) continue;
+      if (!firstFired) firstFired = L;
+
+      const stcZone = f.stc == null ? '' :
+        (f.stc < 25 ? 'oversold' : f.stc > 75 ? 'overbought' : 'neutral');
+
+      const csvRow = [
+        dbFile,
+        new Date(r.timestamp * 1000).toISOString(), r.asset, L.id, L.dir, L.wr_reported, L.n_reported,
+        r.open, r.high, r.low, r.close,
+        r.rsi_5, r.stochastic_k_v2, r.stochastic_d_v2,
+        r.bb_upper, r.bb_middle, r.bb_lower, f.bb_width_bps,
+        r.ma1, r.ma3, f.ma_trend_bps,
+        f.close_to_lower, f.close_to_upper,
+        r.schaff_value, stcZone,
+        f.bb_position, f.stc_stoch_diff, f.stoch_kd_diff,
+      ];
+
+      if (exit == null) {
+        csvRow.push('', '', '');
+      } else {
+        const win = L.dir === 'CALL' ? exit > r.close : exit < r.close;
+        const pl  = win ? AMOUNT * PAYOUT : -AMOUNT;
+        const rec = { outcome: win ? 'WIN' : 'LOSS', pl, hour, dir: L.dir, asset: r.asset };
+        dbTrades[L.id].push(rec);
+        allTrades[L.id].push(rec);
+        csvRow.push(exit, pl, win ? 1 : 0);
+      }
+      csvLines.push(csvRow.map(fmtCsv).join(','));
     }
-    csvLines.push(csvRow.map(fmtCsv).join(','));
-  }
 
-  if (firstFired) {
-    for (const e of EXPIRIES) {
-      const exit = closeByKey.get(r.asset + '|' + (r.timestamp + e * 60));
-      if (exit == null) continue;
+    if (firstFired && exit != null) {
       const win = firstFired.dir === 'CALL' ? exit > r.close : exit < r.close;
-      const pl = win ? AMOUNT * PAYOUT : -AMOUNT;
-      trades['COMBINED'][e].push({ outcome: win ? 'WIN' : 'LOSS', pl, hour, dir: firstFired.dir, asset: r.asset });
+      const rec = { outcome: win ? 'WIN' : 'LOSS', pl: win ? AMOUNT * PAYOUT : -AMOUNT, hour, dir: firstFired.dir, asset: r.asset };
+      dbTrades['COMBINED'].push(rec);
+      allTrades['COMBINED'].push(rec);
     }
   }
-}
 
-function fmt(arr) {
-  const n = arr.length;
-  const w = arr.filter(x => x.outcome === 'WIN').length;
-  const pl = arr.reduce((s, x) => s + x.pl, 0);
-  const wr = n ? (100 * w / n).toFixed(1) : '-';
-  return { n, wr, pl };
-}
+  // ── Per-DB console output ───────────────────────────────────────────────────
+  console.log(`\n╔══════════════════════════════════════════════════════════════════════╗`);
+  console.log(`║  LEAF SWEEP (CORR)  |  ${dbFile.padEnd(44)}║`);
+  console.log(`║  3 leaves (n≥50) from ML_REPORT_LEAF_PATTERN-CORR  |  expiry=2m    ║`);
+  console.log(`╚══════════════════════════════════════════════════════════════════════╝\n`);
 
-const ver = dbPath.split(/[\\/]/).pop();
-console.log(`\n╔══════════════════════════════════════════════════════════════════════╗`);
-console.log(`║  LEAF SWEEP  |  ${ver.padEnd(50)}║`);
-console.log(`║  10 leaves (WR≥60%) from ML_REPORT_LEAF_PATTERN  |  payout=${PAYOUT}        ║`);
-console.log(`╚══════════════════════════════════════════════════════════════════════╝\n`);
-
-const ALL_KEYS = [...LEAVES.map(L => 'L' + L.id), 'COMBINED'];
-
-console.log('── LEAF × EXPIRY  (n / WR% / $P&L) ─────────────────────────────────');
-const hdr = 'Leaf'.padEnd(10) + EXPIRIES.map(e => (e + 'm').padStart(20)).join('');
-console.log(hdr);
-console.log('-'.repeat(hdr.length));
-for (const key of ALL_KEYS) {
-  let line = key.padEnd(10);
-  for (const e of EXPIRIES) {
-    const f = fmt(trades[key][e]);
-    line += `n=${f.n} ${f.wr}% $${f.pl}`.padStart(20);
+  console.log('── LEAF RESULTS @ 2m ───────────────────────────────────────────────────');
+  console.log('Leaf    Dir   n       WR%     $P&L');
+  console.log('-'.repeat(50));
+  for (const L of LEAVES) {
+    const f = fmt(dbTrades[L.id]);
+    console.log(`${L.id.padEnd(7)} ${L.dir.padEnd(5)} ${String(f.n).padEnd(7)} ${f.wr.padStart(5)}%   $${f.pl}`);
   }
-  console.log(line);
+  {
+    const f = fmt(dbTrades['COMBINED']);
+    console.log(`${'COMBINED'.padEnd(7)} ${''.padEnd(5)} ${String(f.n).padEnd(7)} ${f.wr.padStart(5)}%   $${f.pl}`);
+  }
+
+  console.log('\n── CLAIM vs ACTUAL (2m) ────────────────────────────────────────────────');
+  console.log('Leaf    Dir   claimed_WR  actual_WR   n      Δ(pp)');
+  console.log('-'.repeat(58));
+  for (const L of LEAVES) {
+    const f       = fmt(dbTrades[L.id]);
+    const claimed = (L.wr_reported * 100).toFixed(1);
+    const delta   = f.n > 0 ? (parseFloat(f.wr) - L.wr_reported * 100).toFixed(1) : '-';
+    console.log(`${L.id.padEnd(7)} ${L.dir.padEnd(5)} ${claimed.padStart(7)}%    ${f.wr.padStart(5)}%   ${String(f.n).padEnd(6)} ${String(delta).padStart(6)}`);
+  }
 }
 
-// Claim vs Actual — the whole point of this script
-console.log('\n── CLAIM vs ACTUAL (at 2m expiry) ──────────────────────────────────');
-console.log('Leaf   Dir    claimed_WR  actual_WR   n     Δ(pp)');
-console.log('-'.repeat(56));
+// ── AGGREGATE summary (all DBs combined) ─────────────────────────────────────
+console.log(`\n${'═'.repeat(72)}`);
+console.log('  AGGREGATE — ALL DBs COMBINED');
+console.log('═'.repeat(72));
+
+console.log('\n── LEAF RESULTS @ 2m (ALL DBs) ─────────────────────────────────────────');
+console.log('Leaf    Dir   n       WR%     $P&L');
+console.log('-'.repeat(50));
 for (const L of LEAVES) {
-  const f = fmt(trades['L' + L.id][2]);
-  const claimed = (L.wr_reported * 100).toFixed(1);
-  const delta = f.n > 0 ? (parseFloat(f.wr) - L.wr_reported * 100).toFixed(1) : '-';
-  console.log(`L${String(L.id).padEnd(4)} ${L.dir.padEnd(6)} ${claimed.padStart(7)}%    ${String(f.wr).padStart(5)}%   ${String(f.n).padEnd(5)} ${String(delta).padStart(6)}`);
+  const f = fmt(allTrades[L.id]);
+  console.log(`${L.id.padEnd(7)} ${L.dir.padEnd(5)} ${String(f.n).padEnd(7)} ${f.wr.padStart(5)}%   $${f.pl}`);
+}
+{
+  const f = fmt(allTrades['COMBINED']);
+  console.log(`${'COMBINED'.padEnd(7)} ${''.padEnd(5)} ${String(f.n).padEnd(7)} ${f.wr.padStart(5)}%   $${f.pl}`);
 }
 
-console.log('\n── DIRECTIONAL BREAKDOWN (at best expiry per leaf) ─────────────────');
-for (const key of ALL_KEYS) {
-  let best = null;
-  for (const e of EXPIRIES) {
-    const f = fmt(trades[key][e]);
-    if (f.n === 0) continue;
-    if (!best || f.pl > best.pl) best = { e, f };
-  }
-  if (!best) { console.log(key.padEnd(10) + '  (no signals)'); continue; }
-  const arr = trades[key][best.e];
-  const c = fmt(arr.filter(x => x.dir === 'CALL'));
-  const p = fmt(arr.filter(x => x.dir === 'PUT'));
-  console.log(`${key.padEnd(10)} best=${best.e}m  CALL n=${c.n} ${c.wr}% $${c.pl}   PUT n=${p.n} ${p.wr}% $${p.pl}`);
-}
-
-// Hour-of-day for COMBINED @ 2m
-console.log('\n── HOUR-OF-DAY (COMBINED @ 2m) ─────────────────────────────────────');
+// ── Hour of day ───────────────────────────────────────────────────────────────
+console.log('\n── HOUR-OF-DAY (COMBINED @ 2m, ALL DBs) ────────────────────────────────');
 {
   const byHour = {};
-  for (const t of trades['COMBINED'][2]) (byHour[t.hour] ??= []).push(t);
-  const hours = Object.keys(byHour).map(Number).sort((a, b) => a - b);
-  for (const h of hours) {
+  for (const t of allTrades['COMBINED']) (byHour[t.hour] ??= []).push(t);
+  for (const h of Object.keys(byHour).map(Number).sort((a, b) => a - b)) {
     const f = fmt(byHour[h]);
     console.log(`  UTC ${String(h).padStart(2)}:00   n=${String(f.n).padEnd(4)} WR=${f.wr}%   $${f.pl}`);
   }
 }
 
-// Top assets COMBINED @ 2m (n>=5)
-console.log('\n── TOP 10 ASSETS (COMBINED @ 2m, n≥5) ──────────────────────────────');
+// ── Top assets ────────────────────────────────────────────────────────────────
+console.log('\n── TOP 10 ASSETS (COMBINED @ 2m, ALL DBs, n≥5) ─────────────────────────');
 {
   const byAsset = {};
-  for (const t of trades['COMBINED'][2]) (byAsset[t.asset] ??= []).push(t);
-  const ranked = Object.entries(byAsset).map(([a, arr]) => ({ a, ...fmt(arr) }))
-    .filter(x => x.n >= 5).sort((x, y) => y.pl - x.pl).slice(0, 10);
-  for (const x of ranked) {
+  for (const t of allTrades['COMBINED']) (byAsset[t.asset] ??= []).push(t);
+  const ranked = Object.entries(byAsset)
+    .map(([a, arr]) => ({ a, ...fmt(arr) }))
+    .filter(x => x.n >= 5)
+    .sort((x, y) => y.pl - x.pl)
+    .slice(0, 10);
+  for (const x of ranked)
     console.log(`  ${x.a.padEnd(18)} n=${String(x.n).padEnd(4)} WR=${x.wr}%   $${x.pl}`);
-  }
+}
+
+// ── Per-leaf asset breakdown ──────────────────────────────────────────────────
+console.log('\n── PER-LEAF ASSET BREAKDOWN (ALL DBs, n≥5, top 5 by P&L) ──────────────');
+for (const L of LEAVES) {
+  const byAsset = {};
+  for (const t of allTrades[L.id]) (byAsset[t.asset] ??= []).push(t);
+  const ranked = Object.entries(byAsset)
+    .map(([a, arr]) => ({ a, ...fmt(arr) }))
+    .filter(x => x.n >= 5)
+    .sort((x, y) => y.pl - x.pl)
+    .slice(0, 5);
+  console.log(`  ${L.id} (${L.dir}):`);
+  if (ranked.length === 0) { console.log('    (no assets with n≥5)'); continue; }
+  for (const x of ranked)
+    console.log(`    ${x.a.padEnd(18)} n=${String(x.n).padEnd(4)} WR=${x.wr}%   $${x.pl}`);
 }
 
 fs.mkdirSync(path.dirname(outCsv), { recursive: true });
