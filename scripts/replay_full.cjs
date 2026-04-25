@@ -29,22 +29,22 @@ function getSignals() {
         ? (result.bollingerKT.upper - result.bollingerKT.lower) / result.bollingerKT.middle * 10000
         : 999;
       const rsi = result.rsi_5 !== undefined ? result.rsi_5 : null;
-      const kDropM   = reasons.match(/K crash ([0-9.]+)pts/);
+      const kDropM = reasons.match(/K crash ([0-9.]+)pts/);
       const rsiFromM = reasons.match(/RSI [0-9.]+ \(from ([0-9.]+)/);
-      const velM     = reasons.match(/vel=(-?[0-9.]+)/);
-      const hourM    = reasons.match(/UTC ([0-9]+)/);
-      const kM       = reasons.match(/K ([0-9.]+) \(>30/);
+      const velM = reasons.match(/vel=(-?[0-9.]+)/);
+      const hourM = reasons.match(/UTC ([0-9]+)/);
+      const kM = reasons.match(/K ([0-9.]+) \(>30/);
       sigs.push({
         asset, outcome, pl, bbW, rsi, dir,
-        hour:    hourM    ? parseInt(hourM[1])    : null,
-        kDrop:   kDropM   ? parseFloat(kDropM[1]) : null,
+        hour: hourM ? parseInt(hourM[1]) : null,
+        kDrop: kDropM ? parseFloat(kDropM[1]) : null,
         rsiFrom: rsiFromM ? parseFloat(rsiFromM[1]) : null,
-        vel:     velM     ? parseFloat(velM[1])   : null,
-        stochK:  kM       ? parseFloat(kM[1])     : null,
+        vel: velM ? parseFloat(velM[1]) : null,
+        stochK: kM ? parseFloat(kM[1]) : null,
         isKCrash: reasons.includes('K crash'),
-        isPutOB:  reasons.includes('OVERBOUGHT'),
+        isPutOB: reasons.includes('OVERBOUGHT'),
         isCallUT: reasons.includes('UP TREND') && dir === 'CALL',
-        isPutDT:  reasons.includes('DOWN TREND') && dir === 'PUT',
+        isPutDT: reasons.includes('DOWN TREND') && dir === 'PUT',
       });
     }
   }
@@ -66,11 +66,11 @@ function pr(label, arr, pad) {
 
 // ─── Run ──────────────────────────────────────────────────────────────────────
 console.log('Running replay on ' + assets.length + ' assets...');
-const all    = getSignals();
+const all = getSignals();
 const kCrash = all.filter(s => s.isKCrash);
-const putOB  = all.filter(s => s.isPutOB);
+const putOB = all.filter(s => s.isPutOB);
 const callUT = all.filter(s => s.isCallUT);
-const putDT  = all.filter(s => s.isPutDT);
+const putDT = all.filter(s => s.isPutDT);
 
 const dateRange = (() => {
   const dates = db.prepare("SELECT date(MIN(timestamp),'unixepoch') as lo, date(MAX(timestamp),'unixepoch') as hi FROM candles").get();
@@ -93,19 +93,19 @@ console.log(pr('PUT Down Trend', putDT));
 // ── CALL Reversal
 console.log('\n── CALL REVERSAL: GATE BREAKDOWN ───────────────────────────────────');
 console.log('  K Drop:');
-[[0,20],[20,25],[25,30],[30,35],[35,99]].forEach(([lo, hi]) => {
+[[0, 20], [20, 25], [25, 30], [30, 35], [35, 99]].forEach(([lo, hi]) => {
   const f = kCrash.filter(s => s.kDrop !== null && s.kDrop >= lo && s.kDrop < hi);
   const s = stats(f);
   console.log('    kDrop [' + lo + ',' + hi + '): n=' + s.n + ' WR=' + s.wr + '% PL=$' + s.pl);
 });
 console.log('  RSI:');
-[[0,20],[20,30],[30,40],[40,50]].forEach(([lo, hi]) => {
+[[0, 20], [20, 30], [30, 40], [40, 50]].forEach(([lo, hi]) => {
   const f = kCrash.filter(s => s.rsi !== null && s.rsi >= lo && s.rsi < hi);
   const s = stats(f);
   console.log('    RSI [' + lo + ',' + hi + '): n=' + s.n + ' WR=' + s.wr + '% PL=$' + s.pl);
 });
 console.log('  BB width:');
-[[0,10],[10,20],[20,30],[30,50],[50,999]].forEach(([lo, hi]) => {
+[[0, 10], [10, 20], [20, 30], [30, 50], [50, 999]].forEach(([lo, hi]) => {
   const f = kCrash.filter(s => s.bbW >= lo && s.bbW < hi);
   const s = stats(f);
   console.log('    bbW [' + lo + ',' + hi + 'bps): n=' + s.n + ' WR=' + s.wr + '% PL=$' + s.pl);
@@ -116,19 +116,19 @@ console.log('  >> Recommended (kDrop>=25 + rsi<40 + bbW>=30): n=' + recKC.length
 // ── PUT OB
 console.log('\n── PUT OB: GATE BREAKDOWN ──────────────────────────────────────────');
 console.log('  Prior RSI (rsiFrom):');
-[[0,75],[75,80],[80,85],[85,100]].forEach(([lo, hi]) => {
+[[0, 75], [75, 80], [80, 85], [85, 100]].forEach(([lo, hi]) => {
   const f = putOB.filter(s => s.rsiFrom !== null && s.rsiFrom >= lo && s.rsiFrom < hi);
   const s = stats(f);
   console.log('    rsiFrom [' + lo + ',' + hi + '): n=' + s.n + ' WR=' + s.wr + '% PL=$' + s.pl);
 });
 console.log('  Velocity:');
-[[-999,-15],[-15,-12],[-12,-10],[-10,-5],[-5,0]].forEach(([lo, hi]) => {
+[[-999, -15], [-15, -12], [-12, -10], [-10, -5], [-5, 0]].forEach(([lo, hi]) => {
   const f = putOB.filter(s => s.vel !== null && s.vel >= lo && s.vel < hi);
   const s = stats(f);
   console.log('    vel [' + lo + ',' + hi + '): n=' + s.n + ' WR=' + s.wr + '% PL=$' + s.pl);
 });
 console.log('  BB width:');
-[[0,10],[10,20],[20,30],[30,999]].forEach(([lo, hi]) => {
+[[0, 10], [10, 20], [20, 30], [30, 999]].forEach(([lo, hi]) => {
   const f = putOB.filter(s => s.bbW >= lo && s.bbW < hi);
   const s = stats(f);
   console.log('    bbW [' + lo + ',' + hi + 'bps): n=' + s.n + ' WR=' + s.wr + '% PL=$' + s.pl);
@@ -138,7 +138,7 @@ console.log('  >> Recommended (rsiFrom>=80 + bbW>=10): n=' + recPO.length + ' WR
 
 // ── PUT Down Trend
 console.log('\n── PUT DOWN TREND: GATE BREAKDOWN ──────────────────────────────────');
-[[0,5],[5,10],[10,15],[15,20],[20,30],[30,50],[50,999]].forEach(([lo, hi]) => {
+[[0, 5], [5, 10], [10, 15], [15, 20], [20, 30], [30, 50], [50, 999]].forEach(([lo, hi]) => {
   const f = putDT.filter(s => s.bbW >= lo && s.bbW < hi);
   const s = stats(f);
   console.log('    bbW [' + lo + ',' + hi + 'bps): n=' + s.n + ' WR=' + s.wr + '% PL=$' + s.pl);
@@ -158,13 +158,13 @@ if (callUT.length === 0) {
   console.log('  No CALL UP TREND signals in this dataset. (Pattern is disabled in live bot.)');
 } else {
   console.log('  BB width:');
-  [[0,10],[10,20],[20,30],[30,999]].forEach(([lo, hi]) => {
+  [[0, 10], [10, 20], [20, 30], [30, 999]].forEach(([lo, hi]) => {
     const f = callUT.filter(s => s.bbW >= lo && s.bbW < hi);
     const s = stats(f);
     console.log('    bbW [' + lo + ',' + hi + 'bps): n=' + s.n + ' WR=' + s.wr + '% PL=$' + s.pl);
   });
   console.log('  Stoch K:');
-  [[30,50],[50,70],[70,90],[90,100]].forEach(([lo, hi]) => {
+  [[30, 50], [50, 70], [70, 90], [90, 100]].forEach(([lo, hi]) => {
     const f = callUT.filter(s => s.stochK !== null && s.stochK >= lo && s.stochK < hi);
     const s = stats(f);
     console.log('    K [' + lo + ',' + hi + '): n=' + s.n + ' WR=' + s.wr + '% PL=$' + s.pl);
@@ -173,11 +173,11 @@ if (callUT.length === 0) {
 
 // ── Recommended combined
 // CALL UP TREND: use BB >= 20 bps gate, same as other patterns — no static asset list.
-const recCU  = callUT.filter(s => s.bbW >= 20);
+const recCU = callUT.filter(s => s.bbW >= 20);
 const recAll = [...recKC, ...recPO, ...recCU, ...recPD20];
-const sBase  = stats(all);
-const sRec   = stats(recAll);
-const delta  = parseInt(sRec.pl) - parseInt(sBase.pl);
+const sBase = stats(all);
+const sRec = stats(recAll);
+const delta = parseInt(sRec.pl) - parseInt(sBase.pl);
 
 console.log('\n── BASELINE vs RECOMMENDED GATES ───────────────────────────────────');
 console.log('  Config                              n       WR        P&L       Delta');
@@ -186,8 +186,8 @@ console.log(pr('Recommended (bbW>=20 PutDT+rest)', recAll, 36) + '  +$' + delta)
 
 // Tighter PutDT variant
 const recAllTight = [...recKC, ...recPO, ...recCU, ...recPD30r];
-const sRecTight   = stats(recAllTight);
-const deltaTight  = parseInt(sRecTight.pl) - parseInt(sBase.pl);
+const sRecTight = stats(recAllTight);
+const deltaTight = parseInt(sRecTight.pl) - parseInt(sBase.pl);
 console.log(pr('Tighter PutDT (bbW>=30 + rsi<=40)', recAllTight, 36) + '  +$' + deltaTight);
 
 // ── Asset leaderboard
@@ -217,7 +217,7 @@ ranked.slice(-8).forEach(r => {
 console.log('\n── HOUR-BY-HOUR (UTC) ──────────────────────────────────────────────');
 console.log('  Hour   All                  PutDT              CallRev');
 for (let h = 0; h <= 23; h++) {
-  const hs  = all.filter(s => s.hour === h);
+  const hs = all.filter(s => s.hour === h);
   if (hs.length === 0) continue;
   const hpd = hs.filter(s => s.isPutDT);
   const hkc = hs.filter(s => s.isKCrash);

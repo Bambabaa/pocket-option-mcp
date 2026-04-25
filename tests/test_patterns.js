@@ -85,7 +85,7 @@ function checkCallOversoldBounce(_barM2, barM1, bar0) {
   return {
     pass,
     direction: 'CALL',
-    patternName: 'K_FLASH_CRASH',
+    patternName: 'OVERSOLD',
     gates: {
       g1_maStack, g2_kCrash, g3_kOversold, g4_kWasMid, g5_rsiDown, g6_maNotDeep,
     },
@@ -147,7 +147,7 @@ function checkPutLateOverbought(barM2, barM1, bar0) {
   return {
     pass,
     direction: 'PUT',
-    patternName: 'LATE_OVERBOUGHT',
+    patternName: 'OVERBOUGHT',
     gates: {
       g1_rsiBaseline, g2_rsiRecovery, g3_kTurn, g4_dPosition, g5_maStack, g6_kdCross, g7_maTrendWeak,
     },
@@ -419,8 +419,8 @@ async function runTest() {
     out(sep());
     out('');
     for (const [pname, pdir, rejections, gnames] of [
-      ['K_FLASH_CRASH', 'CALL', callRejections, callGateNames],
-      ['LATE_OVERBOUGHT', 'PUT', putRejections, putGateNames]
+      ['OVERSOLD', 'CALL', callRejections, callGateNames],
+      ['OVERBOUGHT', 'PUT', putRejections, putGateNames]
     ]) {
       const pSignals = signals.filter(s => s.pattern === pname);
       if (pSignals.length === 0) continue;

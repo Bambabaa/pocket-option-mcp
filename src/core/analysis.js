@@ -28,10 +28,10 @@ function parsePatternFromReasons(reasons, direction) {
     // reasons is stored as JSON array string e.g. '["OVERSOLD | Reversal | ..."]'
     let text = reasons;
     try { const parsed = JSON.parse(reasons); text = Array.isArray(parsed) ? parsed.join(' ') : String(parsed); } catch { /* use raw */ }
-    if (text.includes('OVERSOLD') && text.includes('Reversal'))   return 'CALL_REVERSAL';
+    if (text.includes('OVERSOLD') && text.includes('Reversal')) return 'CALL_REVERSAL';
     if (text.includes('OVERBOUGHT') && text.includes('Reversal')) return 'PUT_REVERSAL';
-    if (text.includes('UP TREND'))                                 return 'CALL_CONTINUATION';
-    if (text.includes('DOWN TREND'))                               return 'PUT_CONTINUATION';
+    if (text.includes('UP TREND')) return 'CALL_CONTINUATION';
+    if (text.includes('DOWN TREND')) return 'PUT_CONTINUATION';
     return direction === 'CALL' ? 'CALL_OTHER' : 'PUT_OTHER';
 }
 
@@ -59,7 +59,7 @@ function computeLookback(candles, t) {
 
     // RSI peak and trough over last 10 bars
     const rsiVals = history.map(c => c.rsi_5).filter(v => v != null);
-    const rsi_peak_10   = rsiVals.length > 0 ? Math.max(...rsiVals) : null;
+    const rsi_peak_10 = rsiVals.length > 0 ? Math.max(...rsiVals) : null;
     const rsi_trough_10 = rsiVals.length > 0 ? Math.min(...rsiVals) : null;
 
     // K extension: count consecutive bars from barM1 backwards where K > 65 (PUT)
@@ -85,16 +85,16 @@ function computeLookback(candles, t) {
     const barPrev = t >= GAP_LOOKBACK ? candles[t - GAP_LOOKBACK] : null;
     let ma_gap_trend = 'unknown';
     if (bar0.ma1 != null && bar0.ma3 != null && barPrev && barPrev.ma1 != null && barPrev.ma3 != null) {
-        const gapNow  = bar0.ma1 - bar0.ma3;
+        const gapNow = bar0.ma1 - bar0.ma3;
         const gapPrev = barPrev.ma1 - barPrev.ma3;
-        const delta   = gapNow - gapPrev;
+        const delta = gapNow - gapPrev;
         // Normalise by price to get bps change
         const deltaBps = (delta / bar0.ma3) * 10000;
-        if (Math.abs(deltaBps) < 1)      ma_gap_trend = 'flat';
-        else if (deltaBps > 0)           ma_gap_trend = 'widening_up';   // MA6 pulling away above MA14
-        else                             ma_gap_trend = 'widening_down';  // MA6 pulling away below MA14
+        if (Math.abs(deltaBps) < 1) ma_gap_trend = 'flat';
+        else if (deltaBps > 0) ma_gap_trend = 'widening_up';   // MA6 pulling away above MA14
+        else ma_gap_trend = 'widening_down';  // MA6 pulling away below MA14
         // For reversals: narrowing = gap moving toward zero from either side
-        const absNow  = Math.abs(gapNow);
+        const absNow = Math.abs(gapNow);
         const absPrev = Math.abs(gapPrev);
         if (absPrev - absNow > (bar0.ma3 * 0.0001)) ma_gap_trend = 'narrowing'; // gap shrinking = exhaustion
     }
@@ -104,7 +104,7 @@ function computeLookback(candles, t) {
     const barBbPrev = t >= 5 ? candles[t - 5] : null;
     if (bar0.bb_upper != null && bar0.bb_lower != null && bar0.bb_middle != null &&
         barBbPrev && barBbPrev.bb_upper != null && barBbPrev.bb_lower != null && barBbPrev.bb_middle != null) {
-        const widthNow  = (bar0.bb_upper - bar0.bb_lower) / bar0.bb_middle;
+        const widthNow = (bar0.bb_upper - bar0.bb_lower) / bar0.bb_middle;
         const widthPrev = (barBbPrev.bb_upper - barBbPrev.bb_lower) / barBbPrev.bb_middle;
         bb_expanding = widthNow > widthPrev;
     }
@@ -137,7 +137,7 @@ const CALL_GATES = {
         const pass = g1_maStack && g2_kCrash && g3_kOversold && g4_kWasMid && g5_rsiDown && g6_maNotDeep && g7_bbWide;
 
         return {
-            pass, direction: 'CALL', patternName: 'K_FLASH_CRASH',
+            pass, direction: 'CALL', patternName: 'OVERSOLD',
             gates: { g1_maStack, g2_kCrash, g3_kOversold, g4_kWasMid, g5_rsiDown, g6_maNotDeep, g7_bbWide },
             values: {
                 rsi_0: i0.rsi_5, rsi_m1: i1.rsi_5,
@@ -151,7 +151,7 @@ const CALL_GATES = {
 };
 
 const PUT_GATES = {
-    name: 'Late Overbought Reversal',
+    name: 'Overbought Reversal',
     check: (barM2, barM1, bar0) => {
         const i2 = barM2, i1 = barM1, i0 = bar0;
         if (i2.rsi_5 == null || i1.rsi_5 == null) return { pass: false, gates: {}, values: {} };
@@ -184,7 +184,7 @@ const PUT_GATES = {
         const pass = g0_rsiPriorOB && g1_rsiBaseline && g2_rsiRecovery && g3_kTurn && g4_dPosition && g5_maStack && g6_kdCross && g7_maTrendWeak && g8_bbWide;
 
         return {
-            pass, direction: 'PUT', patternName: 'LATE_OVERBOUGHT',
+            pass, direction: 'PUT', patternName: 'OVERBOUGHT',
             gates: { g0_rsiPriorOB, g1_rsiBaseline, g2_rsiRecovery, g3_kTurn, g4_dPosition, g5_maStack, g6_kdCross, g7_maTrendWeak, g8_bbWide },
             values: {
                 rsi_m2: i2.rsi_5, rsi_m1: i1.rsi_5, rsi_0: i0.rsi_5,
@@ -232,7 +232,7 @@ export async function replayCandles(asset = null, params = {}) {
     const signals = [];
     let totalCandles = 0, candlesWithIndicators = 0, candlesWithHistory = 0;
     const callRejections = { g1_maStack: 0, g2_kCrash: 0, g3_kOversold: 0, g4_kWasMid: 0, g5_rsiDown: 0, g6_maNotDeep: 0, g7_bbWide: 0 };
-    const putRejections  = { g0_rsiPriorOB: 0, g1_rsiBaseline: 0, g2_rsiRecovery: 0, g3_kTurn: 0, g4_dPosition: 0, g5_maStack: 0, g6_kdCross: 0, g7_maTrendWeak: 0, g8_bbWide: 0 };
+    const putRejections = { g0_rsiPriorOB: 0, g1_rsiBaseline: 0, g2_rsiRecovery: 0, g3_kTurn: 0, g4_dPosition: 0, g5_maStack: 0, g6_kdCross: 0, g7_maTrendWeak: 0, g8_bbWide: 0 };
 
     for (const [assetName, candles] of Object.entries(byAsset)) {
         for (let t = 2; t < candles.length; t++) {
@@ -461,11 +461,11 @@ export async function findEdge() {
             const callTotal = data.call_w + data.call_l;
             const putTotal = data.put_w + data.put_l;
             const callWR = callTotal > 0 ? (data.call_w / callTotal) * 100 : null;
-            const putWR  = putTotal  > 0 ? (data.put_w  / putTotal)  * 100 : null;
+            const putWR = putTotal > 0 ? (data.put_w / putTotal) * 100 : null;
             let preferred_direction = null;
             if (callWR !== null && putWR !== null) preferred_direction = callWR >= putWR ? 'CALL' : 'PUT';
             else if (callWR !== null) preferred_direction = 'CALL';
-            else if (putWR  !== null) preferred_direction = 'PUT';
+            else if (putWR !== null) preferred_direction = 'PUT';
             return {
                 asset,
                 trades: data.trades,
@@ -474,7 +474,7 @@ export async function findEdge() {
                 win_rate: ((data.wins / data.trades) * 100).toFixed(1) + '%',
                 total_pl: Math.round(data.total_pl * 100) / 100,
                 call: callTotal > 0 ? { w: data.call_w, l: data.call_l, wr: callWR.toFixed(1) + '%' } : null,
-                put:  putTotal  > 0 ? { w: data.put_w,  l: data.put_l,  wr: putWR.toFixed(1)  + '%' } : null,
+                put: putTotal > 0 ? { w: data.put_w, l: data.put_l, wr: putWR.toFixed(1) + '%' } : null,
                 preferred_direction,
             };
         })
@@ -482,11 +482,11 @@ export async function findEdge() {
 
     // ── Analysis 6: BB width buckets ──
     const bbBuckets = [
-        { label: 'flat (<2 bps)',     min: 0,  max: 2  },
-        { label: 'weak (2-5 bps)',    min: 2,  max: 5  },
-        { label: 'marginal (5-10)',   min: 5,  max: 10 },
-        { label: 'ok (10-20)',        min: 10, max: 20 },
-        { label: 'good (20+ bps)',    min: 20, max: Infinity },
+        { label: 'flat (<2 bps)', min: 0, max: 2 },
+        { label: 'weak (2-5 bps)', min: 2, max: 5 },
+        { label: 'marginal (5-10)', min: 5, max: 10 },
+        { label: 'ok (10-20)', min: 10, max: 20 },
+        { label: 'good (20+ bps)', min: 20, max: Infinity },
     ];
 
     // Compute bb_bps per signal from raw indicator values stored in signal
@@ -511,34 +511,38 @@ export async function findEdge() {
     // CALL: how oversold was RSI in the 10 bars before the signal?
     // Deeper retracement = stronger setup hypothesis — validate against actual WR.
 
-    const putSignalsCtx  = validSignals.filter(s => s.direction === 'PUT'  && s.rsi_peak_10   != null);
+    const putSignalsCtx = validSignals.filter(s => s.direction === 'PUT' && s.rsi_peak_10 != null);
     const callSignalsCtx = validSignals.filter(s => s.direction === 'CALL' && s.rsi_trough_10 != null);
 
     const rsiPeakBuckets = [
-        { label: '< 70 (weak)',    min: 0,  max: 70  },
-        { label: '70-80 (mild)',   min: 70, max: 80  },
-        { label: '80-90 (strong)', min: 80, max: 90  },
-        { label: '90+ (extreme)',  min: 90, max: 101 },
+        { label: '< 70 (weak)', min: 0, max: 70 },
+        { label: '70-80 (mild)', min: 70, max: 80 },
+        { label: '80-90 (strong)', min: 80, max: 90 },
+        { label: '90+ (extreme)', min: 90, max: 101 },
     ];
     const rsiTroughBuckets = [
-        { label: '< 10 (extreme)', min: 0,  max: 10  },
-        { label: '10-20 (strong)', min: 10, max: 20  },
-        { label: '20-30 (mild)',   min: 20, max: 30  },
-        { label: '30+ (weak)',     min: 30, max: 101 },
+        { label: '< 10 (extreme)', min: 0, max: 10 },
+        { label: '10-20 (strong)', min: 10, max: 20 },
+        { label: '20-30 (mild)', min: 20, max: 30 },
+        { label: '30+ (weak)', min: 30, max: 101 },
     ];
 
     const byRsiPeak = rsiPeakBuckets.map(b => {
         const bucket = putSignalsCtx.filter(s => s.rsi_peak_10 >= b.min && s.rsi_peak_10 < b.max);
-        const wins   = bucket.filter(s => s.result === 'WIN').length;
-        return { direction: 'PUT', rsi_peak_before: b.label, trades: bucket.length, wins, losses: bucket.length - wins,
-            win_rate: bucket.length > 0 ? ((wins / bucket.length) * 100).toFixed(1) + '%' : 'N/A' };
+        const wins = bucket.filter(s => s.result === 'WIN').length;
+        return {
+            direction: 'PUT', rsi_peak_before: b.label, trades: bucket.length, wins, losses: bucket.length - wins,
+            win_rate: bucket.length > 0 ? ((wins / bucket.length) * 100).toFixed(1) + '%' : 'N/A'
+        };
     }).filter(b => b.trades > 0);
 
     const byRsiTrough = rsiTroughBuckets.map(b => {
         const bucket = callSignalsCtx.filter(s => s.rsi_trough_10 >= b.min && s.rsi_trough_10 < b.max);
-        const wins   = bucket.filter(s => s.result === 'WIN').length;
-        return { direction: 'CALL', rsi_trough_before: b.label, trades: bucket.length, wins, losses: bucket.length - wins,
-            win_rate: bucket.length > 0 ? ((wins / bucket.length) * 100).toFixed(1) + '%' : 'N/A' };
+        const wins = bucket.filter(s => s.result === 'WIN').length;
+        return {
+            direction: 'CALL', rsi_trough_before: b.label, trades: bucket.length, wins, losses: bucket.length - wins,
+            win_rate: bucket.length > 0 ? ((wins / bucket.length) * 100).toFixed(1) + '%' : 'N/A'
+        };
     }).filter(b => b.trades > 0);
 
     const retracementDepth = { put_by_rsi_peak: byRsiPeak, call_by_rsi_trough: byRsiTrough };
@@ -548,7 +552,7 @@ export async function findEdge() {
     // More bars extended = more exhausted = higher probability reversal.
 
     const kExtBuckets = [
-        { label: '1 bar',  min: 1, max: 2 },
+        { label: '1 bar', min: 1, max: 2 },
         { label: '2 bars', min: 2, max: 3 },
         { label: '3 bars', min: 3, max: 4 },
         { label: '4+ bars', min: 4, max: 999 },
@@ -558,16 +562,20 @@ export async function findEdge() {
         const bucket = validSignals.filter(s => s.direction === 'PUT' && s.k_bars_above_65 != null &&
             s.k_bars_above_65 >= b.min && s.k_bars_above_65 < b.max);
         const wins = bucket.filter(s => s.result === 'WIN').length;
-        return { direction: 'PUT', k_bars_above_65: b.label, trades: bucket.length, wins, losses: bucket.length - wins,
-            win_rate: bucket.length > 0 ? ((wins / bucket.length) * 100).toFixed(1) + '%' : 'N/A' };
+        return {
+            direction: 'PUT', k_bars_above_65: b.label, trades: bucket.length, wins, losses: bucket.length - wins,
+            win_rate: bucket.length > 0 ? ((wins / bucket.length) * 100).toFixed(1) + '%' : 'N/A'
+        };
     }).filter(b => b.trades > 0);
 
     const byKExtCall = kExtBuckets.map(b => {
         const bucket = validSignals.filter(s => s.direction === 'CALL' && s.k_bars_below_35 != null &&
             s.k_bars_below_35 >= b.min && s.k_bars_below_35 < b.max);
         const wins = bucket.filter(s => s.result === 'WIN').length;
-        return { direction: 'CALL', k_bars_below_35: b.label, trades: bucket.length, wins, losses: bucket.length - wins,
-            win_rate: bucket.length > 0 ? ((wins / bucket.length) * 100).toFixed(1) + '%' : 'N/A' };
+        return {
+            direction: 'CALL', k_bars_below_35: b.label, trades: bucket.length, wins, losses: bucket.length - wins,
+            win_rate: bucket.length > 0 ? ((wins / bucket.length) * 100).toFixed(1) + '%' : 'N/A'
+        };
     }).filter(b => b.trades > 0);
 
     const kExtension = { put_by_k_duration: byKExtPut, call_by_k_duration: byKExtCall };
@@ -603,8 +611,10 @@ export async function findEdge() {
     }
     const byBbExpansion = Object.entries(bbExpAnalysis).map(([expanding, d]) => {
         const total = d.wins + d.losses;
-        return { bb_expanding: expanding === 'true', trades: total, wins: d.wins, losses: d.losses,
-            win_rate: total > 0 ? ((d.wins / total) * 100).toFixed(1) + '%' : 'N/A' };
+        return {
+            bb_expanding: expanding === 'true', trades: total, wins: d.wins, losses: d.losses,
+            win_rate: total > 0 ? ((d.wins / total) * 100).toFixed(1) + '%' : 'N/A'
+        };
     }).filter(b => b.trades > 0);
 
     // ── Analysis 11: By pattern — all 4 patterns from DB signals table ──────────
@@ -837,18 +847,18 @@ export async function optimizeGates(direction = 'both') {
 
 export async function simulateGates(params = {}) {
     const {
-        call_rsi_max        = 20,
-        call_k_crash_min    = 25,
+        call_rsi_max = 20,
+        call_k_crash_min = 25,
         call_k_oversold_max = 25,
-        call_k_was_mid_min  = 50,
-        call_ma_trend_min   = -20,
-        put_d_min           = 80,
+        call_k_was_mid_min = 50,
+        call_ma_trend_min = -20,
+        put_d_min = 80,
         put_rsi_velocity_min = -12,
-        put_ma_trend_max    = 20,
-        put_k_turn_d_min    = 65,
-        min_bb_bps          = 0,
-        bar_bb_bps_min      = 0,
-        amount              = 500,
+        put_ma_trend_max = 20,
+        put_k_turn_d_min = 65,
+        min_bb_bps = 0,
+        bar_bb_bps_min = 0,
+        amount = 500,
     } = params;
 
     // Load candle+indicator data (same as replayCandles)
@@ -892,12 +902,12 @@ export async function simulateGates(params = {}) {
         for (let t = 2; t < candles.length; t++) {
             const barM2 = candles[t - 2];
             const barM1 = candles[t - 1];
-            const bar0  = candles[t];
+            const bar0 = candles[t];
 
             if (bar0.rsi_5 == null || barM1.rsi_5 == null || barM2.rsi_5 == null) continue;
 
-            const nextBar  = candles[t + 1];
-            const isGap    = !nextBar || (nextBar.timestamp - bar0.timestamp > 120);
+            const nextBar = candles[t + 1];
+            const isGap = !nextBar || (nextBar.timestamp - bar0.timestamp > 120);
             // MA trend: MA6 vs MA14 gap in bps (positive = MA6 above MA14 = uptrend)
             const maTrendBps = bar0.ma1 != null && bar0.ma3 != null
                 ? ((bar0.ma1 - bar0.ma3) / bar0.ma3) * 10000 : null;
@@ -953,7 +963,7 @@ export async function simulateGates(params = {}) {
                     (i2.rsi_5 > 80) &&
                     (i2.rsi_5 > 70 && i1.rsi_5 > 70 && !(i1.rsi_5 >= 75 && i1.rsi_5 < 80)) &&
                     (i0.rsi_5 != null && i0.rsi_5 >= 38 && i0.rsi_5 < 70 && !(i0.rsi_5 >= 55 && i0.rsi_5 < 65) &&
-                     rsiVelocity != null && rsiVelocity > -12 && closeAboveMid) &&
+                        rsiVelocity != null && rsiVelocity > -12 && closeAboveMid) &&
                     (i1.stochastic_k_v2 != null && i1.stochastic_k_v2 > 65 && kFalling && i0.stochastic_k_v2 >= 55 && i0.stochastic_k_v2 < 80) &&
                     (i0.stochastic_d_v2 != null && i0.stochastic_d_v2 >= 80) &&
                     (i0.ma1 != null && i0.ma3 != null && i0.ma1 > i0.ma3) &&
@@ -978,7 +988,7 @@ export async function simulateGates(params = {}) {
                 const modPass = !bbSkip && !barBbSkip &&
                     (i2.rsi_5 > 70 && i1.rsi_5 > 70 && !(i1.rsi_5 >= 75 && i1.rsi_5 < 80)) &&
                     (i0.rsi_5 != null && i0.rsi_5 >= 38 && i0.rsi_5 < 70 && !(i0.rsi_5 >= 55 && i0.rsi_5 < 65) &&
-                     rsiVelocity != null && rsiVelocity > put_rsi_velocity_min && closeAboveMid) &&
+                        rsiVelocity != null && rsiVelocity > put_rsi_velocity_min && closeAboveMid) &&
                     (i1.stochastic_k_v2 != null && i1.stochastic_k_v2 > put_k_turn_d_min && kFalling && i0.stochastic_k_v2 >= 55 && i0.stochastic_k_v2 < 80) &&
                     (i0.stochastic_d_v2 != null && i0.stochastic_d_v2 >= put_d_min) &&
                     (i0.ma1 != null && i0.ma3 != null && i0.ma1 > i0.ma3) &&
@@ -994,7 +1004,7 @@ export async function simulateGates(params = {}) {
 
     const summarize = (sigs) => {
         const valid = sigs.filter(s => s.result != null);
-        const wins  = valid.filter(s => s.result === 'WIN').length;
+        const wins = valid.filter(s => s.result === 'WIN').length;
         return {
             total_fired: sigs.length,
             validated: valid.length,
@@ -1006,7 +1016,7 @@ export async function simulateGates(params = {}) {
     };
 
     const base = { call: summarize(baselineSigs.call), put: summarize(baselineSigs.put) };
-    const mod  = { call: summarize(modifiedSigs.call), put: summarize(modifiedSigs.put) };
+    const mod = { call: summarize(modifiedSigs.call), put: summarize(modifiedSigs.put) };
 
     const diff = (b, m, key) => {
         const bv = parseFloat(b[key]);
@@ -1024,13 +1034,13 @@ export async function simulateGates(params = {}) {
         delta: {
             call: {
                 signal_count: diff(base.call, mod.call, 'total_fired'),
-                win_rate:     diff(base.call, mod.call, 'win_rate'),
-                total_pl:     diff(base.call, mod.call, 'total_pl'),
+                win_rate: diff(base.call, mod.call, 'win_rate'),
+                total_pl: diff(base.call, mod.call, 'total_pl'),
             },
             put: {
                 signal_count: diff(base.put, mod.put, 'total_fired'),
-                win_rate:     diff(base.put, mod.put, 'win_rate'),
-                total_pl:     diff(base.put, mod.put, 'total_pl'),
+                win_rate: diff(base.put, mod.put, 'win_rate'),
+                total_pl: diff(base.put, mod.put, 'total_pl'),
             },
         },
         note: 'delta = modified − baseline. Positive win_rate/pl delta means improvement.',
