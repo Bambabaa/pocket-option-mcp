@@ -59,7 +59,7 @@ Placing trades (requires bot running with execution.enabled=true):
 - po_mcp_orders → view manual orders you placed via po_trade
 - po_bot_orders → view bot-generated execution queue from bot DB (readonly)
 
-Results and performance:
+Results and performance (trades_ordered):
 - po_trades_ordered → executed live trades with WIN/LOSS results (bot DB)
 - po_pnl_summary → P/L breakdown by asset
 - po_rolling_summary → rolling win rate and P/L (pass days=0 for all-time)

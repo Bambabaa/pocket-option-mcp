@@ -14,13 +14,14 @@ function getSignals() {
     const rows = db.prepare('SELECT timestamp, open, close, high, low FROM candles WHERE asset=? ORDER BY timestamp ASC').all(asset);
     const candles = rows.map(r => [r.timestamp, r.open, r.close, r.high, r.low]);
     const ind = new Indicators();
-    for (let i = 55; i < candles.length - 1; i++) {
+    for (let i = 55; i < candles.length - 2; i++) {
       const result = ind.calculateAll(asset, candles.slice(Math.max(0, i - 59), i + 1), {});
       if (!result) continue;
       const sigObj = { buy: false, sell: false, reasons: [], direction: null };
       ind._generateSignalsKTVideo2(result, {}, sigObj);
       if (!sigObj.buy && !sigObj.sell) continue;
-      const sc = candles[i], nc = candles[i + 1];
+      if (i + 2 >= candles.length) continue; // need 2 bars ahead for 120s expiry
+      const sc = candles[i], nc = candles[i + 2]; // 120s expiry = 2 bars forward
       const entry = sc[2], exit = nc[2], dir = sigObj.direction;
       const outcome = dir === 'CALL' ? (exit > entry ? 'WIN' : 'LOSS') : (exit < entry ? 'WIN' : 'LOSS');
       const pl = outcome === 'WIN' ? AMOUNT * PAYOUT : -AMOUNT;
@@ -34,6 +35,7 @@ function getSignals() {
       const velM = reasons.match(/vel=(-?[0-9.]+)/);
       const hourM = reasons.match(/UTC ([0-9]+)/);
       const kM = reasons.match(/K ([0-9.]+) \(>30/);
+      const isLeaf = reasons.includes('Leaf');
       sigs.push({
         asset, outcome, pl, bbW, rsi, dir,
         hour: hourM ? parseInt(hourM[1]) : null,
@@ -41,10 +43,13 @@ function getSignals() {
         rsiFrom: rsiFromM ? parseFloat(rsiFromM[1]) : null,
         vel: velM ? parseFloat(velM[1]) : null,
         stochK: kM ? parseFloat(kM[1]) : null,
-        isKCrash: reasons.includes('K crash'),
-        isPutOB: reasons.includes('OVERBOUGHT'),
-        isCallUT: reasons.includes('UP TREND') && dir === 'CALL',
-        isPutDT: reasons.includes('DOWN TREND') && dir === 'PUT',
+        isKCrash: reasons.includes('OVERSOLD') && !isLeaf,
+        isPutOB:  reasons.includes('OVERBOUGHT') && !reasons.includes('L65'),
+        isCallUT: reasons.includes('UP TREND') && dir === 'CALL' && !isLeaf,
+        isPutDT:  reasons.includes('DOWN TREND') && dir === 'PUT' && !reasons.includes('L41'),
+        isL16: reasons.includes('L16 Leaf'),
+        isL41: reasons.includes('L41 Leaf'),
+        isL65: reasons.includes('L65 Leaf'),
       });
     }
   }
@@ -71,6 +76,9 @@ const kCrash = all.filter(s => s.isKCrash);
 const putOB = all.filter(s => s.isPutOB);
 const callUT = all.filter(s => s.isCallUT);
 const putDT = all.filter(s => s.isPutDT);
+const l16 = all.filter(s => s.isL16);
+const l41 = all.filter(s => s.isL41);
+const l65 = all.filter(s => s.isL65);
 
 const dateRange = (() => {
   const dates = db.prepare("SELECT date(MIN(timestamp),'unixepoch') as lo, date(MAX(timestamp),'unixepoch') as hi FROM candles").get();
@@ -85,10 +93,13 @@ console.log('╚═════════════════════�
 console.log('── PATTERN SUMMARY ─────────────────────────────────────────────────');
 console.log('  Pattern                              n       WR        P&L');
 console.log(pr('ALL SIGNALS', all));
-console.log(pr('CALL Reversal', kCrash));
-console.log(pr('PUT Reversal', putOB));
+console.log(pr('CALL Reversal (K-Crash)', kCrash));
+console.log(pr('PUT Reversal (OB)', putOB));
 console.log(pr('CALL Up Trend', callUT));
 console.log(pr('PUT Down Trend', putDT));
+console.log(pr('L16 CALL (ML Leaf)', l16));
+console.log(pr('L41 PUT  (ML Leaf)', l41));
+console.log(pr('L65 PUT  (ML Leaf)', l65));
 
 // ── CALL Reversal
 console.log('\n── CALL REVERSAL: GATE BREAKDOWN ───────────────────────────────────');
@@ -171,24 +182,74 @@ if (callUT.length === 0) {
   });
 }
 
+// ── ML Leaf breakdown
+console.log('\n── ML LEAF BREAKDOWN ───────────────────────────────────────────────');
+console.log('  Leaf   Dir   n       WR        P&L');
+[['L16', l16, 'CALL'], ['L41', l41, 'PUT'], ['L65', l65, 'PUT']].forEach(([name, arr, dir]) => {
+  const s = stats(arr);
+  console.log('  ' + name.padEnd(7) + dir.padEnd(6) + String(s.n).padEnd(8) + (s.wr + '%').padEnd(10) + '$' + s.pl);
+});
+
+console.log('\n  BB width by leaf:');
+[['L16', l16], ['L41', l41], ['L65', l65]].forEach(([name, arr]) => {
+  if (arr.length === 0) { console.log('  ' + name + ': no signals'); return; }
+  [[0, 20], [20, 30], [30, 50], [50, 100], [100, 999]].forEach(([lo, hi]) => {
+    const f = arr.filter(s => s.bbW >= lo && s.bbW < hi);
+    if (f.length === 0) return;
+    const s = stats(f);
+    console.log('    ' + name + ' bbW [' + lo + ',' + hi + 'bps): n=' + s.n + ' WR=' + s.wr + '% PL=$' + s.pl);
+  });
+});
+
+console.log('\n  Hour breakdown by leaf:');
+[['L16', l16], ['L41', l41], ['L65', l65]].forEach(([name, arr]) => {
+  if (arr.length === 0) { console.log('  ' + name + ': no signals'); return; }
+  const byHour = {};
+  arr.forEach(s => { if (s.hour != null) { byHour[s.hour] = byHour[s.hour] || []; byHour[s.hour].push(s); } });
+  const hours = Object.keys(byHour).map(Number).sort((a, b) => a - b);
+  const parts = hours.map(h => {
+    const s = stats(byHour[h]);
+    return 'UTC' + h + ': n=' + s.n + ' ' + s.wr + '%';
+  });
+  console.log('  ' + name + ': ' + parts.join(' | '));
+});
+
+console.log('\n  Top assets by leaf (min 3 signals):');
+[['L16', l16], ['L41', l41], ['L65', l65]].forEach(([name, arr]) => {
+  if (arr.length === 0) { console.log('  ' + name + ': no signals'); return; }
+  const byAssetL = {};
+  arr.forEach(s => { byAssetL[s.asset] = byAssetL[s.asset] || []; byAssetL[s.asset].push(s); });
+  const ranked = Object.entries(byAssetL)
+    .map(([a, a2]) => Object.assign({ a }, stats(a2)))
+    .filter(r => r.n >= 3)
+    .sort((a, b) => parseFloat(b.wr) - parseFloat(a.wr))
+    .slice(0, 5);
+  if (ranked.length === 0) { console.log('  ' + name + ': no asset with n>=3'); return; }
+  console.log('  ' + name + ': ' + ranked.map(r => r.a + ' ' + r.wr + '% n=' + r.n).join(' | '));
+});
+
 // ── Recommended combined
 // CALL UP TREND: use BB >= 20 bps gate, same as other patterns — no static asset list.
 const recCU = callUT.filter(s => s.bbW >= 20);
-const recAll = [...recKC, ...recPO, ...recCU, ...recPD20];
+const recAll = [...recKC, ...recPO, ...recCU, ...recPD20, ...l16, ...l41, ...l65];
+const recAllNoLeaf = [...recKC, ...recPO, ...recCU, ...recPD20];
 const sBase = stats(all);
 const sRec = stats(recAll);
+const sRecNoLeaf = stats(recAllNoLeaf);
 const delta = parseInt(sRec.pl) - parseInt(sBase.pl);
+const deltaNoLeaf = parseInt(sRecNoLeaf.pl) - parseInt(sBase.pl);
 
 console.log('\n── BASELINE vs RECOMMENDED GATES ───────────────────────────────────');
 console.log('  Config                              n       WR        P&L       Delta');
 console.log(pr('Baseline (all signals)', all, 36) + '  —');
-console.log(pr('Recommended (bbW>=20 PutDT+rest)', recAll, 36) + '  +$' + delta);
+console.log(pr('Recommended excl. leaves', recAllNoLeaf, 36) + '  +$' + deltaNoLeaf);
+console.log(pr('Recommended incl. leaves', recAll, 36) + '  +$' + delta);
 
 // Tighter PutDT variant
-const recAllTight = [...recKC, ...recPO, ...recCU, ...recPD30r];
+const recAllTight = [...recKC, ...recPO, ...recCU, ...recPD30r, ...l16, ...l41, ...l65];
 const sRecTight = stats(recAllTight);
 const deltaTight = parseInt(sRecTight.pl) - parseInt(sBase.pl);
-console.log(pr('Tighter PutDT (bbW>=30 + rsi<=40)', recAllTight, 36) + '  +$' + deltaTight);
+console.log(pr('Tighter PutDT + leaves', recAllTight, 36) + '  +$' + deltaTight);
 
 // ── Asset leaderboard
 console.log('\n── ASSET LEADERBOARD (all patterns, min 5 signals) ─────────────────');
