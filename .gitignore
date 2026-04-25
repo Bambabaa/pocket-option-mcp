@@ -4,3 +4,4 @@ data/
 
 .qwen/
 gha-creds-*.json
+*.db
