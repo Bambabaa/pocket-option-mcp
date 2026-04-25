@@ -18,9 +18,9 @@ const ALL_DBS = [
   'data/trading_data.db',
 ];
 
-const runAll  = process.argv[2] === '--all';
+const runAll = process.argv[2] === '--all';
 const dbPaths = runAll ? ALL_DBS : [process.argv[2] || 'data/trading_data.db'];
-const outCsv  = (runAll ? process.argv[3] : process.argv[3]) || 'data/paper_reversal_leaves.csv';
+const outCsv = (runAll ? process.argv[3] : process.argv[3]) || 'data/paper_reversal_leaves.csv';
 
 const AMOUNT = 500, PAYOUT = 0.92;
 const EXPIRY = 2; // minutes — model was trained on 2m expiry only
@@ -28,19 +28,19 @@ const EXPIRY = 2; // minutes — model was trained on 2m expiry only
 function computeFeatures(r) {
   const close_to_lower = ((r.close - r.bb_lower) / r.bb_middle) * 10000;
   const close_to_upper = ((r.bb_upper - r.close) / r.bb_middle) * 10000;
-  const bb_width_bps   = ((r.bb_upper - r.bb_lower) / r.bb_middle) * 10000;
-  const bbRange        = r.bb_upper - r.bb_lower;
-  const bb_position    = bbRange > 0 ? (r.close - r.bb_lower) / bbRange : null;
-  const stoch_kd_diff  = (r.stochastic_k_v2 != null && r.stochastic_d_v2 != null)
+  const bb_width_bps = ((r.bb_upper - r.bb_lower) / r.bb_middle) * 10000;
+  const bbRange = r.bb_upper - r.bb_lower;
+  const bb_position = bbRange > 0 ? (r.close - r.bb_lower) / bbRange : null;
+  const stoch_kd_diff = (r.stochastic_k_v2 != null && r.stochastic_d_v2 != null)
     ? r.stochastic_k_v2 - r.stochastic_d_v2 : null;
   const stc_stoch_diff = (r.schaff_value != null && r.stochastic_k_v2 != null)
     ? r.schaff_value - r.stochastic_k_v2 : null;
-  const ma_trend_bps   = (r.ma1 != null && r.ma3 != null && r.ma3)
+  const ma_trend_bps = (r.ma1 != null && r.ma3 != null && r.ma3)
     ? ((r.ma1 - r.ma3) / r.ma3) * 10000 : 0;
   return {
     rsi: r.rsi_5,
-    k:   r.stochastic_k_v2,
-    d:   r.stochastic_d_v2,
+    k: r.stochastic_k_v2,
+    d: r.stochastic_d_v2,
     stc: r.schaff_value,
     close_to_lower, close_to_upper,
     bb_width_bps, ma_trend_bps,
@@ -82,37 +82,37 @@ const LEAVES = [
     id: 'L16', dir: 'CALL', wr_reported: 0.6860, n_reported: 86,
     test: (f) =>
       has(f.bb_position) && has(f.rsi) && has(f.d) && has(f.stoch_kd_diff) &&
-      f.bb_position    <= 0.021859  &&
-      f.stoch_kd_diff  > -1.668935 &&
+      f.bb_position <= 0.021859 &&
+      f.stoch_kd_diff > -1.668935 &&
       f.close_to_lower <= -1.013379 &&
-      f.rsi            <= 2.679860  &&  // combines both RSI splits (≤5.788 AND ≤2.680)
-      f.d              >  4.079007,
+      f.rsi <= 2.679860 &&  // combines both RSI splits (≤5.788 AND ≤2.680)
+      f.d > 4.079007,
   },
   {
     id: 'L41', dir: 'PUT', wr_reported: 0.7600, n_reported: 50,
     test: (f) =>
       has(f.bb_position) && has(f.rsi) && has(f.stoch_kd_diff) && has(f.stc_stoch_diff) &&
-      f.bb_position    >   0.021859   &&
-      f.stc_stoch_diff >  -58.236702  &&
-      f.rsi            <=  17.150460  &&
-      f.stoch_kd_diff  <= -16.898592  &&  // also satisfies ≤22.493945
-      f.bb_position    >   0.352286,
+      f.bb_position > 0.021859 &&
+      f.stc_stoch_diff > -58.236702 &&
+      f.rsi <= 17.150460 &&
+      f.stoch_kd_diff <= -16.898592 &&  // also satisfies ≤22.493945
+      f.bb_position > 0.352286,
   },
   {
     id: 'L65', dir: 'PUT', wr_reported: 0.6378, n_reported: 323,
     test: (f) =>
       has(f.bb_position) && has(f.stoch_kd_diff) && has(f.stc) &&
-      f.bb_position   >   0.021859  &&
-      f.bb_position   <=  0.721175  &&
-      f.stoch_kd_diff >   24.659285 &&  // supersedes the two earlier ≥22.49/22.67 splits
-      f.stc           >   0.000060,
+      f.bb_position > 0.021859 &&
+      f.bb_position <= 0.721175 &&
+      f.stoch_kd_diff > 24.659285 &&  // supersedes the two earlier ≥22.49/22.67 splits
+      f.stc > 0.000060,
   },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function fmt(arr) {
-  const n  = arr.length;
-  const w  = arr.filter(x => x.outcome === 'WIN').length;
+  const n = arr.length;
+  const w = arr.filter(x => x.outcome === 'WIN').length;
   const pl = arr.reduce((s, x) => s + x.pl, 0);
   const wr = n ? (100 * w / n).toFixed(1) : '-';
   return { n, wr: String(wr), pl };
@@ -201,7 +201,7 @@ for (const dbPath of dbPaths) {
         csvRow.push('', '', '');
       } else {
         const win = L.dir === 'CALL' ? exit > r.close : exit < r.close;
-        const pl  = win ? AMOUNT * PAYOUT : -AMOUNT;
+        const pl = win ? AMOUNT * PAYOUT : -AMOUNT;
         const rec = { outcome: win ? 'WIN' : 'LOSS', pl, hour, dir: L.dir, asset: r.asset };
         dbTrades[L.id].push(rec);
         allTrades[L.id].push(rec);
@@ -240,9 +240,9 @@ for (const dbPath of dbPaths) {
   console.log('Leaf    Dir   claimed_WR  actual_WR   n      Δ(pp)');
   console.log('-'.repeat(58));
   for (const L of LEAVES) {
-    const f       = fmt(dbTrades[L.id]);
+    const f = fmt(dbTrades[L.id]);
     const claimed = (L.wr_reported * 100).toFixed(1);
-    const delta   = f.n > 0 ? (parseFloat(f.wr) - L.wr_reported * 100).toFixed(1) : '-';
+    const delta = f.n > 0 ? (parseFloat(f.wr) - L.wr_reported * 100).toFixed(1) : '-';
     console.log(`${L.id.padEnd(7)} ${L.dir.padEnd(5)} ${claimed.padStart(7)}%    ${f.wr.padStart(5)}%   ${String(f.n).padEnd(6)} ${String(delta).padStart(6)}`);
   }
 }

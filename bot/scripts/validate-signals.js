@@ -62,7 +62,7 @@ async function validateOneSignal(database, signal, lookAheadSeconds, tradeAmount
             `SELECT * FROM candles
              WHERE asset = ? AND timestamp >= ? AND timestamp <= ?
              ORDER BY ABS(timestamp - ?) ASC LIMIT 1`,
-            [signal.asset, signalTsSeconds, expirationTime + 60, expirationTime]
+            [signal.asset, signalTsSeconds, expirationTime + 120, expirationTime]
         );
         if (!exitCandle) return { skipped: true, reason: 'no_exit_price' };
         exitPrice = exitCandle.close;

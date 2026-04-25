@@ -768,6 +768,14 @@ class Indicators {
             ? closePrice <= bb.lower + (bb.upper - bb.lower) * 0.15
             : false;
 
+        // Leaf feature pre-computations (ML_REPORT_LEAF_PATTERN-CORR, 2m model)
+        const _bbRange = bb != null ? bb.upper - bb.lower : 0;
+        const bbPosition = _bbRange > 0 ? (closePrice - bb.lower) / _bbRange : null;
+        const stochKdDiff = stochK != null && stochD != null ? stochK - stochD : null;
+        const schaffVal = indicators.schaffTrendCycle?.value ?? null;
+        const stcStochDiff = schaffVal != null && stochK != null ? schaffVal - stochK : null;
+        const closToLowerBps = bb != null && bb.middle ? (closePrice - bb.lower) / bb.middle * 10000 : null;
+
         // Streak guard
         let streakBlocked = false;
         if (asset) {
@@ -794,49 +802,49 @@ class Indicators {
         // K crash 20+pts into <30 from >=50, RSI <45, price near lower BB, BB stable
         // 3-bar lookback: crash within 3-4 bars, RSI stayed <45, no premature bullish cross
         // ═════════════════════════════════════════════════════════════════════
-        if (!streakBlocked && rsi < 80) {
-            const kCrash = k_1 != null && stochK != null ? k_1 - stochK : null;
-            const kFlashCrash = kCrash != null && kCrash >= 25; // replay 2026-04-17: >=30 killed pattern (1 signal/3d); relaxed to 25
-            const kOversold = stochK != null && stochK >= 25 && stochK < 30; // session_report_2026-04-17: 25-30 landing zone = 58.9% WR
-            const kWasMid = k_1 != null && k_1 >= 50;
-            const rsiDown = rsi < 30; // replay 2026-04-17: <20 killed pattern; relaxed to <30 (still tighter than original <45)
+        // if (!streakBlocked && rsi < 80) {
+        //     const kCrash = k_1 != null && stochK != null ? k_1 - stochK : null;
+        //     const kFlashCrash = kCrash != null && kCrash >= 25; // replay 2026-04-17: >=30 killed pattern (1 signal/3d); relaxed to 25
+        //     const kOversold = stochK != null && stochK >= 25 && stochK < 30; // session_report_2026-04-17: 25-30 landing zone = 58.9% WR
+        //     const kWasMid = k_1 != null && k_1 >= 50;
+        //     const rsiDown = rsi < 30; // replay 2026-04-17: <20 killed pattern; relaxed to <30 (still tighter than original <45)
 
-            // 3-bar lookback for CALL reversal confirmation
-            let lookbackOk = false;
-            if (history.length >= 3 && kFlashCrash && kOversold) {
-                // RSI stayed <45 throughout the 3-bar window
-                const rsiAllLow = rsi < 45 && rsi_1 < 45 && rsi_2 < 45 && rsi_3 < 45;
+        //     // 3-bar lookback for CALL reversal confirmation
+        //     let lookbackOk = false;
+        //     if (history.length >= 3 && kFlashCrash && kOversold) {
+        //         // RSI stayed <45 throughout the 3-bar window
+        //         const rsiAllLow = rsi < 45 && rsi_1 < 45 && rsi_2 < 45 && rsi_3 < 45;
 
-                // Stoch crash occurred within last 3-4 bars (not stale)
-                const k_4 = history.length >= 4 ? (history[3].stochastic_k ?? k_3) : k_3;
-                const crashRecent = k_1 >= 50 || k_2 >= 50 || k_3 >= 50 || k_4 >= 50;
+        //         // Stoch crash occurred within last 3-4 bars (not stale)
+        //         const k_4 = history.length >= 4 ? (history[3].stochastic_k ?? k_3) : k_3;
+        //         const crashRecent = k_1 >= 50 || k_2 >= 50 || k_3 >= 50 || k_4 >= 50;
 
-                // No premature bullish crossover during crash (K didn't cross above D early)
-                const noPrematureCross = !(k_1 > d_1 && k_2 <= d_2);
+        //         // No premature bullish crossover during crash (K didn't cross above D early)
+        //         const noPrematureCross = !(k_1 > d_1 && k_2 <= d_2);
 
-                lookbackOk = rsiAllLow && crashRecent && noPrematureCross;
-            }
+        //         lookbackOk = rsiAllLow && crashRecent && noPrematureCross;
+        //     }
 
-            // Relaxed: align with tightened strict branch — no looser kCrash/K/RSI than validated
-            // replay 2026-04-17: relaxed from kDrop>=30 to >=25 after signal-count collapse
-            const kCrashRelaxed = kCrash != null && kCrash >= 25;
-            const kDeepOversold = stochK != null && stochK >= 25 && stochK < 30;
-            const kWasMidRelaxed = k_1 != null && k_1 >= 50;
-            const lookbackRelaxed = (kCrashRelaxed || kDeepOversold) && rsiDown;
+        //     // Relaxed: align with tightened strict branch — no looser kCrash/K/RSI than validated
+        //     // replay 2026-04-17: relaxed from kDrop>=30 to >=25 after signal-count collapse
+        //     const kCrashRelaxed = kCrash != null && kCrash >= 25;
+        //     const kDeepOversold = stochK != null && stochK >= 25 && stochK < 30;
+        //     const kWasMidRelaxed = k_1 != null && k_1 >= 50;
+        //     const lookbackRelaxed = (kCrashRelaxed || kDeepOversold) && rsiDown;
 
-            if ((kFlashCrash && kOversold && kWasMid && rsiDown && priceNearLowerBB && bbStable && bbWidthSufficient && lookbackOk) ||
-                (kCrashRelaxed && kOversold && kWasMidRelaxed && rsiDown && bbStable && bbWidthSufficient && lookbackRelaxed)) {
+        //     if ((kFlashCrash && kOversold && kWasMid && rsiDown && priceNearLowerBB && bbStable && bbWidthSufficient && lookbackOk) ||
+        //         (kCrashRelaxed && kOversold && kWasMidRelaxed && rsiDown && bbStable && bbWidthSufficient && lookbackRelaxed)) {
 
-                const candleHour = new Date(candleTs * 1000).getUTCHours();
-                signals.direction = 'CALL'; signals.strategyUsed = 'video2';
-                signals.buy = true; signals.sell = false;
-                signals.reasons.push('OVERSOLD | Reversal | ' +
-                    'K crash ' + kCrash.toFixed(1) + 'pts (' + k_1.toFixed(1) + '->' + stochK.toFixed(1) + ') | ' +
-                    'RSI ' + rsi.toFixed(1) + ' (<45) | ' +
-                    'Price near lower BB | BB stable | BB ' + bbWidthBps.toFixed(1) + 'bps | UTC ' + candleHour);
-                _updateStreak(); return true;
-            }
-        }
+        //         const candleHour = new Date(candleTs * 1000).getUTCHours();
+        //         signals.direction = 'CALL'; signals.strategyUsed = 'video2';
+        //         signals.buy = true; signals.sell = false;
+        //         signals.reasons.push('OVERSOLD | Reversal | ' +
+        //             'K crash ' + kCrash.toFixed(1) + 'pts (' + k_1.toFixed(1) + '->' + stochK.toFixed(1) + ') | ' +
+        //             'RSI ' + rsi.toFixed(1) + ' (<45) | ' +
+        //             'Price near lower BB | BB stable | BB ' + bbWidthBps.toFixed(1) + 'bps | UTC ' + candleHour);
+        //         _updateStreak(); return true;
+        //     }
+        // }
 
         // ═════════════════════════════════════════════════════════════════════
         // 2. PUT REVERSAL (MA-independent, with 3-bar lookback)
@@ -844,176 +852,246 @@ class Indicators {
         // close >= BB mid, K exiting OB, D >=75, K-D <-3
         // 3-bar lookback: RSI >70 for 2-3 bars, Stoch overbought, no early bullish cross
         // ═════════════════════════════════════════════════════════════════════
-        if (!streakBlocked && isRed) {
-            const rsiWasOverbought1 = rsi_1 != null && rsi_1 > 70;
-            const rsiWasOverbought2 = rsi_2 != null && rsi_2 >= 80; // session_report_2026-04-17: 88.9% WR at rsiFrom 80-82
-            const notFastDrop = rsi_1 == null || !(rsi_1 >= 75 && rsi_1 < 80);
-            // 2026-04-20 QA2 (5-DB pooled, n=35): vel<-12 open-ended x RSI[60,70) = 85.7% WR +$11,300
-            const rsiInReversal = rsiFalling && rsi >= 60 && rsi < 70 && rsiVelocity <= -12;
-            const kExitingOB = k_1 != null && k_1 > 65 && kFalling &&
-                stochK != null && stochK >= 55 && stochK < 80;
-            const dLaggingHigh = stochD != null && stochD >= 75;
-            const kdSpread = stochK != null && stochD != null ? stochK - stochD : null;
-            const kBelowD = kdSpread != null && kdSpread < -3;
+        // if (!streakBlocked && isRed) {
+        //     const rsiWasOverbought1 = rsi_1 != null && rsi_1 > 70;
+        //     const rsiWasOverbought2 = rsi_2 != null && rsi_2 >= 80; // session_report_2026-04-17: 88.9% WR at rsiFrom 80-82
+        //     const notFastDrop = rsi_1 == null || !(rsi_1 >= 75 && rsi_1 < 80);
+        //     // 2026-04-20 QA2 (5-DB pooled, n=35): vel<-12 open-ended x RSI[60,70) = 85.7% WR +$11,300
+        //     const rsiInReversal = rsiFalling && rsi >= 60 && rsi < 70 && rsiVelocity <= -12;
+        //     const kExitingOB = k_1 != null && k_1 > 65 && kFalling &&
+        //         stochK != null && stochK >= 55 && stochK < 80;
+        //     const dLaggingHigh = stochD != null && stochD >= 75;
+        //     const kdSpread = stochK != null && stochD != null ? stochK - stochD : null;
+        //     const kBelowD = kdSpread != null && kdSpread < -3;
 
-            // 3-bar lookback for PUT reversal confirmation
-            let lookbackOk = false;
-            if (history.length >= 3 && rsiWasOverbought1 && rsiWasOverbought2) {
-                // RSI stayed >70 for at least prior 2-3 bars
-                const rsiAllHigh = rsi_1 > 70 && rsi_2 > 70 && rsi_3 > 70;
+        //     // 3-bar lookback for PUT reversal confirmation
+        //     let lookbackOk = false;
+        //     if (history.length >= 3 && rsiWasOverbought1 && rsiWasOverbought2) {
+        //         // RSI stayed >70 for at least prior 2-3 bars
+        //         const rsiAllHigh = rsi_1 > 70 && rsi_2 > 70 && rsi_3 > 70;
 
-                // Stochastic remained overbought the whole time before exit
-                const stochAllOB = k_1 > 65 && k_2 > 65 && k_3 > 65;
+        //         // Stochastic remained overbought the whole time before exit
+        //         const stochAllOB = k_1 > 65 && k_2 > 65 && k_3 > 65;
 
-                lookbackOk = rsiAllHigh && stochAllOB;
-            }
+        //         lookbackOk = rsiAllHigh && stochAllOB;
+        //     }
 
-            // Relaxed: align with tightened strict branch — prior bar RSI must confirm true overbought
-            // session_report_2026-04-17: golden band requires RSI[-2] >= 80 and velocity in [-15,-8]
-            const rsiWasHigh1 = rsi_1 != null && rsi_1 > 70;
-            const rsiWasHigh2 = rsi_2 != null && rsi_2 >= 80;
-            const rsiInReversalRelaxed = rsiFalling && rsi >= 35 && rsi < 70 && rsiVelocity >= -15 && rsiVelocity <= -8;
-            const kExitingOBRelaxed = k_1 != null && k_1 > 60 && kFalling &&
-                stochK != null && stochK >= 50 && stochK < 80;
-            const dLaggingRelaxed = stochD != null && stochD >= 70;
-            const kdSpreadRelaxed = kdSpread != null && kdSpread < -2;
+        //     // Relaxed: align with tightened strict branch — prior bar RSI must confirm true overbought
+        //     // session_report_2026-04-17: golden band requires RSI[-2] >= 80 and velocity in [-15,-8]
+        //     const rsiWasHigh1 = rsi_1 != null && rsi_1 > 70;
+        //     const rsiWasHigh2 = rsi_2 != null && rsi_2 >= 80;
+        //     const rsiInReversalRelaxed = rsiFalling && rsi >= 35 && rsi < 70 && rsiVelocity >= -15 && rsiVelocity <= -8;
+        //     const kExitingOBRelaxed = k_1 != null && k_1 > 60 && kFalling &&
+        //         stochK != null && stochK >= 50 && stochK < 80;
+        //     const dLaggingRelaxed = stochD != null && stochD >= 70;
+        //     const kdSpreadRelaxed = kdSpread != null && kdSpread < -2;
 
-            if ((rsiWasOverbought1 && rsiWasOverbought2 && notFastDrop &&
-                rsiInReversal && closeAboveMid && bbWidthSufficient &&
-                kExitingOB && dLaggingHigh && kBelowD &&
-                lookbackOk) ||
-                (rsiWasHigh1 && rsiWasHigh2 && rsiInReversalRelaxed &&
-                    closeAboveMid && bbWidthSufficient && kExitingOBRelaxed && dLaggingRelaxed && kdSpreadRelaxed)) {
+        //     if ((rsiWasOverbought1 && rsiWasOverbought2 && notFastDrop &&
+        //         rsiInReversal && closeAboveMid && bbWidthSufficient &&
+        //         kExitingOB && dLaggingHigh && kBelowD &&
+        //         lookbackOk) ||
+        //         (rsiWasHigh1 && rsiWasHigh2 && rsiInReversalRelaxed &&
+        //             closeAboveMid && bbWidthSufficient && kExitingOBRelaxed && dLaggingRelaxed && kdSpreadRelaxed)) {
 
-                // 2026-04-20 synthesis: QA2 combo bbw>=30 x vel<-12 x RSI[60,70) = 85.7% WR n=35 +$11,300
-                // pooled across 4 DBs. bbw[30,50) is the sweet spot previously blocked by bbw>=50.
-                if (bbWidthBps < 30) return false;
+        //         // 2026-04-20 synthesis: QA2 combo bbw>=30 x vel<-12 x RSI[60,70) = 85.7% WR n=35 +$11,300
+        //         // pooled across 4 DBs. bbw[30,50) is the sweet spot previously blocked by bbw>=50.
+        //         if (bbWidthBps < 30) return false;
 
-                const candleHour = new Date(candleTs * 1000).getUTCHours();
-                signals.direction = 'PUT'; signals.strategyUsed = 'video2';
-                signals.sell = true; signals.buy = false;
-                signals.reasons.push('OVERBOUGHT | Reversal | ' +
-                    'RSI ' + rsi.toFixed(1) + ' (from ' + rsi_1.toFixed(1) + ', vel=' + rsiVelocity.toFixed(1) + ') | ' +
-                    'K ' + stochK.toFixed(1) + ' (55-80, from ' + k_1.toFixed(1) + ') | ' +
-                    'D ' + stochD.toFixed(1) + ' (>=75) | K-D ' + kdSpread.toFixed(1) + ' (<-3) | ' +
-                    'Price >= BB mid | BB ' + bbWidthBps.toFixed(1) + 'bps | UTC ' + candleHour);
-                _updateStreak(); return true;
-            }
+        //         const candleHour = new Date(candleTs * 1000).getUTCHours();
+        //         signals.direction = 'PUT'; signals.strategyUsed = 'video2';
+        //         signals.sell = true; signals.buy = false;
+        //         signals.reasons.push('OVERBOUGHT | Reversal | ' +
+        //             'RSI ' + rsi.toFixed(1) + ' (from ' + rsi_1.toFixed(1) + ', vel=' + rsiVelocity.toFixed(1) + ') | ' +
+        //             'K ' + stochK.toFixed(1) + ' (55-80, from ' + k_1.toFixed(1) + ') | ' +
+        //             'D ' + stochD.toFixed(1) + ' (>=75) | K-D ' + kdSpread.toFixed(1) + ' (<-3) | ' +
+        //             'Price >= BB mid | BB ' + bbWidthBps.toFixed(1) + 'bps | UTC ' + candleHour);
+        //         _updateStreak(); return true;
+        //     }
+        // }
+
+        // ═════════════════════════════════════════════════════════════════════
+        // L16 CALL — Ultra-Oversold Bounce (ML leaf, n=86, WR=68.6% in-sample)
+        // bb_position ≤ 0.022 (price at BB floor) + RSI ≤ 2.68 (near-zero)
+        // K not deeply below D + price broke below lower band + D recovering
+        // Cross-DB validation: 5/7 DBs profitable. Claim delta −11pp.
+        // ═════════════════════════════════════════════════════════════════════
+        if (!streakBlocked &&
+            bbPosition != null && bbPosition <= 0.021859 &&
+            stochKdDiff != null && stochKdDiff > -1.668935 &&
+            closToLowerBps != null && closToLowerBps <= -1.013379 &&
+            rsi <= 2.679860 &&
+            stochD != null && stochD > 4.079007) {
+
+            const candleHour = new Date(candleTs * 1000).getUTCHours();
+            signals.direction = 'CALL'; signals.strategyUsed = 'video2';
+            signals.buy = true; signals.sell = false;
+            signals.reasons.push('OVERSOLD | L16 Leaf | ' +
+                'BB_pos ' + bbPosition.toFixed(4) + ' (≤0.022) | ' +
+                'RSI ' + rsi.toFixed(1) + ' (≤2.68) | ' +
+                'K-D ' + stochKdDiff.toFixed(1) + ' | ' +
+                'D ' + stochD.toFixed(1) + ' (>4.08) | ' +
+                'BB ' + bbWidthBps.toFixed(1) + 'bps | UTC ' + candleHour);
+            _updateStreak(); return true;
         }
 
         // ═════════════════════════════════════════════════════════════════════
-        // 3. CALL CONTINUATION (pre-cross with 3-bar lookback)
-        // MA6 < MA14 converging up, RSI >50 rising, Stoch >30 rising
-        // 3-bar lookback: MA6 stays below MA14, gap shrinks, Stoch dips but recovers >30
+        // L41 PUT — Bearish Momentum Flush (ML leaf, n=50, WR=76% in-sample)
+        // RSI crushed (≤17) + D dominates K by ≥17pts + mid-range BB position
+        // Not a classic reversal — catches bearish continuation after flush.
+        // Cross-DB validation: 4/7 DBs profitable. Watch before scaling.
         // ═════════════════════════════════════════════════════════════════════
-        if (!streakBlocked && isGreen) {
-            const ma6BelowMa14 = ma6 < ma14;
-            const ma6ConvergingUp = ma6BelowMa14 && ma6Rising;
-            const rsiAbove50Rising = rsi > 50 && rsiRising;
-            const stochRisingFromOversold = stochK != null && stochK > 30 && kRising;
+        if (!streakBlocked &&
+            bbPosition != null && bbPosition > 0.021859 && bbPosition > 0.352286 &&
+            stcStochDiff != null && stcStochDiff > -58.236702 &&
+            rsi <= 17.150460 &&
+            stochKdDiff != null && stochKdDiff <= -16.898592) {
 
-            // 3-bar lookback: MA gap shrinking, Stoch stays >30, no bearish crossover
-            let lookbackOk = false;
-            let gap0 = Math.abs(ma6 - ma14);
-            if (history.length >= 3 && ma6BelowMa14) {
-                const gap3 = Math.abs((history[2].ma6 ?? ma6) - (history[2].ma14 ?? ma14));
-                const gapShrinking = gap0 < gap3;
-
-                const ma14_3 = history[2].ma14 ?? ma14;
-                const ma14FlatOrRising = ma14 >= ma14_3;
-
-                const stochAbove30 = stochK > 30 && k_1 > 30 && k_2 > 30 && k_3 > 30;
-
-                lookbackOk = gapShrinking && ma14FlatOrRising && stochAbove30;
-            }
-
-            // Relaxed: MA convergence with RSI bullish and Stoch rising
-            const ma6ConvergingUpRelaxed = ma6BelowMa14 && ma6Rising;
-            const rsiBullish = rsi > 50;
-            const stochRising = stochK != null && stochK > 25 && kRising;
-            const lookbackRelaxed = history.length >= 2 && ma6BelowMa14 && gap0 < Math.abs((history[0].ma6 ?? ma6) - (history[0].ma14 ?? ma14));
-
-            if ((ma6ConvergingUp && rsiAbove50Rising && stochRisingFromOversold &&
-                bbStable && lookbackOk && currentGap <= maxGap) ||
-                (ma6ConvergingUpRelaxed && rsiBullish && stochRising &&
-                    lookbackRelaxed && currentGap <= maxGap * 2)) {
-
-                // session_debrief_2026-04-18 §11: K>=85 alone wins on all 4 DBs (+$7,180); bbW<=30 cap hurt v2_13-15.
-                // §12: RSI[60,70) loses on all 4 DBs (−$2,700 cumulative) — exclude it.
-                if (!(stochK != null && stochK >= 85 && !(rsi >= 60 && rsi < 70))) return false;
-
-                // 2026-04-20 Phase 7 (n=70 pooled): candle_efficiency = |close-open| / (high-low).
-                // threshold <=0.55 raises WR 52.9%->66.7%, avoids $3,680. Strong directional body
-                // signals trend-chasing; we want indecision/rejection at the top.
-                const _range = candle[3] - candle[4];
-                const _body = Math.abs(candle[2] - candle[1]);
-                const _candleEfficiency = _range > 0 ? _body / _range : 0;
-                if (_candleEfficiency > 0.55) return false;
-
-                const candleHour = new Date(candleTs * 1000).getUTCHours();
-                signals.direction = 'CALL'; signals.strategyUsed = 'video2';
-                signals.buy = true; signals.sell = false;
-                signals.reasons.push('UP TREND | ' +
-                    'MA6 ' + ma6.toFixed(4) + ' conv up to MA14 ' + ma14.toFixed(4) + ' | ' +
-                    'RSI ' + rsi.toFixed(1) + ' (>50 rising) | ' +
-                    'Stoch K ' + stochK.toFixed(1) + ' (>30 rising, recovered) | ' +
-                    'BB stable | UTC ' + candleHour);
-                _updateStreak(); return true;
-            }
+            const candleHour = new Date(candleTs * 1000).getUTCHours();
+            signals.direction = 'PUT'; signals.strategyUsed = 'video2';
+            signals.sell = true; signals.buy = false;
+            signals.reasons.push('DOWN TREND | L41 Leaf | ' +
+                'BB_pos ' + bbPosition.toFixed(4) + ' (>0.352) | ' +
+                'RSI ' + rsi.toFixed(1) + ' (≤17) | ' +
+                'K-D ' + stochKdDiff.toFixed(1) + ' (≤-16.9) | ' +
+                'STC-K ' + (stcStochDiff != null ? stcStochDiff.toFixed(1) : '—') + ' | ' +
+                'BB ' + bbWidthBps.toFixed(1) + 'bps | UTC ' + candleHour);
+            _updateStreak(); return true;
         }
 
         // ═════════════════════════════════════════════════════════════════════
-        // 4. PUT CONTINUATION (pre-cross with 3-bar lookback)
-        // MA6 > MA14 converging down, price < MA14, RSI falling from >50, Stoch <70 falling
-        // 3-bar lookback: MA6 stays above MA14, gap shrinks, Stoch pops but resumes <70
+        // L65 PUT — Overbought Exhaustion (ML leaf, n=323, WR=63.8% in-sample)
+        // K running >24.7pts ahead of D in mid-BB + STC active.
+        // Most robust leaf: 6/7 DBs profitable, −3.7pp claim delta.
         // ═════════════════════════════════════════════════════════════════════
-        // session_report_2026-04-17: PUT DT kill zone bbW 10-30 (27-38% WR); 30-60 = 67.6% WR
-        if (!streakBlocked && isRed && bbWidthBps >= 30) {
-            const ma6AboveMa14 = ma6 > ma14;
-            const ma6ConvergingDown = ma6AboveMa14 && ma6Falling;
-            const priceBelowMa14 = closePrice < ma14;
-            const rsiFallingFrom50 = rsi_1 > 50 && rsiFalling && rsi < 55;
-            const stochFallingFromOverbought = stochK != null && stochK < 70 && kFalling;
+        if (!streakBlocked &&
+            bbPosition != null && bbPosition > 0.021859 && bbPosition <= 0.721175 &&
+            stochKdDiff != null && stochKdDiff > 24.659285 &&
+            schaffVal != null && schaffVal > 0.000060) {
 
-            // 3-bar lookback: MA gap shrinking, Stoch stays <70, no bullish crossover
-            let lookbackOk = false;
-            let gap0 = Math.abs(ma6 - ma14);
-            if (history.length >= 3 && ma6AboveMa14) {
-                const gap3 = Math.abs((history[2].ma6 ?? ma6) - (history[2].ma14 ?? ma14));
-                const gapShrinking = gap0 < gap3;
-
-                const ma14_3 = history[2].ma14 ?? ma14;
-                const ma14FlatOrFalling = ma14 <= ma14_3;
-
-                const stochBelow70 = stochK < 70 && k_1 < 70 && k_2 < 70 && k_3 < 70;
-
-                lookbackOk = gapShrinking && ma14FlatOrFalling && stochBelow70;
-            }
-
-            // Relaxed: MA divergence with RSI bearish and Stoch falling
-            const ma6ConvergingDownRelaxed = ma6AboveMa14 && ma6Falling;
-            const rsiBearish = rsi < 55 && rsiFalling;
-            const stochFalling = stochK != null && stochK < 75 && kFalling;
-            const lookbackRelaxed = history.length >= 2 && ma6AboveMa14 && gap0 < Math.abs((history[0].ma6 ?? ma6) - (history[0].ma14 ?? ma14));
-
-            if ((ma6ConvergingDown && priceBelowMa14 && rsiFallingFrom50 &&
-                stochFallingFromOverbought && bbStable && lookbackOk &&
-                currentGap <= maxGap) ||
-                (ma6ConvergingDownRelaxed && rsiBearish && stochFalling &&
-                    lookbackRelaxed && currentGap <= maxGap * 2)) {
-
-                const candleHour = new Date(candleTs * 1000).getUTCHours();
-                signals.direction = 'PUT'; signals.strategyUsed = 'video2';
-                signals.sell = true; signals.buy = false;
-                signals.reasons.push('DOWN TREND | ' +
-                    'MA6 ' + ma6.toFixed(4) + ' conv down to MA14 ' + ma14.toFixed(4) + ' | ' +
-                    'Price ' + closePrice.toFixed(4) + ' < MA14 | ' +
-                    'RSI ' + rsi.toFixed(1) + ' (falling from ' + rsi_1.toFixed(1) + ') | ' +
-                    'Stoch K ' + stochK.toFixed(1) + ' (<70 falling, resumed) | ' +
-                    'BB stable | UTC ' + candleHour);
-                _updateStreak(); return true;
-            }
+            const candleHour = new Date(candleTs * 1000).getUTCHours();
+            signals.direction = 'PUT'; signals.strategyUsed = 'video2';
+            signals.sell = true; signals.buy = false;
+            signals.reasons.push('OVERBOUGHT | L65 Leaf | ' +
+                'BB_pos ' + bbPosition.toFixed(4) + ' (0.022–0.721) | ' +
+                'K-D ' + stochKdDiff.toFixed(1) + ' (>24.7) | ' +
+                'STC ' + schaffVal.toFixed(1) + ' (>0) | ' +
+                'BB ' + bbWidthBps.toFixed(1) + 'bps | UTC ' + candleHour);
+            _updateStreak(); return true;
         }
+
+        // // ═════════════════════════════════════════════════════════════════════
+        // // 3. CALL CONTINUATION (pre-cross with 3-bar lookback)
+        // // MA6 < MA14 converging up, RSI >50 rising, Stoch >30 rising
+        // // 3-bar lookback: MA6 stays below MA14, gap shrinks, Stoch dips but recovers >30
+        // // ═════════════════════════════════════════════════════════════════════
+        // if (!streakBlocked && isGreen) {
+        //     const ma6BelowMa14 = ma6 < ma14;
+        //     const ma6ConvergingUp = ma6BelowMa14 && ma6Rising;
+        //     const rsiAbove50Rising = rsi > 50 && rsiRising;
+        //     const stochRisingFromOversold = stochK != null && stochK > 30 && kRising;
+
+        //     // 3-bar lookback: MA gap shrinking, Stoch stays >30, no bearish crossover
+        //     let lookbackOk = false;
+        //     let gap0 = Math.abs(ma6 - ma14);
+        //     if (history.length >= 3 && ma6BelowMa14) {
+        //         const gap3 = Math.abs((history[2].ma6 ?? ma6) - (history[2].ma14 ?? ma14));
+        //         const gapShrinking = gap0 < gap3;
+
+        //         const ma14_3 = history[2].ma14 ?? ma14;
+        //         const ma14FlatOrRising = ma14 >= ma14_3;
+
+        //         const stochAbove30 = stochK > 30 && k_1 > 30 && k_2 > 30 && k_3 > 30;
+
+        //         lookbackOk = gapShrinking && ma14FlatOrRising && stochAbove30;
+        //     }
+
+        //     // Relaxed: MA convergence with RSI bullish and Stoch rising
+        //     const ma6ConvergingUpRelaxed = ma6BelowMa14 && ma6Rising;
+        //     const rsiBullish = rsi > 50;
+        //     const stochRising = stochK != null && stochK > 25 && kRising;
+        //     const lookbackRelaxed = history.length >= 2 && ma6BelowMa14 && gap0 < Math.abs((history[0].ma6 ?? ma6) - (history[0].ma14 ?? ma14));
+
+        //     if ((ma6ConvergingUp && rsiAbove50Rising && stochRisingFromOversold &&
+        //         bbStable && lookbackOk && currentGap <= maxGap) ||
+        //         (ma6ConvergingUpRelaxed && rsiBullish && stochRising &&
+        //             lookbackRelaxed && currentGap <= maxGap * 2)) {
+
+        //         // session_debrief_2026-04-18 §11: K>=85 alone wins on all 4 DBs (+$7,180); bbW<=30 cap hurt v2_13-15.
+        //         // §12: RSI[60,70) loses on all 4 DBs (−$2,700 cumulative) — exclude it.
+        //         if (!(stochK != null && stochK >= 85 && !(rsi >= 60 && rsi < 70))) return false;
+
+        //         // 2026-04-20 Phase 7 (n=70 pooled): candle_efficiency = |close-open| / (high-low).
+        //         // threshold <=0.55 raises WR 52.9%->66.7%, avoids $3,680. Strong directional body
+        //         // signals trend-chasing; we want indecision/rejection at the top.
+        //         const _range = candle[3] - candle[4];
+        //         const _body = Math.abs(candle[2] - candle[1]);
+        //         const _candleEfficiency = _range > 0 ? _body / _range : 0;
+        //         if (_candleEfficiency > 0.55) return false;
+
+        //         const candleHour = new Date(candleTs * 1000).getUTCHours();
+        //         signals.direction = 'CALL'; signals.strategyUsed = 'video2';
+        //         signals.buy = true; signals.sell = false;
+        //         signals.reasons.push('UP TREND | ' +
+        //             'MA6 ' + ma6.toFixed(4) + ' conv up to MA14 ' + ma14.toFixed(4) + ' | ' +
+        //             'RSI ' + rsi.toFixed(1) + ' (>50 rising) | ' +
+        //             'Stoch K ' + stochK.toFixed(1) + ' (>30 rising, recovered) | ' +
+        //             'BB stable | UTC ' + candleHour);
+        //         _updateStreak(); return true;
+        //     }
+        // }
+
+        // // ═════════════════════════════════════════════════════════════════════
+        // // 4. PUT CONTINUATION (pre-cross with 3-bar lookback)
+        // // MA6 > MA14 converging down, price < MA14, RSI falling from >50, Stoch <70 falling
+        // // 3-bar lookback: MA6 stays above MA14, gap shrinks, Stoch pops but resumes <70
+        // // ═════════════════════════════════════════════════════════════════════
+        // // session_report_2026-04-17: PUT DT kill zone bbW 10-30 (27-38% WR); 30-60 = 67.6% WR
+        // if (!streakBlocked && isRed && bbWidthBps >= 30) {
+        //     const ma6AboveMa14 = ma6 > ma14;
+        //     const ma6ConvergingDown = ma6AboveMa14 && ma6Falling;
+        //     const priceBelowMa14 = closePrice < ma14;
+        //     const rsiFallingFrom50 = rsi_1 > 50 && rsiFalling && rsi < 55;
+        //     const stochFallingFromOverbought = stochK != null && stochK < 70 && kFalling;
+
+        //     // 3-bar lookback: MA gap shrinking, Stoch stays <70, no bullish crossover
+        //     let lookbackOk = false;
+        //     let gap0 = Math.abs(ma6 - ma14);
+        //     if (history.length >= 3 && ma6AboveMa14) {
+        //         const gap3 = Math.abs((history[2].ma6 ?? ma6) - (history[2].ma14 ?? ma14));
+        //         const gapShrinking = gap0 < gap3;
+
+        //         const ma14_3 = history[2].ma14 ?? ma14;
+        //         const ma14FlatOrFalling = ma14 <= ma14_3;
+
+        //         const stochBelow70 = stochK < 70 && k_1 < 70 && k_2 < 70 && k_3 < 70;
+
+        //         lookbackOk = gapShrinking && ma14FlatOrFalling && stochBelow70;
+        //     }
+
+        //     // Relaxed: MA divergence with RSI bearish and Stoch falling
+        //     const ma6ConvergingDownRelaxed = ma6AboveMa14 && ma6Falling;
+        //     const rsiBearish = rsi < 55 && rsiFalling;
+        //     const stochFalling = stochK != null && stochK < 75 && kFalling;
+        //     const lookbackRelaxed = history.length >= 2 && ma6AboveMa14 && gap0 < Math.abs((history[0].ma6 ?? ma6) - (history[0].ma14 ?? ma14));
+
+        //     if ((ma6ConvergingDown && priceBelowMa14 && rsiFallingFrom50 &&
+        //         stochFallingFromOverbought && bbStable && lookbackOk &&
+        //         currentGap <= maxGap) ||
+        //         (ma6ConvergingDownRelaxed && rsiBearish && stochFalling &&
+        //             lookbackRelaxed && currentGap <= maxGap * 2)) {
+
+        //         const candleHour = new Date(candleTs * 1000).getUTCHours();
+        //         signals.direction = 'PUT'; signals.strategyUsed = 'video2';
+        //         signals.sell = true; signals.buy = false;
+        //         signals.reasons.push('DOWN TREND | ' +
+        //             'MA6 ' + ma6.toFixed(4) + ' conv down to MA14 ' + ma14.toFixed(4) + ' | ' +
+        //             'Price ' + closePrice.toFixed(4) + ' < MA14 | ' +
+        //             'RSI ' + rsi.toFixed(1) + ' (falling from ' + rsi_1.toFixed(1) + ') | ' +
+        //             'Stoch K ' + stochK.toFixed(1) + ' (<70 falling, resumed) | ' +
+        //             'BB stable | UTC ' + candleHour);
+        //         _updateStreak(); return true;
+        //     }
+        // }
 
         return false;
     }
