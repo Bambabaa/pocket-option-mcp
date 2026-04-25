@@ -9,12 +9,12 @@ const fs = require('fs');
 const path = require('path');
 
 const ALL_DBS = [
-  'data/trading_data_v1.db',
-  'data/trading_data_v2_13-15.db',
-  'data/trading_data_V3_16.db',
-  'data/trading_data_V3_17.db',
-  'data/trading_data_V4_17.db',
-  'data/trading_data-V4_18.db',
+  // 'data/trading_data_v1.db',
+  // 'data/trading_data_v2_13-15.db',
+  // 'data/trading_data_V3_16.db',
+  // 'data/trading_data_V3_17.db',
+  // 'data/trading_data_V4_17.db',
+  // 'data/trading_data-V4_18.db',
   'data/trading_data.db',
 ];
 
