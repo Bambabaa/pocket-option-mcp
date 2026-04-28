@@ -5,7 +5,7 @@
  * computing WIN/LOSS, and writing to signal_outcomes for analysis.
  *
  * Does NOT write asset_streaks, qualified_assets, or assets_trades.
- * Those tables have been removed — the MODE D gates ARE the qualification.
+ * Those tables have been removed — the   gates ARE the qualification.
  *
  * Used by:
  *  - pocket-option-bot.js  (validation loop every N seconds)

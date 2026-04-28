@@ -316,4 +316,4 @@ Over the same 1,904-signal corpus, this moves the 4-pattern aggregate from **−
 2. **MA50 trend context was approximated** with MA3 + RSI. A full replay with computed MA50 would refine Phase 4.
 3. **OOS for PUT_REV is n=1** — ship with live monitoring, not silent autopilot.
 4. **Payout regime not factored** — `project_deferred_payout_work.md` memory warns avg payout may be 70.7 %, pushing break-even WR to 58.6 %. The 81 % PUT_REV combo survives that threshold easily; marginal gates (52 %) do not.
-5. **Phase 6 confluence** was computed post-hoc on DB joins; the bot cannot fire both PUT_REV and PUT_DT simultaneously because `_generateSignalsKTVideo2` returns on first match. Live confluence would need a full pattern-evaluation-all-branches refactor.
+5. **Phase 6 confluence** was computed post-hoc on DB joins; the bot cannot fire both PUT_REV and PUT_DT simultaneously because `signalstrade` returns on first match. Live confluence would need a full pattern-evaluation-all-branches refactor.

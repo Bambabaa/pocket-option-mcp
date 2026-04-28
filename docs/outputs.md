@@ -161,18 +161,18 @@ Sorted oldest → newest. Tick-level (approximately one row per second when bot 
 }
 ```
 
-Indicator columns per KT strategy:
+Indicator columns per  strategy:
 
 | Column | Strategy | Description |
 |---|---|---|
-| `ma1` | video2 | EMA-6 (green line) |
-| `ma2` | video2 | EMA-50 (red line) |
-| `ma3` | video2 | EMA-14 (white line) |
-| `rsi_5` | video2 | RSI-5 |
+| `ma1` |   | EMA-6 (green line) |
+| `ma2` |   | EMA-50 (red line) |
+| `ma3` |   | EMA-14 (white line) |
+| `rsi_5` |   | RSI-5 |
 | `rsi_8` | video3 | RSI-8 |
 | `bb_upper/middle/lower` | video3 | Bollinger Bands (20, 2σ) |
 | `stochastic_k/d` | video1 | Stochastic (13, 3, 3) |
-| `stochastic_k_v2/d_v2` | video2 | Stochastic (5, 3, 3) |
+| `stochastic_k_v2/d_v2` |   | Stochastic (5, 3, 3) |
 | `keltner_upper/lower` | video1 | Keltner Channel (EMA-18, ATR-11, ×2) |
 | `schaff_value` | video3 | Schaff Trend Cycle |
 
@@ -189,7 +189,7 @@ Indicator columns per KT strategy:
       "asset": "EURUSD_otc",
       "timestamp": 1744300800,
       "direction": "CALL",
-      "strategy_used": "video2",
+      "strategy_used": " ",
       "reasons": "[\"MA1 > MA3 > MA2\",\"RSI5 crossed above 45\",\"Stoch K crossed D upward\"]"
     },
     {
@@ -197,7 +197,7 @@ Indicator columns per KT strategy:
       "asset": "GBPUSD_otc",
       "timestamp": 1744300740,
       "direction": "PUT",
-      "strategy_used": "video2",
+      "strategy_used": " ",
       "reasons": "[\"MA1 < MA3 < MA2\",\"RSI5 crossed below 65\"]"
     }
   ]
@@ -356,7 +356,7 @@ Only contains outcomes for assets that were in `qualified_assets` at signal time
 {
   "count": 3,
   "pending_signals": [
-    { "id": 204, "asset": "EURUSD_otc", "timestamp": 1744300680, "direction": "CALL", "strategy_used": "video2" }
+    { "id": 204, "asset": "EURUSD_otc", "timestamp": 1744300680, "direction": "CALL", "strategy_used": " " }
   ]
 }
 ```

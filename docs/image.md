@@ -128,3 +128,95 @@ The **BB expansion** is key — in the first chart, expansion meant "trend is st
 |-------|----------------|-----|-------|-----|-----|-----------|
 | **CALL (AUD/CAD)** | V-bottom + hold above MA | Rising from low | Rising, no cross | Rising from 25 | Walking upper | — |
 | **PUT (USD/COP)** | Peak + break below MA | Rolling from >70 | Bearish cross from >70 | Peaking at 75 | Expanding down | Early warning |
+
+
+# NGN/USD 
+![alt text](img/image3.png)
+
+ Studying this NGN/USD OTC chart at the three yellow vertical lines. Let me break down each timestamp with the candle and indicator behaviors.
+
+---
+
+## **Timestamp 1:46 — CALL Entry (V-Bottom Reversal)**
+
+| Element | Observation |
+|--------|-------------|
+| **Price action** | Sharp V-bottom at 0.00073376. Long red candle immediately followed by strong green engulfing candle — classic reversal structure |
+| **Fast MA (green 6)** | Price had broken well below it during the drop; at 1:46, the green candle is reclaiming back above the fast MA |
+| **Slow MA (white 14)** | Still above price but flattening; the fast MA is about to cross or has just crossed below it (bearish alignment ending) |
+| **Bollinger Bands** | Lower band was tagged at the V-bottom; band width shows expansion from the drop — volatility spike at the reversal point |
+| **RSI (5)** | **Bounced sharply off the 30 level** — classic oversold bounce. Rising steeply from below 30, not yet at 50 |
+| **Stoch (5,3,3)** | **Bullish crossover from below 30** — blue (%K) crossing above orange (%D) in the oversold zone. Early-cycle signal |
+| **STC (25,50,8,4,3)** | **At or near the 25 floor, turning up sharply** — cycle bottom confirmed, bullish phase beginning |
+| **STCK (12,25,5,3,3)** | **At the absolute 25 floor, inflecting upward** — this is your earliest warning indicator firing first |
+
+**Logic:** Oversold cluster reversal. All oscillators synchronized at extreme lows. STCK leads, STC confirms cycle turn, Stoch gives the crossover entry, RSI confirms momentum shift. Price reclaiming fast MA after V-bottom = structural bottom.
+
+---
+
+## **Timestamp 2:07 — PUT Entry (Top Reversal)**
+
+| Element | Observation |
+|--------|-------------|
+| **Price action** | Local high at 0.00073859. Sequence of small-bodied candles at the top, then a sharp red candle breaking down — distribution pattern |
+| **Fast MA (green 6)** | Price had been riding above it; at 2:07, the red candle breaks decisively below the fast MA |
+| **Slow MA (white 14)** | Still below price but the gap is narrowing; fast MA is flattening/curling down toward it |
+| **Bollinger Bands** | **Upper band tagged at the 0.00073859 high**; now price falling away with band expansion — rejection from upper band |
+| **RSI (5)** | **Rolling over from near 70** — peaked, now descending. Momentum exhaustion at resistance |
+| **Stoch (5,3,3)** | **Bearish crossover from above 70** — blue (%K) crossing below orange (%D) in overbought zone |
+| **STC (25,50,8,4,3)** | **At or near the 75 ceiling, flattening/turning down** — cycle peak, bearish phase beginning |
+| **STCK (12,25,5,3,3)** | **At the 75 ceiling, already turning down** — early reversal warning before main STC |
+
+**Logic:** Overbought cluster reversal. Mirror image of 1:46. STCK leads the turn down from 75, STC confirms cycle peak, Stoch gives bearish crossover, RSI rolls from overbought. Price breaking below fast MA after upper BB tag = distribution complete.
+
+---
+
+## **Timestamp 2:15 — CALL Entry (Pullback Continuation)**
+
+| Element | Observation |
+|--------|-------------|
+| **Price action** | Sharp drop from 2:07 high, found support at the slow MA (white 14) around 0.00073600. Green candle bouncing off the slow MA |
+| **Fast MA (green 6)** | Had crossed below slow MA during the drop (bearish alignment); at 2:15, price is reclaiming back above fast MA |
+| **Slow MA (white 14)** | Acting as **dynamic support** — price held at it, didn't break through. This is key |
+| **Bollinger Bands** | Middle band (20 SMA) or lower band providing support; price bouncing from lower half of bands, not tag |
+| **RSI (5)** | **Bounced off the 30-40 zone** — not extreme oversold like 1:46, but enough to reset momentum. Rising from support |
+| **Stoch (5,3,3)** | **Bullish crossover in the 30-50 zone** — not from oversold, but from a "healthy pullback" level. Mid-cycle re-entry |
+| **STC (25,50,8,4,3)** | **Rose from 25 after 1:46, peaked at 75 at 2:07, now pulled back to ~40-50 and turning up again** — this is a **cycle continuation**, not a new cycle |
+| **STCK (12,25,5,3,3)** | **Pulled back from 75, likely to ~30-40, now inflecting up** — faster response, giving earlier continuation signal |
+
+**Logic:** This is the **critical distinction**. Unlike 1:46 (new cycle from 25), this is a **mid-cycle pullback continuation**. The STC didn't return to 25 — it only pulled back to ~40-50 before resuming up. This means:
+
+- The trend from 1:46 is still intact
+- The 2:07 drop was a **correction within the uptrend**, not a full reversal
+- Slow MA held as support = trend structure preserved
+- STCK and STCH turning up from mid-levels = continuation, not new cycle
+
+---
+
+## **Pattern Matrix: Three Scenarios**
+
+| | 1:46 CALL | 2:07 PUT | 2:15 CALL |
+|--|-----------|----------|-----------|
+| **Setup type** | New bullish cycle | New bearish cycle | Bullish continuation |
+| **STC level** | At 25 floor | At 75 ceiling | At ~40-50 mid-zone |
+| **STCK level** | At 25 floor | At 75 ceiling | At ~30-40 mid-zone |
+| **RSI behavior** | Bounce off 30 | Roll from 70 | Bounce off 30-40 |
+| **Stoch behavior** | Bull cross <30 | Bear cross >70 | Bull cross 30-50 |
+| **MA behavior** | Reclaim fast MA | Break below fast MA | Reclaim fast MA at slow MA support |
+| **BB behavior** | Bounce off lower band | Reject from upper band | Bounce from middle/lower band |
+| **Price structure** | V-bottom | Double top / lower highs | Higher low at slow MA |
+
+---
+
+## **Key Insight: STC Zone Reading**
+
+| STC Zone | Interpretation |
+|----------|---------------|
+| **25 floor** | New cycle beginning (1:46) — highest conviction reversal |
+| **75 ceiling** | Cycle ending (2:07) — highest conviction reversal |
+| **40-50 mid-zone** | Continuation after pullback (2:15) — trend intact, re-entry |
+| **25→75 traverse** | Full bullish cycle |
+| **75→25 traverse** | Full bearish cycle |
+
+The **2:15 entry is the most subtle** — you weren't buying a new trend, you were buying the **resumption of an existing trend** after a shallow correction. The STC mid-zone bounce is your tell. If STC had returned to 25, it would be a new cycle (like 1:46). If it had stayed at 75, no entry. The ~40-50 level with upward inflection = "trend still alive, get back in."
+

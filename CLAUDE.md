@@ -54,7 +54,7 @@ pocket-option-mcp (MCP stdio server — src/server.js)
 pocket-option-mcp/
 ├── bot/                        ← COPY of determ scripts — ALL modifications go here
 │   ├── pocket-option-bot.js    ← MCP orders worker + isAssetBlocked() guard + stale-feed guards
-│   ├── indicators.js           ← video2 MODE D only — BB width gate live at 10 bps
+│   ├── indicators.js           ←   MODE D only — BB width gate live at 10 bps
 │   ├── database.js
 │   └── scripts/
 │       ├── order-executor.js
@@ -96,8 +96,8 @@ Only active strategy. Modes A, B, C disabled (`if (false)`).
 | `ma1` | MA6 | Fast — early trend catch |
 | `ma3` | MA14 | Slow — trend confirmation |
 | `ma2` | MA50 | NOT used in MODE D gates |
-| `stochastic_k_v2` | Stoch K (5,3,3) | Video2 stochastic |
-| `stochastic_d_v2` | Stoch D (5,3,3) | Video2 stochastic signal line |
+| `stochastic_k_v2` | Stoch K (5,3,3) |   stochastic |
+| `stochastic_d_v2` | Stoch D (5,3,3) |   stochastic signal line |
 | `rsi_5` | RSI period 5 | Momentum |
 | `bb_upper/lower/middle` | BB (20,2) | Width gate + price position |
 

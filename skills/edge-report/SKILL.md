@@ -5,7 +5,7 @@ description: Run a full research session on historical data. Replays all candles
 
 # Edge Report — Full Strategy Research Session
 
-You are running a complete data-driven research session on the MODE D video2 strategy using all historical data in trading_data.db. Your goal is to identify what conditions genuinely produce wins vs losses and write a structured report.
+You are running a complete data-driven research session on the     strategy using all historical data in trading_data.db. Your goal is to identify what conditions genuinely produce wins vs losses and write a structured report.
 
 ## Step 1: Health Check
 

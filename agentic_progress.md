@@ -30,7 +30,7 @@ Score = qualified(25) + fresh_signal(30) + streak(15) + win_rate(20) + form(10)
 - **po_optimize_gates** — Grid search over gate thresholds (RSI, K crash, D level, MA gap, RSI velocity)
 
 **Key design decisions:**
-- Uses stochastic_k_v2 / stochastic_d_v2 (video2 5,3,3) NOT stochastic_k/stochastic_d (video1 13,3,3)
+- Uses stochastic_k_v2 / stochastic_d_v2 (  5,3,3) NOT stochastic_k/stochastic_d (video1 13,3,3)
 - Column mapping: ma1=MA6, ma2=MA50, ma3=MA14
 - Validates against NEXT candle close (same as test_patterns.js)
 - Tracks gate rejections (which gates filter most candles)

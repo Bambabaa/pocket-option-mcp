@@ -135,13 +135,13 @@
    • ma2 = MA50 (SMA, period 50) — NOT used in gates
    • ma3 = MA14 (SMA, period 14)
    • rsi_5 = RSI period 5
-   • stochastic_k_v2, stochastic_d_v2 (Stochastic 5,3,3 — video2)
+   • stochastic_k_v2, stochastic_d_v2 (Stochastic 5,3,3 —  )
    • bb_upper, bb_middle, bb_lower (Bollinger Bands 20,2)
    • v2History = 10-bar lookback buffer for context checks
    
    INSERT INTO indicators (asset, timestamp, ma1, ma3, rsi_5, stochastic_k_v2, bb_upper, ...)
    ↓
-5. Strategy Engine (bot/indicators.js _generateSignalsKTVideo2)
+5. Strategy Engine (bot/indicators.js signalstrade)
    
    4 Patterns: 2 Reversal + 2 Continuation (only Reversal patterns active in production)
    
@@ -629,7 +629,7 @@ START: What do you want to do?
 - Used in gates: CALL g6 (maTrendBps > -20), PUT g7 (maTrendBps < 20)
 
 **Stochastic:**
-- Use `stochastic_k_v2` / `stochastic_d_v2` (video2 config: 5,3,3)
+- Use `stochastic_k_v2` / `stochastic_d_v2` (  config: 5,3,3)
 - NOT `stochastic_k` / `stochastic_d` (video1 config: 13,3,3)
 
 ### Qualification Layer

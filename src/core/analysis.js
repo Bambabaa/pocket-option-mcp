@@ -1,7 +1,7 @@
 /**
  * Analysis Engine — Local backtesting and signal simulation.
  *
- * Replays historical candles bar-by-bar, reconstructs ALL MODE D gate values,
+ * Replays historical candles bar-by-bar, reconstructs ALL   gate values,
  * fires simulated signals, and validates against the NEXT candle close.
  *
  * This is the same approach as tests/test_patterns.js but exposed as MCP tools
@@ -9,8 +9,8 @@
  *
  * Column mapping (indicators table):
  *   ma1 = MA6, ma2 = MA50, ma3 = MA14
- *   stochastic_k_v2 / stochastic_d_v2 = video2 stochastic (5,3,3)
- *   stochastic_k / stochastic_d = video1 stochastic (13,3,3)
+ *   stochastic_k_v2 / stochastic_d_v2 =   stochastic (5,3,3)
+ *   stochastic_k / stochastic_d =   stochastic (13,3,3)
  */
 
 import { all, get } from '../connection.js';
@@ -112,7 +112,7 @@ function computeLookback(candles, t) {
     return { rsi_peak_10, rsi_trough_10, k_bars_above_65, k_bars_below_35, ma_gap_trend, bb_expanding };
 }
 
-// ─── MODE D Gate Definitions (from indicators.js, matching test_patterns.js) ─
+// ───   Gate Definitions (from indicators.js, matching test_patterns.js) ─
 
 const CALL_GATES = {
     name: 'K Flash Crash Bounce',

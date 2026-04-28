@@ -12,12 +12,12 @@
  * Run `po help <command>` for per-command usage.
  */
 
-import * as health     from '../core/health.js';
-import * as data       from '../core/data.js';
-import * as assets     from '../core/assets.js';
-import * as orders     from '../core/orders.js';
+import * as health from '../core/health.js';
+import * as data from '../core/data.js';
+import * as assets from '../core/assets.js';
+import * as orders from '../core/orders.js';
 import * as validation from '../core/validation.js';
-import * as perf       from '../core/performance.js';
+import * as perf from '../core/performance.js';
 
 // ─── Output helpers ──────────────────────────────────────────────────────────
 
@@ -109,8 +109,8 @@ const COMMANDS = {
     usage: 'po price-history --asset EURUSD_otc --from 1700000000 --to 1700003600 [--limit 500]',
     run: async ({ flags }) => {
       if (!flags.asset) die('--asset is required');
-      if (!flags.from)  die('--from is required (unix seconds)');
-      if (!flags.to)    die('--to is required (unix seconds)');
+      if (!flags.from) die('--from is required (unix seconds)');
+      if (!flags.to) die('--to is required (unix seconds)');
       print(await data.getPriceHistory(flags.asset, num(flags.from), num(flags.to), num(flags.limit, 500)));
     },
   },
@@ -125,7 +125,7 @@ const COMMANDS = {
   },
 
   signals: {
-    desc: 'Recent CALL/PUT signals from the KT strategy',
+    desc: 'Recent CALL/PUT signals from the  strategy',
     usage: 'po signals [--asset EURUSD_otc] [--direction CALL|PUT] [--limit 20]',
     run: async ({ flags }) => {
       const dir = flags.direction ? flags.direction.toUpperCase() : null;
@@ -194,7 +194,7 @@ const COMMANDS = {
     desc: 'Enqueue a manual CALL or PUT trade (writes to MCP DB, bot executes it)',
     usage: 'po trade --asset EURUSD_otc --direction CALL [--amount 100]',
     run: async ({ flags }) => {
-      if (!flags.asset)     die('--asset is required');
+      if (!flags.asset) die('--asset is required');
       if (!flags.direction) die('--direction is required (CALL or PUT)');
       const dir = flags.direction.toUpperCase();
       if (dir !== 'CALL' && dir !== 'PUT') die('--direction must be CALL or PUT');
@@ -264,12 +264,12 @@ function printHelp(cmd) {
   process.stdout.write('Commands:\n');
 
   const sections = [
-    ['Health',         ['health']],
-    ['Market data',    ['assets', 'prices', 'candles', 'price-history', 'indicators', 'signals']],
-    ['Qualification',  ['qualified', 'streaks', 'leaderboard', 'outcomes', 'asset-trades', 'validation-stats', 'pending-signals']],
-    ['Orders',         ['bot-orders', 'mcp-orders', 'trade', 'cancel']],
-    ['Results',        ['trades', 'pnl']],
-    ['Performance',    ['summary', 'performance', 'hourly']],
+    ['Health', ['health']],
+    ['Market data', ['assets', 'prices', 'candles', 'price-history', 'indicators', 'signals']],
+    ['Qualification', ['qualified', 'streaks', 'leaderboard', 'outcomes', 'asset-trades', 'validation-stats', 'pending-signals']],
+    ['Orders', ['bot-orders', 'mcp-orders', 'trade', 'cancel']],
+    ['Results', ['trades', 'pnl']],
+    ['Performance', ['summary', 'performance', 'hourly']],
   ];
 
   for (const [section, cmds] of sections) {

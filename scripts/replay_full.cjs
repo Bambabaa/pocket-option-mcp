@@ -18,7 +18,7 @@ function getSignals() {
       const result = ind.calculateAll(asset, candles.slice(Math.max(0, i - 59), i + 1), {});
       if (!result) continue;
       const sigObj = { buy: false, sell: false, reasons: [], direction: null };
-      ind._generateSignalsKTVideo2(result, {}, sigObj);
+      ind.signalstrade(result, {}, sigObj);
       if (!sigObj.buy && !sigObj.sell) continue;
       if (i + 2 >= candles.length) continue; // need 2 bars ahead for 120s expiry
       const sc = candles[i], nc = candles[i + 2]; // 120s expiry = 2 bars forward
@@ -26,8 +26,8 @@ function getSignals() {
       const outcome = dir === 'CALL' ? (exit > entry ? 'WIN' : 'LOSS') : (exit < entry ? 'WIN' : 'LOSS');
       const pl = outcome === 'WIN' ? AMOUNT * PAYOUT : -AMOUNT;
       const reasons = sigObj.reasons[0] || '';
-      const bbW = result.bollingerKT
-        ? (result.bollingerKT.upper - result.bollingerKT.lower) / result.bollingerKT.middle * 10000
+      const bbW = result.bollinger
+        ? (result.bollinger.upper - result.bollinger.lower) / result.bollinger.middle * 10000
         : 999;
       const rsi = result.rsi_5 !== undefined ? result.rsi_5 : null;
       const kDropM = reasons.match(/K crash ([0-9.]+)pts/);
@@ -44,9 +44,9 @@ function getSignals() {
         vel: velM ? parseFloat(velM[1]) : null,
         stochK: kM ? parseFloat(kM[1]) : null,
         isKCrash: reasons.includes('OVERSOLD') && !isLeaf,
-        isPutOB:  reasons.includes('OVERBOUGHT') && !reasons.includes('L65'),
+        isPutOB: reasons.includes('OVERBOUGHT') && !reasons.includes('L65'),
         isCallUT: reasons.includes('UP TREND') && dir === 'CALL' && !isLeaf,
-        isPutDT:  reasons.includes('DOWN TREND') && dir === 'PUT' && !reasons.includes('L41'),
+        isPutDT: reasons.includes('DOWN TREND') && dir === 'PUT' && !reasons.includes('L41'),
         isL16: reasons.includes('L16 Leaf'),
         isL41: reasons.includes('L41 Leaf'),
         isL65: reasons.includes('L65 Leaf'),

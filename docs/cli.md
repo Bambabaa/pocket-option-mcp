@@ -113,7 +113,7 @@ po indicators --asset EURUSD_otc --limit 5   # last 5 indicator snapshots
 ---
 
 #### `po signals`
-Recent CALL/PUT signals from the KT strategy pipeline.
+Recent CALL/PUT signals from the  strategy pipeline.
 
 ```bash
 po signals

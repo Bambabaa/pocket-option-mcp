@@ -4,7 +4,7 @@ import { z } from 'zod';
 // This allows agents to specify named strategies with their own parameter sets.
 export const strategyConfigSchema = z.object({
   // The unique name of the strategy.
-  name: z.string().describe('The unique name of the strategy (e.g., "KT_Video2_Aggressive")'),
+  name: z.string().describe('The unique name of the strategy (e.g., "KT_ _Aggressive")'),
 
   // A human-readable description of the strategy.
   description: z.string().optional().describe('A human-readable description of the strategy'),

@@ -122,8 +122,8 @@ Array of indicator snapshots with:
 - `ma2` - MA50 (NOT used in MODE D)
 - `ma3` - MA14 (slow moving average)
 - `rsi_5` - RSI period 5
-- `stochastic_k_v2` - Video2 Stochastic K (5,3,3)
-- `stochastic_d_v2` - Video2 Stochastic D (5,3,3)
+- `stochastic_k_v2` -   Stochastic K (5,3,3)
+- `stochastic_d_v2` -   Stochastic D (5,3,3)
 - `bb_upper`, `bb_middle`, `bb_lower` - Bollinger Bands (20,2)
 - `keltner_upper`, `keltner_middle`, `keltner_lower` - Keltner Channels
 - `schaff` - Schaff Trend Cycle

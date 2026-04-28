@@ -150,35 +150,6 @@ UPDATE mcp_orders SET status='EXECUTED'
 
 The bot implements **4 distinct patterns** identified in the MODE D strategy:
 
-```javascript
-// bot/indicators.js (lines 450-558)
-
-// Pattern 1: K Flash Crash Bounce (CALL) — 7 gates
-g1: ma1 < ma3                    // MA6 below MA14 (bearish bias)
-g2: K_prev - K_curr > 25         // K crashed hard
-g3: K_curr < 25                  // K now deeply oversold
-g4: K_prev >= 50                 // K was previously mid/high
-g5: RSI < 20                     // Deeply oversold (tightened from 40)
-g6: maTrendBps > -20             // Not too bearish
-g7: BB width >= 20 bps           // Adequate volatility (tightened from 10)
-
-// Pattern 2: Late Overbought Reversal (PUT) — 9 gates
-g0: RSI[-2] > 80                 // Genuine prior overbought confirmation
-g1: RSI[-2] > 70, RSI[-1] > 70   // Prior exhaustion, exclude [75,80)
-g2: RSI falling, in [38,70)      // Rolling off, exclude [55,65), velocity > -12
-g3: K_prev > 65, K falling       // Stoch confirming weakness
-g4: D_curr >= 80                 // D lagging, still elevated
-g5: ma1 > ma3                    // MA6 above MA14 (bullish bias, reversal play)
-g6: K-D spread < -3              // K crossed below D
-g7: maTrendBps < 20              // Not too bullish (exhaustion setup)
-g8: BB width >= 20 bps           // Adequate volatility (tightened from 10)
-
-// Pattern 3: K Reversal Early Entry (CALL) — 8 gates
-// (Continuation pattern — not reversal)
-
-// Pattern 4: Flat Keltner Volume Trap (CALL/PUT) — 6 gates
-// (Breakout pattern for low volatility environments)
-```
 
 ### 2.2 Indicator Mapping
 
@@ -190,8 +161,8 @@ g8: BB width >= 20 bps           // Adequate volatility (tightened from 10)
 | `ma2` | MA50 (SMA) | 50 | **NOT used in MODE D decision logic** |
 | `ma3` | MA14 (SMA) | 14 | Slow MA — trend confirmation |
 | `rsi_5` | RSI | 5 | Momentum, exhaustion detection |
-| `stochastic_k_v2` | Stoch K | 5,3,3 | Video2 stochastic (MODE D) |
-| `stochastic_d_v2` | Stoch D | 5,3,3 | Video2 stochastic signal line |
+| `stochastic_k_v2` | Stoch K | 5,3,3 |   stochastic (MODE D) |
+| `stochastic_d_v2` | Stoch D | 5,3,3 |   stochastic signal line |
 | `bb_upper/middle/lower` | Bollinger Bands | 20,2 | Width gate (volatility filter) + price position |
 | `stochastic_k` | Stoch K | 13,3,3 | Video1 stochastic (NOT used in MODE D) |
 | `stochastic_d` | Stoch D | 13,3,3 | Video1 stochastic (NOT used in MODE D) |

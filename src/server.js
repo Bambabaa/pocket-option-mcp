@@ -50,7 +50,7 @@ Reading market data:
 - po_indicators → latest MA1/2/3, RSI 5, Bollinger Bands, Stochastic (5,3,3) _v2, Keltner, Schaff values
 
 Reading signals:
-- po_signals → CALL/PUT signals from the KT strategy pipeline (filter by asset or direction)
+- po_signals → CALL/PUT signals from the  strategy pipeline (filter by asset or direction)
 - po_pending_signals → signals past expiry that haven't been validated yet
 
 Placing trades (requires bot running with execution.enabled=true):

@@ -15,14 +15,14 @@ function getSignals() {
       const result = ind.calculateAll(asset, candles.slice(Math.max(0, i - 59), i + 1), {});
       if (!result) continue;
       const sigObj = { buy: false, sell: false, reasons: [], direction: null };
-      ind._generateSignalsKTVideo2(result, {}, sigObj);
+      ind.signalstrade(result, {}, sigObj);
       if (!sigObj.buy && !sigObj.sell) continue;
       const sc = candles[i], nc = candles[i + 1];
       const entry = sc[2], exit = nc[2], dir = sigObj.direction;
       const outcome = dir === 'CALL' ? (exit > entry ? 'WIN' : 'LOSS') : (exit < entry ? 'WIN' : 'LOSS');
       const pl = outcome === 'WIN' ? AMOUNT * PAYOUT : -AMOUNT;
       const reasons = sigObj.reasons[0] || '';
-      const bkt = result.bollingerKT;
+      const bkt = result.bollinger;
       const bbW = bkt ? (bkt.upper - bkt.lower) / bkt.middle * 10000 : 999;
       const bbMid = bkt ? bkt.middle : null;
       const rsi = result.rsi_5 !== undefined ? result.rsi_5 : null;

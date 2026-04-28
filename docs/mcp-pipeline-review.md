@@ -274,7 +274,7 @@ CREATE TABLE indicators (
     ma3 REAL,        -- MA14 (slow)
     ma2 REAL,        -- MA50 (not used in MODE D)
     rsi_5 REAL,
-    stochastic_k_v2 REAL,  -- Video2 stochastic (5,3,3)
+    stochastic_k_v2 REAL,  --   stochastic (5,3,3)
     stochastic_d_v2 REAL,
     bb_upper REAL, bb_middle REAL, bb_lower REAL
 );

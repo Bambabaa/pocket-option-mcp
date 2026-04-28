@@ -7,7 +7,7 @@ const MIN_CANDLES = 60;
 
 // ── Matches live bot settings ──
 const SETTINGS = {
-    ktStrategy: 'video2',
+    Strategy: ' ',
     minPayout: 70,
     execution: { enabled: true },
     tradeAmount: 500,
@@ -93,7 +93,7 @@ async function backtest() {
     let skippedNoExit = 0;
 
     console.log('═══════════════════════════════════════════════════════════════');
-    console.log('  POCKET OPTION BACKTEST — KT Video2 Strategy (Relaxed)');
+    console.log('  POCKET OPTION BACKTEST —   Strategy (Relaxed)');
     console.log('═══════════════════════════════════════════════════════════════');
     console.log(`  Assets: ${Object.keys(byAsset).length}`);
     console.log(`  Total candles: ${candles.length}`);

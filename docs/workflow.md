@@ -40,7 +40,7 @@ The bot (`pocket-option-bot.js`) runs independently as a Puppeteer browser autom
 │                          MA6/14/50, RSI-5/8/80,              │
 │                          Stoch 13-3-3, BB 20-2,              │
 │                          Keltner, Schaff 30-55-8             │
-│  6. Runs KT video2 strategy → generates signals              │
+│  6. Runs   strategy → generates signals              │
 │                          → writes to signals table           │
 │  7. Executes qualified signals via DOM clicks                │
 │     → writes to orders_queue → trades_ordered (WIN/LOSS)     │
@@ -60,7 +60,7 @@ The bot (`pocket-option-bot.js`) runs independently as a Puppeteer browser autom
 | Candles | 135,000+ |
 | Tick prices | 6.5M+ |
 | Indicators | MA/RSI/BB/Stoch/Keltner/Schaff per asset |
-| Signals | KT video2 CALL/PUT |
+| Signals |   CALL/PUT |
 
 ---
 
@@ -85,7 +85,7 @@ The bot (`pocket-option-bot.js`) runs independently as a Puppeteer browser autom
 
 | Tool | Purpose |
 |---|---|
-| `po_signals(asset?, limit, direction?)` | Recent CALL/PUT signals from KT strategy |
+| `po_signals(asset?, limit, direction?)` | Recent CALL/PUT signals from  strategy |
 | `po_pending_signals(lookAheadSeconds)` | Signals past expiry not yet validated |
 
 ### Orders & Trades

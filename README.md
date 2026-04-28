@@ -109,7 +109,7 @@ po_mcp_orders                                  # check your manual order status
 | `po_candles` | `asset`, `limit?`, `summary?` | OHLC bars. Use `summary=true` for a compact stats view |
 | `po_price_history` | `asset`, `from_timestamp`, `to_timestamp`, `limit?` | Tick-level price history over a time window |
 | `po_indicators` | `asset`, `limit?` | Calculated indicators: MA1/MA2/MA3, RSI, Bollinger Bands, Stochastic, Keltner, Schaff |
-| `po_signals` | `asset?`, `limit?`, `direction?` | CALL/PUT signals from the KT strategy pipeline |
+| `po_signals` | `asset?`, `limit?`, `direction?` | CALL/PUT signals from the  strategy pipeline |
 
 ### Trade Execution
 

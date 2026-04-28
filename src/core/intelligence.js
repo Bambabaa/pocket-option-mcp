@@ -1,5 +1,5 @@
 /**
- * Intelligence layer — scores assets based on KT video2 strategy precision.
+ * Intelligence layer — scores assets based on   strategy precision.
  *
  * The bot's signal fires when 9 layers of indicator conditions align.
  * This layer scores how many of those layers are satisfied RIGHT NOW,
@@ -18,7 +18,7 @@ import { mcpAll, mcpGet } from '../mcp-db.js';
 
 // ─── Scoring weights (total = 100) ───────────────────────────────────────────
 // Used by scorePrecision() for legacy single-bar scoring in riskCheck fallback.
-// NOTE: MA50 (ma2) is NOT used in MODE D — only MA6 (ma1) and MA14 (ma3).
+// NOTE: MA50 (ma2) is NOT used in   — only MA6 (ma1) and MA14 (ma3).
 // Primary scoring now uses evaluateModeD() which implements the actual gate logic.
 const LAYER_WEIGHTS = {
     maCross: 20,       // MA6 crossed MA14 — Layer 3
@@ -116,11 +116,11 @@ export async function scanAllAssets() {
         const ind = indMap[asset] || null;
         const trades = tradeMap[asset] || [];
 
-        // Evaluate all 4 MODE D patterns — primary scoring engine
+        // Evaluate all 4   patterns — primary scoring engine
         const bars = barsMap[asset] || [];
         const modeD = bars.length >= 2 ? evaluateModeD(bars) : { success: false };
 
-        // Map MODE D strength to a 0-100 precision score for ranking
+        // Map   strength to a 0-100 precision score for ranking
         // PERFECT=100, STRONG=80, MARGINAL=60, WEAK=30, no pattern=0
         const strengthScore = { PERFECT: 100, STRONG: 80, MARGINAL: 60, WEAK: 30 };
         let precision_score = 0;
@@ -162,11 +162,11 @@ export async function scanAllAssets() {
             layers_total,
             layer_details,
             mode_d: modeD.success ? {
-                top_pattern:   modeD.top_pattern,
+                top_pattern: modeD.top_pattern,
                 top_direction: modeD.top_direction,
-                best_call:     modeD.best_call,
-                best_put:      modeD.best_put,
-                bb_bps:        modeD.bb_bps,
+                best_call: modeD.best_call,
+                best_put: modeD.best_put,
+                bb_bps: modeD.bb_bps,
             } : null,
             price: price ? price.price : null,
             price_age_sec: price ? nowSec - price.timestamp : null,
@@ -199,7 +199,7 @@ export async function scanAllAssets() {
 
 // ─── scorePrecision() — Core scoring engine ──────────────────────────────────
 //
-// Scores how many of the video2 strategy's 9 layers are satisfied RIGHT NOW.
+// Scores how many of the   strategy's 9 layers are satisfied RIGHT NOW.
 // This is NOT backward-looking — it measures current indicator alignment.
 
 function scorePrecision(ind) {
@@ -208,11 +208,11 @@ function scorePrecision(ind) {
     let direction = null;
 
     // Extract indicator values
-    // NOTE: ma1=MA6, ma3=MA14. ma2=MA50 is NOT used in MODE D signals.
+    // NOTE: ma1=MA6, ma3=MA14. ma2=MA50 is NOT used in   signals.
     const ma6 = ind.ma6 ?? ind.ma1;
     const ma14 = ind.ma3;
     const rsi = ind.rsi_5;
-    // MODE D uses stochastic_k_v2/stochastic_d_v2 (5,3,3 periods), NOT stochastic_k/d (13,3,3)
+    //   uses stochastic_k_v2/stochastic_d_v2 (5,3,3 periods), NOT stochastic_k/d (13,3,3)
     const stochK = ind.stochastic_k_v2;
     const stochD = ind.stochastic_d_v2;
     const bbUpper = ind.bb_upper;
@@ -268,14 +268,14 @@ function scorePrecision(ind) {
     // ─── Layer 3: BB Position ─────────────────────────────────────────────
     // CALL signal: price near or below BB lower band (oversold, bounce candidate)
     // PUT signal: price near or above BB upper band (overbought, reversal candidate)
-    // Also checks BB width as a volatility filter — MODE D's bbStable gate
+    // Also checks BB width as a volatility filter —  's bbStable gate
     if (bbUpper != null && bbMiddle != null && bbLower != null && bbMiddle > 0 && closePrice != null) {
         const bbWidth = bbUpper - bbLower;
         const bbWidthBps = (bbWidth / bbMiddle) * 10000;
         const pctB = bbWidth > 0 ? (closePrice - bbLower) / bbWidth : 0.5; // 0=at lower, 1=at upper
 
         if (bbWidthBps < 2) {
-            layers.bbPosition = `flat (${bbWidthBps.toFixed(1)} bps) — MODE D gates unreliable`;
+            layers.bbPosition = `flat (${bbWidthBps.toFixed(1)} bps) —   gates unreliable`;
             // No score for flat assets — this is the volatility filter
         } else if (pctB <= 0.25 && maCrossDown) {
             // Price at/below lower BB AND bearish MA cross — CALL bounce setup
@@ -390,7 +390,7 @@ function scorePrecision(ind) {
 
 // ─── evaluateModeD() ─────────────────────────────────────────────────────────
 //
-// Evaluates all 4 MODE D patterns against the current bar window.
+// Evaluates all 4   patterns against the current bar window.
 // Returns a structured verdict per pattern — gates passed, lookback context,
 // strength rating — so the Analyst reads verdicts not raw numbers.
 //
@@ -411,12 +411,12 @@ export function evaluateModeD(bars) {
     const [bar0, barM1, barM2] = bars;
 
     // ── Shared computed values ────────────────────────────────────────────────
-    const ma6  = bar0.ma1;  // ma1 column = MA6
+    const ma6 = bar0.ma1;  // ma1 column = MA6
     const ma14 = bar0.ma3;  // ma3 column = MA14
-    const rsi  = bar0.rsi_5;
-    const k0   = bar0.stochastic_k_v2;
-    const d0   = bar0.stochastic_d_v2;
-    const kM1  = barM1?.stochastic_k_v2;
+    const rsi = bar0.rsi_5;
+    const k0 = bar0.stochastic_k_v2;
+    const d0 = bar0.stochastic_d_v2;
+    const kM1 = barM1?.stochastic_k_v2;
     const rsiM1 = barM1?.rsi_5;
     const rsiM2 = barM2?.rsi_5;
 
@@ -430,15 +430,15 @@ export function evaluateModeD(bars) {
     const barOld = bars[3] || bars[bars.length - 1];
     let ma_gap_trend = 'unknown';
     if (ma6 != null && ma14 != null && barOld?.ma1 != null && barOld?.ma3 != null) {
-        const gapNow  = ma6 - ma14;
+        const gapNow = ma6 - ma14;
         const gapPrev = barOld.ma1 - barOld.ma3;
-        const absNow  = Math.abs(gapNow);
+        const absNow = Math.abs(gapNow);
         const absPrev = Math.abs(gapPrev);
         const deltaBps = ((gapNow - gapPrev) / ma14) * 10000;
-        if (absPrev - absNow > (ma14 * 0.0001))  ma_gap_trend = 'narrowing';
-        else if (Math.abs(deltaBps) < 1)          ma_gap_trend = 'flat';
-        else if (deltaBps > 0)                    ma_gap_trend = 'widening_up';
-        else                                      ma_gap_trend = 'widening_down';
+        if (absPrev - absNow > (ma14 * 0.0001)) ma_gap_trend = 'narrowing';
+        else if (Math.abs(deltaBps) < 1) ma_gap_trend = 'flat';
+        else if (deltaBps > 0) ma_gap_trend = 'widening_up';
+        else ma_gap_trend = 'widening_down';
     }
 
     // BB expanding: compare current width to bar 5 bars ago
@@ -446,7 +446,7 @@ export function evaluateModeD(bars) {
     let bb_expanding = null;
     if (bar0.bb_upper != null && bar0.bb_lower != null && bar0.bb_middle != null &&
         barBbOld?.bb_upper != null && barBbOld?.bb_lower != null && barBbOld?.bb_middle != null) {
-        const widthNow  = (bar0.bb_upper - bar0.bb_lower) / bar0.bb_middle;
+        const widthNow = (bar0.bb_upper - bar0.bb_lower) / bar0.bb_middle;
         const widthPrev = (barBbOld.bb_upper - barBbOld.bb_lower) / barBbOld.bb_middle;
         bb_expanding = widthNow > widthPrev;
     }
@@ -469,7 +469,7 @@ export function evaluateModeD(bars) {
 
     // RSI peak/trough over lookback
     const rsiHistory = bars.slice(1).map(b => b?.rsi_5).filter(v => v != null);
-    const rsi_peak_10   = rsiHistory.length > 0 ? Math.max(...rsiHistory) : null;
+    const rsi_peak_10 = rsiHistory.length > 0 ? Math.max(...rsiHistory) : null;
     const rsi_trough_10 = rsiHistory.length > 0 ? Math.min(...rsiHistory) : null;
 
     const lookback = { rsi_peak_10, rsi_trough_10, k_bars_above_65, k_bars_below_35, ma_gap_trend, bb_expanding };
@@ -477,7 +477,7 @@ export function evaluateModeD(bars) {
     // ── Helper: strength from gate pass rate ─────────────────────────────────
     function strength(passed, total) {
         const ratio = passed / total;
-        if (ratio >= 1.0)   return 'PERFECT';
+        if (ratio >= 1.0) return 'PERFECT';
         if (ratio >= 0.857) return 'STRONG';   // 6/7 or 7/8
         if (ratio >= 0.714) return 'MARGINAL'; // 5/7 or 6/8
         return 'WEAK';
@@ -489,23 +489,23 @@ export function evaluateModeD(bars) {
     {
         const kCrash = kM1 != null && k0 != null ? kM1 - k0 : null;
         const g = {
-            g1_maStack:    ma6 != null && ma14 != null && ma6 < ma14,
-            g2_kCrash:     kCrash != null && kCrash > 25,
-            g3_kOversold:  k0 != null && k0 < 25,
-            g4_kWasMid:    kM1 != null && kM1 >= 50,
-            g5_rsiDown:    rsi != null && rsi < 40,
-            g6_maNotDeep:  maTrendBps != null && maTrendBps > -20,
-            g7_bbWide:     bbBps != null && bbBps >= 10,
+            g1_maStack: ma6 != null && ma14 != null && ma6 < ma14,
+            g2_kCrash: kCrash != null && kCrash > 25,
+            g3_kOversold: k0 != null && k0 < 25,
+            g4_kWasMid: kM1 != null && kM1 >= 50,
+            g5_rsiDown: rsi != null && rsi < 40,
+            g6_maNotDeep: maTrendBps != null && maTrendBps > -20,
+            g7_bbWide: bbBps != null && bbBps >= 10,
         };
         const passed = Object.values(g).filter(Boolean).length;
-        const total  = Object.keys(g).length;
+        const total = Object.keys(g).length;
         patterns.push({
-            pattern:   'CALL_REVERSAL',
+            pattern: 'CALL_REVERSAL',
             direction: 'CALL',
-            type:      'reversal',
-            label:     'K Flash Crash Bounce',
+            type: 'reversal',
+            label: 'K Flash Crash Bounce',
             gates_passed: passed,
-            gates_total:  total,
+            gates_total: total,
             gates: g,
             values: {
                 k_m1: kM1, k_0: k0, kCrash,
@@ -520,30 +520,30 @@ export function evaluateModeD(bars) {
 
     // ── PUT_REVERSAL — Late Overbought Rolloff (8 gates) ─────────────────────
     {
-        const rsiFalling     = rsi != null && rsiM1 != null && rsi < rsiM1;
-        const rsiVelocity    = rsi != null && rsiM1 != null ? rsi - rsiM1 : null;
-        const closeAboveMid  = bar0.close != null && bar0.bb_middle != null && bar0.close >= bar0.bb_middle;
-        const kFalling       = k0 != null && kM1 != null && k0 < kM1;
-        const kdSpread       = k0 != null && d0 != null ? k0 - d0 : null;
+        const rsiFalling = rsi != null && rsiM1 != null && rsi < rsiM1;
+        const rsiVelocity = rsi != null && rsiM1 != null ? rsi - rsiM1 : null;
+        const closeAboveMid = bar0.close != null && bar0.bb_middle != null && bar0.close >= bar0.bb_middle;
+        const kFalling = k0 != null && kM1 != null && k0 < kM1;
+        const kdSpread = k0 != null && d0 != null ? k0 - d0 : null;
         const g = {
-            g1_rsiBaseline:  rsiM2 != null && rsiM1 != null && rsiM2 > 70 && rsiM1 > 70 && !(rsiM1 >= 75 && rsiM1 < 80),
-            g2_rsiRecovery:  rsiFalling && rsi >= 38 && rsi < 70 && !(rsi >= 55 && rsi < 65) && rsiVelocity != null && rsiVelocity > -12 && closeAboveMid,
-            g3_kTurn:        kM1 != null && kM1 > 65 && kFalling && k0 >= 55 && k0 < 80,
-            g4_dPosition:    d0 != null && d0 >= 80,
-            g5_maStack:      ma6 != null && ma14 != null && ma6 > ma14,
-            g6_kdCross:      kdSpread != null && kdSpread < -3,
-            g7_maTrendWeak:  maTrendBps != null && maTrendBps < 20,
-            g8_bbWide:       bbBps != null && bbBps >= 10,
+            g1_rsiBaseline: rsiM2 != null && rsiM1 != null && rsiM2 > 70 && rsiM1 > 70 && !(rsiM1 >= 75 && rsiM1 < 80),
+            g2_rsiRecovery: rsiFalling && rsi >= 38 && rsi < 70 && !(rsi >= 55 && rsi < 65) && rsiVelocity != null && rsiVelocity > -12 && closeAboveMid,
+            g3_kTurn: kM1 != null && kM1 > 65 && kFalling && k0 >= 55 && k0 < 80,
+            g4_dPosition: d0 != null && d0 >= 80,
+            g5_maStack: ma6 != null && ma14 != null && ma6 > ma14,
+            g6_kdCross: kdSpread != null && kdSpread < -3,
+            g7_maTrendWeak: maTrendBps != null && maTrendBps < 20,
+            g8_bbWide: bbBps != null && bbBps >= 10,
         };
         const passed = Object.values(g).filter(Boolean).length;
-        const total  = Object.keys(g).length;
+        const total = Object.keys(g).length;
         patterns.push({
-            pattern:   'PUT_REVERSAL',
+            pattern: 'PUT_REVERSAL',
             direction: 'PUT',
-            type:      'reversal',
-            label:     'Late Overbought Rolloff',
+            type: 'reversal',
+            label: 'Late Overbought Rolloff',
             gates_passed: passed,
-            gates_total:  total,
+            gates_total: total,
             gates: g,
             values: {
                 rsi_m2: rsiM2, rsi_m1: rsiM1, rsi_0: rsi,
@@ -559,28 +559,28 @@ export function evaluateModeD(bars) {
 
     // ── CALL_TREND — UP TREND continuation (6 gates) ─────────────────────────
     {
-        const ma6Rising  = barM1?.ma1 != null && ma6 != null && ma6 > barM1.ma1;
-        const kRising    = kM1 != null && k0 != null && k0 > kM1;
-        const gapNow     = ma6 != null && ma14 != null ? Math.abs(ma6 - ma14) : null;
-        const gapOld     = bars[3]?.ma1 != null && bars[3]?.ma3 != null
+        const ma6Rising = barM1?.ma1 != null && ma6 != null && ma6 > barM1.ma1;
+        const kRising = kM1 != null && k0 != null && k0 > kM1;
+        const gapNow = ma6 != null && ma14 != null ? Math.abs(ma6 - ma14) : null;
+        const gapOld = bars[3]?.ma1 != null && bars[3]?.ma3 != null
             ? Math.abs(bars[3].ma1 - bars[3].ma3) : null;
         const g = {
-            g1_ma6BelowMa14:    ma6 != null && ma14 != null && ma6 < ma14,
-            g2_ma6Converging:   ma6Rising && ma6 != null && ma14 != null && ma6 < ma14,
-            g3_rsiAbove50:      rsi != null && rsi > 50,
-            g4_rsiRising:       rsi != null && rsiM1 != null && rsi > rsiM1,
-            g5_kRisingAbove30:  k0 != null && k0 > 30 && kRising,
-            g6_gapShrinking:    gapNow != null && gapOld != null && gapNow < gapOld,
+            g1_ma6BelowMa14: ma6 != null && ma14 != null && ma6 < ma14,
+            g2_ma6Converging: ma6Rising && ma6 != null && ma14 != null && ma6 < ma14,
+            g3_rsiAbove50: rsi != null && rsi > 50,
+            g4_rsiRising: rsi != null && rsiM1 != null && rsi > rsiM1,
+            g5_kRisingAbove30: k0 != null && k0 > 30 && kRising,
+            g6_gapShrinking: gapNow != null && gapOld != null && gapNow < gapOld,
         };
         const passed = Object.values(g).filter(Boolean).length;
-        const total  = Object.keys(g).length;
+        const total = Object.keys(g).length;
         patterns.push({
-            pattern:   'CALL_TREND',
+            pattern: 'CALL_TREND',
             direction: 'CALL',
-            type:      'trend',
-            label:     'UP TREND Continuation',
+            type: 'trend',
+            label: 'UP TREND Continuation',
             gates_passed: passed,
-            gates_total:  total,
+            gates_total: total,
             gates: g,
             values: {
                 ma6, ma14, maTrendBps,
@@ -596,28 +596,28 @@ export function evaluateModeD(bars) {
 
     // ── PUT_TREND — DOWN TREND continuation (6 gates) ────────────────────────
     {
-        const ma6Falling  = barM1?.ma1 != null && ma6 != null && ma6 < barM1.ma1;
-        const kFalling2   = kM1 != null && k0 != null && k0 < kM1;
-        const gapNow      = ma6 != null && ma14 != null ? Math.abs(ma6 - ma14) : null;
-        const gapOld      = bars[3]?.ma1 != null && bars[3]?.ma3 != null
+        const ma6Falling = barM1?.ma1 != null && ma6 != null && ma6 < barM1.ma1;
+        const kFalling2 = kM1 != null && k0 != null && k0 < kM1;
+        const gapNow = ma6 != null && ma14 != null ? Math.abs(ma6 - ma14) : null;
+        const gapOld = bars[3]?.ma1 != null && bars[3]?.ma3 != null
             ? Math.abs(bars[3].ma1 - bars[3].ma3) : null;
         const g = {
-            g1_ma6AboveMa14:     ma6 != null && ma14 != null && ma6 > ma14,
-            g2_ma6Converging:    ma6Falling && ma6 != null && ma14 != null && ma6 > ma14,
-            g3_priceBelowMa14:   bar0.close != null && ma14 != null && bar0.close < ma14,
+            g1_ma6AboveMa14: ma6 != null && ma14 != null && ma6 > ma14,
+            g2_ma6Converging: ma6Falling && ma6 != null && ma14 != null && ma6 > ma14,
+            g3_priceBelowMa14: bar0.close != null && ma14 != null && bar0.close < ma14,
             g4_rsiFallingFrom50: rsiM1 != null && rsiM1 > 50 && rsi != null && rsi < rsiM1 && rsi < 55,
-            g5_kFallingBelow70:  k0 != null && k0 < 70 && kFalling2,
-            g6_gapShrinking:     gapNow != null && gapOld != null && gapNow < gapOld,
+            g5_kFallingBelow70: k0 != null && k0 < 70 && kFalling2,
+            g6_gapShrinking: gapNow != null && gapOld != null && gapNow < gapOld,
         };
         const passed = Object.values(g).filter(Boolean).length;
-        const total  = Object.keys(g).length;
+        const total = Object.keys(g).length;
         patterns.push({
-            pattern:   'PUT_TREND',
+            pattern: 'PUT_TREND',
             direction: 'PUT',
-            type:      'trend',
-            label:     'DOWN TREND Continuation',
+            type: 'trend',
+            label: 'DOWN TREND Continuation',
             gates_passed: passed,
-            gates_total:  total,
+            gates_total: total,
             gates: g,
             values: {
                 ma6, ma14, maTrendBps,
@@ -634,16 +634,16 @@ export function evaluateModeD(bars) {
 
     // ── Verdict summaries — one readable sentence per pattern ────────────────
     function patternVerdict(p) {
-        const bbFlat   = bbBps != null && bbBps < 10;
-        const bbStr    = bbBps != null ? `BB=${bbBps.toFixed(1)}bps` : 'BB=?';
-        const kStr     = k0 != null ? `K=${k0.toFixed(0)}` : 'K=?';
-        const rsiStr   = rsi != null ? `RSI=${rsi.toFixed(0)}` : 'RSI=?';
+        const bbFlat = bbBps != null && bbBps < 10;
+        const bbStr = bbBps != null ? `BB=${bbBps.toFixed(1)}bps` : 'BB=?';
+        const kStr = k0 != null ? `K=${k0.toFixed(0)}` : 'K=?';
+        const rsiStr = rsi != null ? `RSI=${rsi.toFixed(0)}` : 'RSI=?';
 
         if (bbFlat) return `SKIP — flat market (${bbStr} < 10bps gate)`;
         if (p.fires) return `FIRES — all ${p.gates_total} gates pass. ${bbStr} ${kStr} ${rsiStr}.`;
 
         const failedKeys = Object.entries(p.gates).filter(([, v]) => !v).map(([k]) => k);
-        const failedStr  = failedKeys.join(', ');
+        const failedStr = failedKeys.join(', ');
 
         if (p.strength === 'STRONG') {
             return `STRONG setup — ${p.gates_passed}/${p.gates_total} gates pass. Missing: ${failedStr}. ${bbStr} ${kStr} ${rsiStr}.`;
@@ -657,22 +657,22 @@ export function evaluateModeD(bars) {
     // ── Lookback narrative — how the setup formed ─────────────────────────────
     function buildLookbackNarrative(lb) {
         const lines = [];
-        if (lb.rsi_peak_10 != null)    lines.push(`RSI peaked at ${lb.rsi_peak_10.toFixed(0)} in last 10 bars`);
-        if (lb.rsi_trough_10 != null)  lines.push(`RSI troughed at ${lb.rsi_trough_10.toFixed(0)} in last 10 bars`);
-        if (lb.k_bars_above_65 > 0)    lines.push(`K was above 65 for ${lb.k_bars_above_65} consecutive bars before current — overbought extension`);
-        if (lb.k_bars_below_35 > 0)    lines.push(`K was below 35 for ${lb.k_bars_below_35} consecutive bars before current — oversold extension`);
-        if (lb.ma_gap_trend === 'narrowing')      lines.push('MA6/MA14 gap narrowing — trend is exhausting');
-        else if (lb.ma_gap_trend === 'widening_up')   lines.push('MA6/MA14 gap widening upward — bullish trend strengthening');
-        else if (lb.ma_gap_trend === 'widening_down')  lines.push('MA6/MA14 gap widening downward — bearish trend strengthening');
-        else if (lb.ma_gap_trend === 'flat')           lines.push('MA6/MA14 gap flat — no directional conviction');
-        if (lb.bb_expanding === true)  lines.push('BB expanding — volatility rising at entry');
+        if (lb.rsi_peak_10 != null) lines.push(`RSI peaked at ${lb.rsi_peak_10.toFixed(0)} in last 10 bars`);
+        if (lb.rsi_trough_10 != null) lines.push(`RSI troughed at ${lb.rsi_trough_10.toFixed(0)} in last 10 bars`);
+        if (lb.k_bars_above_65 > 0) lines.push(`K was above 65 for ${lb.k_bars_above_65} consecutive bars before current — overbought extension`);
+        if (lb.k_bars_below_35 > 0) lines.push(`K was below 35 for ${lb.k_bars_below_35} consecutive bars before current — oversold extension`);
+        if (lb.ma_gap_trend === 'narrowing') lines.push('MA6/MA14 gap narrowing — trend is exhausting');
+        else if (lb.ma_gap_trend === 'widening_up') lines.push('MA6/MA14 gap widening upward — bullish trend strengthening');
+        else if (lb.ma_gap_trend === 'widening_down') lines.push('MA6/MA14 gap widening downward — bearish trend strengthening');
+        else if (lb.ma_gap_trend === 'flat') lines.push('MA6/MA14 gap flat — no directional conviction');
+        if (lb.bb_expanding === true) lines.push('BB expanding — volatility rising at entry');
         if (lb.bb_expanding === false) lines.push('BB contracting — volatility shrinking at entry (REVERSAL_CALL loses 39% on contracting BB)');
         return lines.length ? lines : ['Insufficient bar history for lookback narrative'];
     }
 
     // Attach verdict summaries and lookback narrative to each pattern
     for (const p of patterns) {
-        p.verdict_summary  = patternVerdict(p);
+        p.verdict_summary = patternVerdict(p);
         p.lookback_narrative = buildLookbackNarrative(lookback);
     }
 
@@ -681,11 +681,11 @@ export function evaluateModeD(bars) {
 
     const callPatterns = patterns.filter(p => p.direction === 'CALL')
         .sort((a, b) => b.gates_passed - a.gates_passed);
-    const putPatterns  = patterns.filter(p => p.direction === 'PUT')
+    const putPatterns = patterns.filter(p => p.direction === 'PUT')
         .sort((a, b) => b.gates_passed - a.gates_passed);
 
     const best_call = callPatterns[0] || null;
-    const best_put  = putPatterns[0]  || null;
+    const best_put = putPatterns[0] || null;
 
     const top_pattern = [best_call, best_put]
         .filter(Boolean)
@@ -695,11 +695,11 @@ export function evaluateModeD(bars) {
     const ranked_verdicts = [...patterns]
         .sort((a, b) => (strengthOrder[b.strength] - strengthOrder[a.strength]) || (b.gates_passed - a.gates_passed))
         .map(p => ({
-            pattern:        p.pattern,
-            direction:      p.direction,
-            strength:       p.strength,
-            gates:          `${p.gates_passed}/${p.gates_total}`,
-            fires:          p.fires,
+            pattern: p.pattern,
+            direction: p.direction,
+            strength: p.strength,
+            gates: `${p.gates_passed}/${p.gates_total}`,
+            fires: p.fires,
             verdict_summary: p.verdict_summary,
         }));
 
@@ -707,26 +707,26 @@ export function evaluateModeD(bars) {
         success: true,
         // ── Analyst-first section ──
         ranked_verdicts,     // ranked list: strongest setup first
-        top_pattern:    top_pattern ? top_pattern.pattern    : null,
-        top_direction:  top_pattern ? top_pattern.direction  : null,
-        top_verdict:    top_pattern ? top_pattern.verdict_summary : 'No clear setup',
+        top_pattern: top_pattern ? top_pattern.pattern : null,
+        top_direction: top_pattern ? top_pattern.direction : null,
+        top_verdict: top_pattern ? top_pattern.verdict_summary : 'No clear setup',
         best_call: best_call ? {
-            pattern:        best_call.pattern,
-            strength:       best_call.strength,
-            gates:          `${best_call.gates_passed}/${best_call.gates_total}`,
-            fires:          best_call.fires,
+            pattern: best_call.pattern,
+            strength: best_call.strength,
+            gates: `${best_call.gates_passed}/${best_call.gates_total}`,
+            fires: best_call.fires,
             verdict_summary: best_call.verdict_summary,
         } : null,
         best_put: best_put ? {
-            pattern:        best_put.pattern,
-            strength:       best_put.strength,
-            gates:          `${best_put.gates_passed}/${best_put.gates_total}`,
-            fires:          best_put.fires,
+            pattern: best_put.pattern,
+            strength: best_put.strength,
+            gates: `${best_put.gates_passed}/${best_put.gates_total}`,
+            fires: best_put.fires,
             verdict_summary: best_put.verdict_summary,
         } : null,
         // ── Context ──
-        bb_bps:        bbBps,
-        ma_gap_bps:    maTrendBps,
+        bb_bps: bbBps,
+        ma_gap_bps: maTrendBps,
         lookback,
         lookback_narrative: buildLookbackNarrative(lookback),
         // ── Full gate detail (for debugging) ──
@@ -808,7 +808,7 @@ export async function recommendTrades(minPrecisionScore = 50, minWinRate = 55) {
                     preferred_direction: b.preferred_direction,
                     verdict: b.verdict,
                     call_wr: b.call?.win_rate ?? null,
-                    put_wr:  b.put?.win_rate  ?? null,
+                    put_wr: b.put?.win_rate ?? null,
                 } : null,
             };
         });
@@ -881,13 +881,13 @@ export async function riskCheck(asset, direction = null) {
     }
     const ind = indRows[0];
 
-    // 3. Evaluate all 4 MODE D patterns
+    // 3. Evaluate all 4   patterns
     const modeD = evaluateModeD(indRows);
 
     // 4. Score precision (legacy generic scorer — kept for backward compat)
     const precision = scorePrecision(ind);
 
-    // 5. MODE D pattern scoring — weight the requested direction's best pattern
+    // 5.   pattern scoring — weight the requested direction's best pattern
     if (modeD.success && direction) {
         const targetPatterns = modeD.patterns.filter(p => p.direction === direction)
             .sort((a, b) => b.gates_passed - a.gates_passed);
@@ -895,15 +895,15 @@ export async function riskCheck(asset, direction = null) {
         if (best) {
             const ratio = best.gates_passed / best.gates_total;
             if (best.fires) {
-                warnings.push(`MODE D ${best.pattern} FIRES — all ${best.gates_total} gates pass`);
+                warnings.push(`  ${best.pattern} FIRES — all ${best.gates_total} gates pass`);
                 score += 15;
             } else if (best.strength === 'STRONG') {
-                warnings.push(`MODE D ${best.pattern} STRONG — ${best.gates_passed}/${best.gates_total} gates`);
+                warnings.push(`  ${best.pattern} STRONG — ${best.gates_passed}/${best.gates_total} gates`);
                 score += 8;
             } else if (best.strength === 'MARGINAL') {
-                warnings.push(`MODE D ${best.pattern} MARGINAL — ${best.gates_passed}/${best.gates_total} gates`);
+                warnings.push(`  ${best.pattern} MARGINAL — ${best.gates_passed}/${best.gates_total} gates`);
             } else {
-                warnings.push(`MODE D ${best.pattern} WEAK — only ${best.gates_passed}/${best.gates_total} gates`);
+                warnings.push(`  ${best.pattern} WEAK — only ${best.gates_passed}/${best.gates_total} gates`);
                 score -= 20;
             }
             // Gate-specific warnings
@@ -999,20 +999,20 @@ export async function riskCheck(asset, direction = null) {
     else if (score >= 30) verdict = 'RISKY';
     else verdict = 'AVOID';
 
-    // ── Build the primary MODE D verdict block the Analyst reads ─────────────
+    // ── Build the primary   verdict block the Analyst reads ─────────────
     const modeD_verdict = modeD.success ? {
         // Ranked from strongest to weakest — Analyst reads top entry first
-        ranked_verdicts:   modeD.ranked_verdicts,
-        top_pattern:       modeD.top_pattern,
-        top_direction:     modeD.top_direction,
-        top_verdict:       modeD.top_verdict,
-        best_call:         modeD.best_call,
-        best_put:          modeD.best_put,
-        bb_bps:            modeD.bb_bps,
-        ma_gap_bps:        modeD.ma_gap_bps,
+        ranked_verdicts: modeD.ranked_verdicts,
+        top_pattern: modeD.top_pattern,
+        top_direction: modeD.top_direction,
+        top_verdict: modeD.top_verdict,
+        best_call: modeD.best_call,
+        best_put: modeD.best_put,
+        bb_bps: modeD.bb_bps,
+        ma_gap_bps: modeD.ma_gap_bps,
         lookback_narrative: modeD.lookback_narrative,
         // Full gate detail for debugging
-        patterns:          modeD.patterns,
+        patterns: modeD.patterns,
     } : null;
 
     // ── Determine requested-direction pattern for the trade_verdict ──────────
@@ -1034,7 +1034,7 @@ export async function riskCheck(asset, direction = null) {
         verdict,           // GOOD | CAUTION | RISKY | AVOID
         score,             // 0–100
         safe: score >= 50,
-        trade_verdict: trade_verdict_detail || (modeD.success ? modeD.top_verdict : 'No MODE D data'),
+        trade_verdict: trade_verdict_detail || (modeD.success ? modeD.top_verdict : 'No   data'),
         recommendation: score >= 70
             ? 'Indicators aligned — trade looks favorable'
             : score >= 50
@@ -1043,11 +1043,11 @@ export async function riskCheck(asset, direction = null) {
                     ? 'Poor alignment — consider skipping'
                     : 'Indicators not aligned — do not trade',
         warnings,
-        // ── MODE D pattern verdicts — ranked strongest first ──
+        // ──   pattern verdicts — ranked strongest first ──
         mode_d: modeD_verdict,
         // ── Legacy precision scorer (secondary reference) ──
         precision: {
-            score:     precision.score,
+            score: precision.score,
             direction: precision.direction,
             layers_satisfied: `${Object.values(precision.layers).filter(Boolean).length}/${Object.keys(precision.layers).length}`,
         },
@@ -1190,12 +1190,12 @@ export async function assetBias(minTrades = 3) {
 
     const assets = Object.entries(byAsset).map(([asset, dirs]) => {
         const call = dirs['CALL'] || null;
-        const put  = dirs['PUT']  || null;
+        const put = dirs['PUT'] || null;
         const totalTrades = (call?.total || 0) + (put?.total || 0);
 
         const callWR = call && call.total > 0 ? (call.wins / call.total) * 100 : null;
-        const putWR  = put  && put.total  > 0 ? (put.wins  / put.total)  * 100 : null;
-        const netPL  = (call?.pl || 0) + (put?.pl || 0);
+        const putWR = put && put.total > 0 ? (put.wins / put.total) * 100 : null;
+        const netPL = (call?.pl || 0) + (put?.pl || 0);
 
         const bbBps = bbMap.get(asset) ?? null;
         const isFlat = bbBps !== null && bbBps < 5;
@@ -1242,12 +1242,12 @@ export async function assetBias(minTrades = 3) {
             } : null,
         };
     }).filter(a => a.total_trades >= minTrades)
-      .sort((a, b) => b.net_pl - a.net_pl);
+        .sort((a, b) => b.net_pl - a.net_pl);
 
     const blockRecommended = assets.filter(a => a.verdict === 'BLOCK_RECOMMENDED').map(a => a.asset);
     const callOnly = assets.filter(a => a.verdict === 'CALL_ONLY' || a.verdict === 'CALL_PREFERRED').map(a => a.asset);
-    const putOnly  = assets.filter(a => a.verdict === 'PUT_ONLY'  || a.verdict === 'PUT_PREFERRED').map(a => a.asset);
-    const avoid    = assets.filter(a => a.verdict === 'AVOID').map(a => a.asset);
+    const putOnly = assets.filter(a => a.verdict === 'PUT_ONLY' || a.verdict === 'PUT_PREFERRED').map(a => a.asset);
+    const avoid = assets.filter(a => a.verdict === 'AVOID').map(a => a.asset);
 
     return {
         success: true,

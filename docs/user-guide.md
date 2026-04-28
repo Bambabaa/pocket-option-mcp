@@ -59,7 +59,7 @@ po_recommend
 | `po_candles asset` | OHLC bars. Use `summary=true` unless you need individual bars. |
 | `po_price_history asset` | Tick-level prices over a time window |
 | `po_indicators asset` | Latest MA6/14, RSI-5, BB, Stochastic K/D v2, Keltner, Schaff values |
-| `po_signals` | CALL/PUT signals from the KT video2 pipeline. Filter by asset or direction. |
+| `po_signals` | CALL/PUT signals from the   pipeline. Filter by asset or direction. |
 | `po_pending_signals` | Signals past expiry not yet validated |
 
 ---
@@ -269,7 +269,7 @@ The `/auto-trade` skill spawns 3 agents in sequence: Scanner → Analyst → Exe
 
 ---
 
-## Strategy Reference — MODE D Video2
+## Strategy Reference —    
 
 The only active strategy. Modes A, B, C are disabled.
 
@@ -279,9 +279,9 @@ The only active strategy. Modes A, B, C are disabled.
 |---|---|---|
 | `ma1` | MA6 | Fast — early trend catch |
 | `ma3` | MA14 | Slow — trend confirmation |
-| `ma2` | MA50 | **Not used in MODE D** |
-| `stochastic_k_v2` | Stoch K (5,3,3) | Video2 stochastic |
-| `stochastic_d_v2` | Stoch D (5,3,3) | Video2 stochastic signal line |
+| `ma2` | MA50 | **Not including** |
+| `stochastic_k_v2` | Stoch K (5,3,3) |   stochastic |
+| `stochastic_d_v2` | Stoch D (5,3,3) |   stochastic signal line |
 | `rsi_5` | RSI period 5 | Momentum |
 
 **MA trend = (ma1 - ma3) / ma3 × 10000 bps**
