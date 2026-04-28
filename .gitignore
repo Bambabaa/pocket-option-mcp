@@ -1,7 +1,9 @@
 node_modules/
-data/
+# data/
 *.log
 
 .qwen/
 gha-creds-*.json
-*.db
+*.db-shm
+*.db-wal
+data/*.csv
