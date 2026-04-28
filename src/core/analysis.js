@@ -85,7 +85,8 @@ function computeLookback(candles, t) {
 // ─── STC Gate Definitions ─────────────────────────────────────────────────────
 // barM1.schaff_value is used as the signal-line proxy (prior bar = prior smoothed value).
 
-function checkCallReversal(barM1, bar0, params = {}) {
+// ctx = { bb_expanding, ma_gap_trend } from computeLookback()
+function checkCallReversal(barM1, bar0, params = {}, ctx = {}) {
     const { stc_floor = 25, rsi_max = 30, bb_bps_min = 10 } = params;
 
     if (bar0.schaff_value == null || barM1.schaff_value == null) return { pass: false, gates: {}, values: {} };
@@ -105,17 +106,22 @@ function checkCallReversal(barM1, bar0, params = {}) {
     const g3_rsiOversold = rsi != null && rsi < rsi_max;
     const g4_stochBull   = k != null && d != null && k > d && k < 50;
     const g5_bbWide      = bbBps != null && bbBps >= bb_bps_min;
+    // G6: BB must be expanding — reversal needs volatility releasing, not contracting (p=0.019)
+    const g6_bbExpanding  = ctx.bb_expanding !== false;  // null/undefined = unknown, passes; false = reject
+    // G7: MA gap must NOT be narrowing — narrowing = trend losing steam = signal unreliable (p=0.007)
+    const g7_noNarrowGap  = ctx.ma_gap_trend !== 'narrowing';
 
-    const pass = g1_stcFloor && g2_stcRising && g3_rsiOversold && g4_stochBull && g5_bbWide;
+    const pass = g1_stcFloor && g2_stcRising && g3_rsiOversold && g4_stochBull && g5_bbWide && g6_bbExpanding && g7_noNarrowGap;
 
     return {
         pass, direction: 'CALL', patternName: 'STC_CALL_REVERSAL',
-        gates: { g1_stcFloor, g2_stcRising, g3_rsiOversold, g4_stochBull, g5_bbWide },
-        values: { stcValue, stcPrev, rsi, k, d, bbBps, maTrendBps },
+        gates: { g1_stcFloor, g2_stcRising, g3_rsiOversold, g4_stochBull, g5_bbWide, g6_bbExpanding, g7_noNarrowGap },
+        values: { stcValue, stcPrev, rsi, k, d, bbBps, maTrendBps, bb_expanding: ctx.bb_expanding, ma_gap_trend: ctx.ma_gap_trend },
     };
 }
 
-function checkPutReversal(barM1, bar0, params = {}) {
+// ctx = { ma_gap_trend } from computeLookback() — PUT uses G7 only (G6 shrinks n too much)
+function checkPutReversal(barM1, bar0, params = {}, ctx = {}) {
     const { stc_ceiling = 90, rsi_min = 70, bb_bps_min = 10 } = params;
 
     if (bar0.schaff_value == null || barM1.schaff_value == null) return { pass: false, gates: {}, values: {} };
@@ -130,18 +136,20 @@ function checkPutReversal(barM1, bar0, params = {}) {
     const maTrendBps = bar0.ma1 != null && bar0.ma3 != null
         ? ((bar0.ma1 - bar0.ma3) / bar0.ma3) * 10000 : null;
 
-    const g1_stcCeiling = stcValue >= stc_ceiling;
-    const g2_stcFalling = stcValue < stcPrev;
-    const g3_rsiOB      = rsi != null && rsi > rsi_min;
-    const g4_stochBear  = k != null && d != null && k < d && k > 50;
-    const g5_bbWide     = bbBps != null && bbBps >= bb_bps_min;
+    const g1_stcCeiling  = stcValue >= stc_ceiling;
+    const g2_stcFalling  = stcValue < stcPrev;
+    const g3_rsiOB       = rsi != null && rsi > rsi_min;
+    const g4_stochBear   = k != null && d != null && k < d && k > 50;
+    const g5_bbWide      = bbBps != null && bbBps >= bb_bps_min;
+    // G6: MA gap must NOT be narrowing (p=0.007 for PUT; bb_expanding not added — reduces n too much)
+    const g6_noNarrowGap = ctx.ma_gap_trend !== 'narrowing';
 
-    const pass = g1_stcCeiling && g2_stcFalling && g3_rsiOB && g4_stochBear && g5_bbWide;
+    const pass = g1_stcCeiling && g2_stcFalling && g3_rsiOB && g4_stochBear && g5_bbWide && g6_noNarrowGap;
 
     return {
         pass, direction: 'PUT', patternName: 'STC_PUT_REVERSAL',
-        gates: { g1_stcCeiling, g2_stcFalling, g3_rsiOB, g4_stochBear, g5_bbWide },
-        values: { stcValue, stcPrev, rsi, k, d, bbBps, maTrendBps },
+        gates: { g1_stcCeiling, g2_stcFalling, g3_rsiOB, g4_stochBear, g5_bbWide, g6_noNarrowGap },
+        values: { stcValue, stcPrev, rsi, k, d, bbBps, maTrendBps, ma_gap_trend: ctx.ma_gap_trend },
     };
 }
 
@@ -219,8 +227,8 @@ export async function replayCandles(asset = null, params = {}) {
 
     const signals = [];
     let totalCandles = 0, candlesWithIndicators = 0, candlesWithHistory = 0;
-    const callRejections = { g1_stcFloor: 0, g2_stcRising: 0, g3_rsiOversold: 0, g4_stochBull: 0, g5_bbWide: 0 };
-    const putRejections  = { g1_stcCeiling: 0, g2_stcFalling: 0, g3_rsiOB: 0, g4_stochBear: 0, g5_bbWide: 0 };
+    const callRejections = { g1_stcFloor: 0, g2_stcRising: 0, g3_rsiOversold: 0, g4_stochBull: 0, g5_bbWide: 0, g6_bbExpanding: 0, g7_noNarrowGap: 0 };
+    const putRejections  = { g1_stcCeiling: 0, g2_stcFalling: 0, g3_rsiOB: 0, g4_stochBear: 0, g5_bbWide: 0, g6_noNarrowGap: 0 };
 
     for (const [assetName, candles] of Object.entries(byAsset)) {
         const priceMap = pricesByAsset[assetName] || null;
@@ -259,7 +267,7 @@ export async function replayCandles(asset = null, params = {}) {
             }
 
             // CALL
-            const callResult = checkCallReversal(barM1, bar0, params);
+            const callResult = checkCallReversal(barM1, bar0, params, ctx);
             if (callResult.pass) {
                 signals.push(buildSignal('CALL', callResult.values, callResult.gates));
             } else {
@@ -269,7 +277,7 @@ export async function replayCandles(asset = null, params = {}) {
             }
 
             // PUT
-            const putResult = checkPutReversal(barM1, bar0, params);
+            const putResult = checkPutReversal(barM1, bar0, params, ctx);
             if (putResult.pass) {
                 signals.push(buildSignal('PUT', putResult.values, putResult.gates));
             } else {
@@ -697,8 +705,9 @@ export async function simulateGates(params = {}) {
             const bar0  = candles[t];
             if (bar0.schaff_value == null || barM1.schaff_value == null) continue;
 
-            const bar1 = candles[t + 1];
-            const bar2 = candles[t + 2];
+            const ctx   = computeLookback(candles, t);
+            const bar1  = candles[t + 1];
+            const bar2  = candles[t + 2];
             const tick60  = findExpiryPrice(priceList, bar0.timestamp, 60);
             const tick120 = findExpiryPrice(priceList, bar0.timestamp, 120);
 
@@ -712,17 +721,17 @@ export async function simulateGates(params = {}) {
             }
 
             // Baseline CALL
-            if (checkCallReversal(barM1, bar0, { stc_floor: 25, rsi_max: 30, bb_bps_min: 10 }).pass)
+            if (checkCallReversal(barM1, bar0, { stc_floor: 25, rsi_max: 30, bb_bps_min: 10 }, ctx).pass)
                 pushSig(baselineSigs.call, 'CALL');
             // Modified CALL
-            if (checkCallReversal(barM1, bar0, { stc_floor: call_stc_floor, rsi_max: call_rsi_max, bb_bps_min }).pass)
+            if (checkCallReversal(barM1, bar0, { stc_floor: call_stc_floor, rsi_max: call_rsi_max, bb_bps_min }, ctx).pass)
                 pushSig(modifiedSigs.call, 'CALL');
 
             // Baseline PUT
-            if (checkPutReversal(barM1, bar0, { stc_ceiling: 90, rsi_min: 70, bb_bps_min: 10 }).pass)
+            if (checkPutReversal(barM1, bar0, { stc_ceiling: 90, rsi_min: 70, bb_bps_min: 10 }, ctx).pass)
                 pushSig(baselineSigs.put, 'PUT');
             // Modified PUT
-            if (checkPutReversal(barM1, bar0, { stc_ceiling: put_stc_ceiling, rsi_min: put_rsi_min, bb_bps_min }).pass)
+            if (checkPutReversal(barM1, bar0, { stc_ceiling: put_stc_ceiling, rsi_min: put_rsi_min, bb_bps_min }, ctx).pass)
                 pushSig(modifiedSigs.put, 'PUT');
         }
     }

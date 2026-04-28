@@ -110,19 +110,22 @@ Use **120s expiry** — 60s is not statistically viable for either direction.
 - Rising STC (bar0 > barM1) = cycle turning bullish
 - Falling STC (bar0 < barM1) = cycle turning bearish
 
-### CALL — STC Floor Bounce (5 gates) — validated p=0.048, n=61, WR=60.7% at 120s
+### CALL — STC Floor Bounce (7 gates) — validated p=0.0005 (***), n=25, WR=84.0% at 120s
 - g1: schaff_value ≤ 25 (STC at floor)
 - g2: schaff_value > prev_schaff (STC curling upward)
-- g3: RSI < 30 ← **deeply oversold only (tightened from 40)**
+- g3: RSI < 30 (deeply oversold only)
 - g4: K > D AND K < 50 (stoch bullish cross, not overbought)
 - g5: BB width ≥ 10 bps (not a flat/dead market)
+- g6: bb_expanding = true ← **new, p=0.019 — reversal only valid when volatility is releasing**
+- g7: ma_gap_trend ≠ narrowing ← **new, p=0.007 — trend momentum must be intact**
 
-### PUT — STC Ceiling Rollover (5 gates) — validated p=0.024, n=31, WR=67.7% at 120s
-- g1: schaff_value ≥ 90 ← **deep overbought only (tightened from 75)**
+### PUT — STC Ceiling Rollover (6 gates) — validated p=0.029 (**), n=14, WR=78.6% at 120s
+- g1: schaff_value ≥ 90 (deep overbought only)
 - g2: schaff_value < prev_schaff (STC rolling downward)
-- g3: RSI > 70 ← **deeply overbought only (tightened from 60)**
+- g3: RSI > 70 (deeply overbought only)
 - g4: K < D AND K > 50 (stoch bearish cross, not oversold)
 - g5: BB width ≥ 10 bps (not a flat/dead market)
+- g6: ma_gap_trend ≠ narrowing ← **new, p=0.007 — bb_expanding not added (shrinks n too much)**
 
 ## Tool Reference (43 tools)
 
@@ -224,10 +227,12 @@ Use **120s expiry** — 60s is not statistically viable for either direction.
 
 ## Known Validated Facts
 
-- **STC gates validated 2026-04-28** via binomial significance test (35,302 rows, STC recalibrated to 12,25,5,3,3):
-  - CALL 120s: n=61, WR=60.7%, p=0.048 → SIGNIFICANT_95, Kelly=17.9%
-  - PUT  120s: n=31, WR=67.7%, p=0.024 → SIGNIFICANT_95, Kelly=32.7%
-  - PUT STC 95–100 zone at 120s: n=75, WR=61.3%, p=0.032 → SIGNIFICANT_95
+- **STC gates validated 2026-04-28** via binomial significance + correlation analysis:
+  - CALL 7-gate 120s: n=25, WR=84.0%, p=0.0005 → SIGNIFICANT_99, Kelly=66.6%
+  - PUT  6-gate 120s: n=14, WR=78.6%, p=0.029  → SIGNIFICANT_95, Kelly=55.3%
+  - G6 (bb_expanding): chi²=4.33, phi=+0.218, p=0.019 — BB expanding = volatility releasing into reversal
+  - G7 (no_narrow_gap): chi²=6.16, phi=-0.259, p=0.007 — narrowing MA gap = trend losing momentum
+  - CALL STC≤10 + G6+G7: n=21, WR=90.5%, p=0.0001 — highest-conviction CALL subset
 - **60s expiry is not viable** — CALL 60s 46.2% (LOSING), PUT 60s 50.0% (coin flip). Use 120s only.
 - **PUT has more edge than CALL** — RSI > 70 + STC ≥ 90 is the highest-quality setup
 - **BB < 10 bps = losing zone**: 45.8% WR validated. Gate live at 10 bps.

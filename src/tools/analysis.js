@@ -54,11 +54,11 @@ export function registerAnalysisTools(server) {
     'po_simulate',
     'Replay historical candles with custom STC reversal gate thresholds and compare against the baseline defaults. Shows side-by-side: signal count, win rate, P/L for CALL and PUT at both 60s and 120s expiry — plus delta vs baseline. Use this to test a gate change before modifying the bot. Example: "what if I tightened call_stc_floor to 20?" or "what if I raised bb_bps_min to 15?".',
     {
-      call_stc_floor:   z.coerce.number().optional().describe('Max STC value for CALL entry — STC must be at or below this floor (default 25)'),
-      call_rsi_max:     z.coerce.number().optional().describe('Max RSI for CALL entry — must be deeply oversold (default 30, validated p=0.048)'),
-      put_stc_ceiling:  z.coerce.number().optional().describe('Min STC value for PUT entry — STC must be at or above this ceiling (default 90, validated p=0.024)'),
-      put_rsi_min:      z.coerce.number().optional().describe('Min RSI for PUT entry — must be deeply overbought (default 70, validated p=0.024)'),
-      bb_bps_min:       z.coerce.number().optional().default(10).describe('Min BB width in bps for both CALL and PUT — filters flat/dead markets (default 10)'),
+      call_stc_floor:   z.coerce.number().optional().describe('Max STC value for CALL entry (default 25)'),
+      call_rsi_max:     z.coerce.number().optional().describe('Max RSI for CALL — deeply oversold (default 30)'),
+      put_stc_ceiling:  z.coerce.number().optional().describe('Min STC value for PUT entry (default 90)'),
+      put_rsi_min:      z.coerce.number().optional().describe('Min RSI for PUT — deeply overbought (default 70)'),
+      bb_bps_min:       z.coerce.number().optional().default(10).describe('Min BB width bps both directions (default 10)'),
       amount:           z.coerce.number().positive().optional().default(500).describe('Trade amount for P/L calc (default 500)'),
     },
     async (p) => {

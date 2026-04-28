@@ -477,7 +477,7 @@ export function evaluateModeD(bars) {
 
     const patterns = [];
 
-    // ── STC_CALL_REVERSAL — STC floor bounce (5 gates) ───────────────────────
+    // ── STC_CALL_REVERSAL — STC floor bounce (7 gates) ───────────────────────
     {
         const g = {
             g1_stcFloor:    stcValue != null && stcValue <= 25,
@@ -485,6 +485,8 @@ export function evaluateModeD(bars) {
             g3_rsiOversold: rsi != null && rsi < 30,
             g4_stochBull:   k0 != null && d0 != null && k0 > d0 && k0 < 50,
             g5_bbWide:      bbBps != null && bbBps >= 10,
+            g6_bbExpanding: bb_expanding !== false,   // volatility releasing into reversal (p=0.019)
+            g7_noNarrowGap: ma_gap_trend !== 'narrowing', // trend momentum intact (p=0.007)
         };
         const passed = Object.values(g).filter(Boolean).length;
         const total  = Object.keys(g).length;
@@ -503,7 +505,7 @@ export function evaluateModeD(bars) {
         });
     }
 
-    // ── STC_PUT_REVERSAL — STC ceiling rollover (5 gates) ────────────────────
+    // ── STC_PUT_REVERSAL — STC ceiling rollover (6 gates) ────────────────────
     {
         const g = {
             g1_stcCeiling:  stcValue != null && stcValue >= 90,
@@ -511,6 +513,7 @@ export function evaluateModeD(bars) {
             g3_rsiOB:       rsi != null && rsi > 70,
             g4_stochBear:   k0 != null && d0 != null && k0 < d0 && k0 > 50,
             g5_bbWide:      bbBps != null && bbBps >= 10,
+            g6_noNarrowGap: ma_gap_trend !== 'narrowing', // trend momentum intact (p=0.007)
         };
         const passed = Object.values(g).filter(Boolean).length;
         const total  = Object.keys(g).length;
