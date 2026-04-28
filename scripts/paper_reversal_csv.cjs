@@ -101,7 +101,11 @@ function computeLookback(assetRows, idx) {
   for (let i = Math.max(0, idx - LOOKBACK); i < idx; i++) {
     history.push(assetRows[i]);
   }
-  const rsiVals = history.map(r => r.rsi_5).filter(v => v != null);
+  // Include current bar in lookback (10 historical + 1 current = 11 total)
+  const rsiVals = [
+    ...history.map(r => r.rsi_5),
+    assetRows[idx].rsi_5
+  ].filter(v => v != null);
   const rsiPeak10 = rsiVals.length > 0 ? Math.max(...rsiVals) : null;
   const rsiTrough10 = rsiVals.length > 0 ? Math.min(...rsiVals) : null;
   return { rsiPeak10, rsiTrough10 };

@@ -14,6 +14,7 @@ class Indicators {
     constructor() {
         this._v2ConsecCount = {};
         this._v2LastTs = {};
+        this._lastSchaffValues = {};
     }
 
     // ==================== BASIC INDICATORS ====================
@@ -616,6 +617,38 @@ class Indicators {
             INDICATOR_CONFIG.schaff.cycle, INDICATOR_CONFIG.schaff.smooth1, INDICATOR_CONFIG.schaff.smooth2
         );
 
+        // Previous STC value — cached per asset to avoid recomputing full history
+        indicators.prevSchaffValue = this._lastSchaffValues[asset] ?? null;
+        this._lastSchaffValues[asset] = indicators.schaffTrendCycle ? indicators.schaffTrendCycle.value : null;
+
+        // BB expansion context: current width vs width 5 bars ago
+        indicators.bb_expanding = null;
+        if (candles.length >= 6 && indicators.bollinger) {
+            const bbPrev = this.calculateBollingerBands(candles.slice(0, -5), INDICATOR_CONFIG.bb.period, INDICATOR_CONFIG.bb.stdDev);
+            if (bbPrev && bbPrev.middle) {
+                const wNow = (indicators.bollinger.upper - indicators.bollinger.lower) / indicators.bollinger.middle;
+                const wPrev = (bbPrev.upper - bbPrev.lower) / bbPrev.middle;
+                indicators.bb_expanding = wNow > wPrev;
+            }
+        }
+
+        // MA gap trend: compare MA6–MA14 gap now vs 3 bars ago
+        indicators.ma_gap_trend = 'unknown';
+        if (candles.length >= 4 && indicators.ma6 != null && indicators.ma14 != null) {
+            const ma6Prev = this.calculateSMA(candles.slice(0, -3), INDICATOR_CONFIG.ma1);
+            const ma14Prev = this.calculateSMA(candles.slice(0, -3), INDICATOR_CONFIG.ma3);
+            if (ma6Prev != null && ma14Prev != null) {
+                const gapNow = indicators.ma6 - indicators.ma14;
+                const gapPrev = ma6Prev - ma14Prev;
+                const deltaBps = ((gapNow - gapPrev) / indicators.ma14) * 10000;
+                if (Math.abs(deltaBps) < 1) indicators.ma_gap_trend = 'flat';
+                else if (deltaBps > 0) indicators.ma_gap_trend = 'widening_up';
+                else indicators.ma_gap_trend = 'widening_down';
+                if (Math.abs(gapPrev) - Math.abs(gapNow) > indicators.ma14 * 0.0001)
+                    indicators.ma_gap_trend = 'narrowing';
+            }
+        }
+
         indicators.lastCandle = candles[candles.length - 1];
         indicators.currentPrice = indicators.lastCandle[2];
 
@@ -627,19 +660,57 @@ class Indicators {
     // ==================== SIGNAL TRADE GENERATION ====================
 
     signalstrade(indicators, settings, signals) {
-        const ma6 = indicators.ma6;
-        const ma14 = indicators.ma14;
-        const rsi = indicators.rsi_5;
-        const stochK = indicators.stochastic_k;
-        const stochD = indicators.stochastic_d;
-        const candle = indicators.lastCandle;
-        const bb = indicators.bollinger;
-        const asset = indicators.asset || null;
+        const stc     = indicators.schaffTrendCycle ? indicators.schaffTrendCycle.value : null;
+        const stcPrev = indicators.prevSchaffValue;
+        const rsi     = indicators.rsi_5;
+        const k       = indicators.stochastic_k;
+        const d       = indicators.stochastic_d;
+        const bb      = indicators.bollinger;
+
+        if (stc == null || stcPrev == null || rsi == null || k == null || d == null || !bb || !bb.middle) {
+            return false;
+        }
+
+        const bbBps = ((bb.upper - bb.lower) / bb.middle) * 10000;
+
+        // ── STC_CALL_REVERSAL — 5 gates ──────────────────────────────────────
+        if (
+            stc <= 25 &&               // g1: STC at floor
+            stc > stcPrev &&           // g2: STC curling upward
+            rsi < 40 &&                // g3: oversold
+            k > d && k < 50 &&         // g4: stoch bull cross below midline
+            bbBps >= 10                // g5: BB wide enough
+        ) {
+            signals.buy          = true;
+            signals.direction    = 'CALL';
+            signals.strategyUsed = 'STC_CALL_REVERSAL';
+            signals.reasons.push(
+                `STC_CALL_REVERSAL: stc=${stc.toFixed(1)} prev=${stcPrev.toFixed(1)} rsi=${rsi.toFixed(1)} k=${k.toFixed(1)} d=${d.toFixed(1)} bbBps=${bbBps.toFixed(1)}`
+            );
+            return true;
+        }
+
+        // ── STC_PUT_REVERSAL — 5 gates ───────────────────────────────────────
+        if (
+            stc >= 75 &&               // g1: STC at ceiling
+            stc < stcPrev &&           // g2: STC rolling downward
+            rsi > 60 &&                // g3: overbought
+            k < d && k > 50 &&         // g4: stoch bear cross above midline
+            bbBps >= 10                // g5: BB wide enough
+        ) {
+            signals.sell         = true;
+            signals.direction    = 'PUT';
+            signals.strategyUsed = 'STC_PUT_REVERSAL';
+            signals.reasons.push(
+                `STC_PUT_REVERSAL: stc=${stc.toFixed(1)} prev=${stcPrev.toFixed(1)} rsi=${rsi.toFixed(1)} k=${k.toFixed(1)} d=${d.toFixed(1)} bbBps=${bbBps.toFixed(1)}`
+            );
+            return true;
+        }
 
         return false;
     }
 
-    // Generate trading signals —   only; v1/v3 indicator values available as inputs
+    // Generate trading signals —   indicator values available as inputs
     generateSignals(indicators, settings = {}) {
         const signals = {
             buy: false,

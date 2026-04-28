@@ -648,11 +648,6 @@ export function evaluateModeD(bars) {
             patterns[idx].lookback_narrative = buildLookbackNarrative(lookback);
         }
     }
-            lookback,
-            strength: strength(passed, total),
-            fires: passed === total,
-        });
-    }
 
     // ── PUT_TREND — DOWN TREND continuation (6 gates) ────────────────────────
     {
@@ -729,23 +724,6 @@ export function evaluateModeD(bars) {
         if (lb.bb_expanding === false) lines.push('BB contracting — volatility shrinking at entry (REVERSAL_CALL loses 39% on contracting BB)');
         return lines.length ? lines : ['Insufficient bar history for lookback narrative'];
     }
-
-    // Attach verdict summaries and lookback narrative to each pattern
-    for (const p of patterns) {
-        p.verdict_summary = patternVerdict(p);
-        p.lookback_narrative = buildLookbackNarrative(lookback);
-    }
-
-    // ── Rank and pick best per direction ─────────────────────────────────────
-    const strengthOrder = { PERFECT: 4, STRONG: 3, MARGINAL: 2, WEAK: 1 };
-
-    const callPatterns = patterns.filter(p => p.direction === 'CALL')
-        .sort((a, b) => b.gates_passed - a.gates_passed);
-    const putPatterns = patterns.filter(p => p.direction === 'PUT')
-        .sort((a, b) => b.gates_passed - a.gates_passed);
-
-    const best_call = callPatterns[0] || null;
-    const best_put = putPatterns[0] || null;
 
     const top_pattern = [best_call, best_put]
         .filter(Boolean)
