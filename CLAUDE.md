@@ -87,45 +87,42 @@ pocket-option-mcp/
     └── trade-executor.md
 ```
 
-## MODE D Strategy — Indicator Mapping
+## MODE D Strategy — STC Reversal Gates (active as of 2026-04-28)
 
-Only active strategy. Modes A, B, C disabled (`if (false)`).
+Replaced K Flash Crash / Late Overbought Reversal with STC (Schaff Trend Cycle) reversal strategy.
+STC params: (12, 25, 5, 3, 3) — recalibrated 2026-04-28 via `bot/scripts/recalculate-schaff.js`.
+Use **120s expiry** — 60s is not statistically viable for either direction.
 
 | Column | Indicator | Role |
 |---|---|---|
-| `ma1` | MA6 | Fast — early trend catch |
-| `ma3` | MA14 | Slow — trend confirmation |
-| `ma2` | MA50 | NOT used in MODE D gates |
-| `stochastic_k_v2` | Stoch K (5,3,3) |   stochastic |
-| `stochastic_d_v2` | Stoch D (5,3,3) |   stochastic signal line |
-| `rsi_5` | RSI period 5 | Momentum |
-| `bb_upper/lower/middle` | BB (20,2) | Width gate + price position |
+| `ma1` | MA6 | Fast MA — context |
+| `ma3` | MA14 | Slow MA — context |
+| `ma2` | MA50 | NOT used in gates |
+| `schaff_value` | STC (12,25,5,3,3) | Primary timing signal |
+| `stochastic_k_v2` | Stoch K (5,3,3) | Confirmation |
+| `stochastic_d_v2` | Stoch D (5,3,3) | Confirmation signal line |
+| `rsi_5` | RSI period 5 | Momentum depth gate |
+| `bb_upper/lower/middle` | BB (20,2) | Volatility gate |
 
-**maTrendBps = (ma1 - ma3) / ma3 × 10000**
-Positive = MA6 above MA14 = uptrend. Negative = downtrend.
+**STC zone interpretation:**
+- ≤ 25 = floor (CALL reversal zone — cycle exhausted to downside)
+- ≥ 90 = ceiling (PUT reversal zone — cycle exhausted to upside, validated)
+- Rising STC (bar0 > barM1) = cycle turning bullish
+- Falling STC (bar0 < barM1) = cycle turning bearish
 
-**BB width bps = (bb_upper - bb_lower) / bb_middle × 10000**
-< 20 bps = gate threshold (tightened from 10 bps per 2026-04-16 session report). < 10 bps = flat/dead market = losing zone (45.8% WR validated on 135 signals).
+### CALL — STC Floor Bounce (5 gates) — validated p=0.048, n=61, WR=60.7% at 120s
+- g1: schaff_value ≤ 25 (STC at floor)
+- g2: schaff_value > prev_schaff (STC curling upward)
+- g3: RSI < 30 ← **deeply oversold only (tightened from 40)**
+- g4: K > D AND K < 50 (stoch bullish cross, not overbought)
+- g5: BB width ≥ 10 bps (not a flat/dead market)
 
-### CALL — K Flash Crash Bounce (7 gates)
-- g1: ma1 < ma3
-- g2: K_prev − K_curr > 25
-- g3: K_curr < 25
-- g4: K_prev >= 50
-- g5: RSI < 20 ← **tightened from 40 (deeply oversold only)**
-- g6: maTrendBps > −20
-- g7: BB width >= 20 bps ← **tightened from 10 bps**
-
-### PUT — Late Overbought Reversal (9 gates)
-- g0: RSI[−2] > 80 ← **new gate: genuine prior overbought confirmation**
-- g1: RSI[−2] > 70, RSI[−1] > 70, exclude [75,80)
-- g2: RSI falling, in [38,70), exclude [55,65), velocity > −12, close >= BB mid
-- g3: K_prev > 65, K falling, K_curr in [55,80)
-- g4: D_curr >= 80
-- g5: ma1 > ma3
-- g6: K−D spread < −3
-- g7: maTrendBps < 20
-- g8: BB width >= 20 bps ← **tightened from 10 bps**
+### PUT — STC Ceiling Rollover (5 gates) — validated p=0.024, n=31, WR=67.7% at 120s
+- g1: schaff_value ≥ 90 ← **deep overbought only (tightened from 75)**
+- g2: schaff_value < prev_schaff (STC rolling downward)
+- g3: RSI > 70 ← **deeply overbought only (tightened from 60)**
+- g4: K < D AND K > 50 (stoch bearish cross, not oversold)
+- g5: BB width ≥ 10 bps (not a flat/dead market)
 
 ## Tool Reference (43 tools)
 
@@ -158,11 +155,12 @@ Positive = MA6 above MA14 = uptrend. Negative = downtrend.
 ### Analysis & Backtesting
 | Tool | What it does |
 |---|---|
-| `po_replay_candles` | Full candle replay — fires all MODE D signals, validates vs next bar |
+| `po_replay_candles` | Full candle replay — fires STC gates, validates at 60s AND 120s via prices table |
 | `po_replay_signal` | Reconstruct all gate values for a specific historical signal |
-| `po_find_edge` | Win rate breakdown across 11 dimensions including retracement context |
-| `po_optimize_gates` | Grid search over gate thresholds |
+| `po_find_edge` | Win rate breakdown across 11 dimensions + dual 60s/120s expiry |
+| `po_optimize_gates` | Grid search over STC gate thresholds |
 | `po_simulate` | Baseline vs modified thresholds side-by-side — test before touching bot |
+| `po_significance` | Binomial significance test — p-values, z-scores, Wilson CI, Kelly fraction per slice |
 
 ### Asset Controls
 | Tool | What it does |
@@ -226,8 +224,13 @@ Positive = MA6 above MA14 = uptrend. Negative = downtrend.
 
 ## Known Validated Facts
 
-- **BB < 10 bps = losing zone**: 45.8% WR, -$3,580 P&L on 135 signals. Gate live in bot at 10 bps.
-- **Flat assets (BB < 5 bps) must be identified dynamically** — use `po_auto_block_sweep` at session start. Asset volatility fluctuates over time; no static list is maintained.
+- **STC gates validated 2026-04-28** via binomial significance test (35,302 rows, STC recalibrated to 12,25,5,3,3):
+  - CALL 120s: n=61, WR=60.7%, p=0.048 → SIGNIFICANT_95, Kelly=17.9%
+  - PUT  120s: n=31, WR=67.7%, p=0.024 → SIGNIFICANT_95, Kelly=32.7%
+  - PUT STC 95–100 zone at 120s: n=75, WR=61.3%, p=0.032 → SIGNIFICANT_95
+- **60s expiry is not viable** — CALL 60s 46.2% (LOSING), PUT 60s 50.0% (coin flip). Use 120s only.
+- **PUT has more edge than CALL** — RSI > 70 + STC ≥ 90 is the highest-quality setup
+- **BB < 10 bps = losing zone**: 45.8% WR validated. Gate live at 10 bps.
+- **Flat assets (BB < 5 bps) must be identified dynamically** — use `po_auto_block_sweep` at session start.
 - **Qualification layer disabled** (`useQualifiedAssetsLayer: false`) — every signal trades
-- **PUT has more edge than CALL**: PUT 59.8% WR vs CALL 42.1% WR baseline
-- **Signal reasons string** contains exact pattern label + gate values — used by `parsePatternFromReasons()` to identify all 4 patterns
+- **`po_significance` tool** — run after accumulating new live trades to track whether edge holds

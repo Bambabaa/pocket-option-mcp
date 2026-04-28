@@ -9,6 +9,7 @@ import { registerPerformanceTools } from './tools/performance.js';
 import { registerIntelligenceTools } from './tools/intelligence.js';
 import { registerAnalysisTools } from './tools/analysis.js';
 import { registerAgentTools } from './tools/agent-tools.js';
+import { registerSignificanceTools } from './tools/significance.js';
 
 const server = new McpServer(
   {
@@ -43,6 +44,7 @@ Analysis & Backtesting (AI research — find the edge):
 - po_find_edge → analyze ALL historical trades: win rate by RSI range, stoch range, MA gap, hour, asset, direction
 - po_optimize_gates → grid search: what RSI/K-crash/D thresholds would produce the best win rate?
 - po_simulate → replay with custom gate thresholds vs baseline — "what if I raised K crash min to 35?" or "skip flat assets with min_bb_bps=5"
+- po_significance → binomial significance test — p-values, z-scores, Wilson CI, Kelly fraction per slice (direction, asset, STC zone, hour)
 
 Reading market data:
 - po_candles → OHLC bars. Use summary=true unless you need individual bars
@@ -109,6 +111,7 @@ registerPerformanceTools(server);
 registerIntelligenceTools(server);
 registerAnalysisTools(server);
 registerAgentTools(server);
+registerSignificanceTools(server);
 
 process.stderr.write('pocket-option-mcp | Connects to pocket-option-bot.js via SQLite.\n');
 process.stderr.write(`Bot DB: ${process.env.PO_DB_PATH || 'data/trading_data.db (default)'}\n\n`);

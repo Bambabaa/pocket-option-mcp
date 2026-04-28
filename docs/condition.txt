@@ -1,0 +1,211 @@
+================================================================
+PURE REVERSAL STRATEGY - PSUDOCODE
+================================================================
+
+INDICATORS:
+  STC(12, 25, 5, 3, 3)    // Primary reversal detector
+  RSI(5)                    // Momentum
+  Stoch(5, 3, 3)            // Entry timing
+  MA_Fast(6)                // Green
+  MA_Slow(14)               // White
+  BB(20, 2)                 // Bollinger Bands
+
+TIMEFRAME: 1-minute candles
+EXPIRY: 2 minutes
+
+================================================================
+MAIN
+================================================================
+
+FUNCTION run_strategy():
+    
+    current  = GET latest candle + indicator values
+    history  = GET last 10 candles + indicator values
+    
+    signal = CHECK_CALL_REVERSAL(current, history)
+    IF signal EXISTS AND signal.confidence >= 0.70:
+        RETURN signal
+    
+    signal = CHECK_PUT_REVERSAL(current, history)
+    IF signal EXISTS AND signal.confidence >= 0.70:
+        RETURN signal
+    
+    RETURN NO_TRADE
+
+================================================================
+CALL REVERSAL — Oversold Cluster at 25 Floor
+================================================================
+
+FUNCTION check_call_reversal(current, history):
+    
+    // ---- STC: PRIMARY (hard requirement) ----
+    
+    IF current.stc > 30:
+        RETURN NONE                    // Not near floor
+    IF current.stc <= history.stc[-1]:
+        RETURN NONE                    // Not turning up yet
+    
+    stc_min_8 = MIN(history.stc[-8:])
+    
+    GRANT points:
+        stc_at_floor        = 12 IF current.stc <= 30
+        stc_turning_up      = 12 IF current.stc > history.stc[-1]
+        stc_touched_extreme =  8 IF stc_min_8 <= 28
+        stc_strong_turn     =  3 IF (current.stc - history.stc[-1]) > 0.5
+    
+    // ---- RSI: MOMENTUM (hard requirement) ----
+    
+    rsi_min_5 = MIN(history.rsi[-5:])
+    
+    IF rsi_min_5 > 35:
+        RETURN NONE                    // Never went oversold
+    
+    GRANT points:
+        rsi_was_oversold = 10 IF rsi_min_5 <= 35
+        rsi_rising       =  7 IF current.rsi > history.rsi[-1]
+        rsi_has_room     =  3 IF current.rsi <= 60
+    
+    // ---- STOCH: ENTRY TIMING (hard requirement) ----
+    
+    IF NOT (history.stoch_k[-1] <= history.stoch_d[-1] 
+            AND current.stoch_k > current.stoch_d):
+        RETURN NONE                    // No bull cross
+    
+    GRANT points:
+        stoch_in_oversold =  8 IF current.stoch_k <= 35 AND current.stoch_d <= 35
+        stoch_bull_cross  = 10 IF bull cross just happened
+        stoch_rising      =  2 IF current.stoch_k > history.stoch_k[-1]
+    
+    // ---- MOVING AVERAGES ----
+    
+    GRANT points:
+        price_above_fast  =  5 IF current.price > current.ma_fast
+        reclaiming_fast   =  5 IF price crossed above fast MA this candle
+        slow_ma_support   =  5 IF current.price >= current.ma_slow * 0.9995
+    
+    // ---- BOLLINGER BANDS ----
+    
+    distance_to_lower = (price - bb_lower) / (bb_mid - bb_lower)
+    
+    GRANT points:
+        near_lower_band   =  5 IF distance_to_lower <= 0.30
+        bands_expanding   =  3 IF band width >= threshold
+        price_off_lower   =  2 IF price > bb_lower AND bullish candle
+    
+    // ---- PRICE ACTION (bonus) ----
+    
+    v_bottom = (
+        current.body > 0 AND history.body[-1] < 0 
+        AND ABS(current.body) > ABS(history.body[-1])
+    )
+    
+    // ---- SCORE ----
+    
+    confidence = TOTAL_POINTS / MAX_POINTS
+    IF v_bottom: confidence = confidence * 1.05
+    
+    RETURN CALL signal WITH confidence
+
+================================================================
+PUT REVERSAL — Overbought Cluster at 75 Ceiling
+================================================================
+
+FUNCTION check_put_reversal(current, history):
+    
+    // ---- STC: PRIMARY (hard requirement) ----
+    
+    IF current.stc < 70:
+        RETURN NONE
+    IF current.stc >= history.stc[-1]:
+        RETURN NONE
+    
+    stc_max_8 = MAX(history.stc[-8:])
+    
+    GRANT points:
+        stc_at_ceiling      = 12 IF current.stc >= 70
+        stc_turning_down    = 12 IF current.stc < history.stc[-1]
+        stc_touched_extreme =  8 IF stc_max_8 >= 72
+        stc_strong_turn     =  3 IF (history.stc[-1] - current.stc) > 0.5
+    
+    // ---- RSI: MOMENTUM (hard requirement) ----
+    
+    rsi_max_5 = MAX(history.rsi[-5:])
+    
+    IF rsi_max_5 < 65:
+        RETURN NONE
+    
+    GRANT points:
+        rsi_was_overbought = 10 IF rsi_max_5 >= 65
+        rsi_falling        =  7 IF current.rsi < history.rsi[-1]
+        rsi_has_room       =  3 IF current.rsi >= 40
+    
+    // ---- STOCH: ENTRY TIMING (hard requirement) ----
+    
+    IF NOT (history.stoch_k[-1] >= history.stoch_d[-1] 
+            AND current.stoch_k < current.stoch_d):
+        RETURN NONE
+    
+    GRANT points:
+        stoch_in_overbought =  8 IF current.stoch_k >= 65 AND current.stoch_d >= 65
+        stoch_bear_cross    = 10 IF bear cross just happened
+        stoch_falling       =  2 IF current.stoch_k < history.stoch_k[-1]
+    
+    // ---- MOVING AVERAGES ----
+    
+    GRANT points:
+        price_below_fast =  5 IF current.price < current.ma_fast
+        breaking_fast    =  5 IF price crossed below fast MA this candle
+        slow_ma_resist   =  5 IF current.price <= current.ma_slow * 1.0005
+    
+    // ---- BOLLINGER BANDS ----
+    
+    distance_to_upper = (bb_upper - price) / (bb_upper - bb_mid)
+    
+    GRANT points:
+        near_upper_band  =  5 IF distance_to_upper <= 0.30
+        bands_expanding  =  3 IF band width >= threshold
+        price_off_upper  =  2 IF price < bb_upper AND bearish candle
+    
+    // ---- PRICE ACTION (bonus) ----
+    
+    distribution = (
+        current.body < 0 AND history.body[-1] > 0
+        AND ABS(current.body) > ABS(history.body[-1])
+    )
+    
+    // ---- SCORE ----
+    
+    confidence = TOTAL_POINTS / MAX_POINTS
+    IF distribution: confidence = confidence * 1.05
+    
+    RETURN PUT signal WITH confidence
+
+================================================================
+HARD REQUIREMENTS SUMMARY
+================================================================
+
+CALL (Oversold Reversal):
+    ✓ STC ≤ 30 AND STC turned up
+    ✓ RSI was ≤ 35 in last 5 candles
+    ✓ Stoch bull cross (K crossed above D)
+
+PUT (Overbought Reversal):
+    ✓ STC ≥ 70 AND STC turned down
+    ✓ RSI was ≥ 65 in last 5 candles
+    ✓ Stoch bear cross (K crossed below D)
+
+IF ANY HARD REQUIREMENT MISSING → NO TRADE
+
+================================================================
+SCORING WEIGHTS to ignored
+================================================================
+
+STC:     35 points  (primary — at extreme + turning + touched extreme)
+RSI:     20 points  (momentum — was extreme + direction + room to run)
+Stoch:   20 points  (entry — in zone + crossover + direction)
+MA:      15 points  (structure — price vs fast MA + reclaim/break + slow MA)
+BB:      10 points  (volatility — band proximity + expansion)
+TOTAL:  100 points
+
+MINIMUM CONFIDENCE: 70%
+================================================================

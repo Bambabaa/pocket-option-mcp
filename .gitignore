@@ -7,3 +7,4 @@ gha-creds-*.json
 *.db-shm
 *.db-wal
 data/*.csv
+data/trading_data.db

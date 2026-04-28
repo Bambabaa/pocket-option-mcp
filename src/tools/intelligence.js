@@ -5,7 +5,7 @@ import * as core from '../core/intelligence.js';
 export function registerIntelligenceTools(server) {
   server.tool(
     'po_scan_all',
-    'Scan ALL tracked assets and score them by KT video2 strategy precision. Evaluates 7 indicator layers in real-time: MA cross, gap expansion, SMA alignment, slope harmony, RSI strength, RSI ignition, stochastic trigger. Returns ranked list with layer-by-layer breakdown. NOT based on luck/streaks — based on how cleanly indicators align right now.',
+    'Scan ALL tracked assets and score them by   strategy precision. Evaluates 7 indicator layers in real-time: MA cross, gap expansion, SMA alignment, slope harmony, RSI strength, RSI ignition, stochastic trigger. Returns ranked list with layer-by-layer breakdown. NOT based on luck/streaks — based on how cleanly indicators align right now.',
     {},
     async () => {
       try { return jsonResult(core.scanAllAssets()); }
@@ -15,7 +15,7 @@ export function registerIntelligenceTools(server) {
 
   server.tool(
     'po_recommend',
-    'Get ranked trade recommendations based on indicator precision. Only includes assets where the 7 KT video2 layers are aligned (MA cross, SMA stack, RSI zone, stochastic cross, etc.) AND recent win rate meets threshold. Returns ranked list with precision scores and layer details.',
+    'Get ranked trade recommendations based on indicator precision. Only includes assets where the 7   layers are aligned (MA cross, SMA stack, RSI zone, stochastic cross, etc.) AND recent win rate meets threshold. Returns ranked list with precision scores and layer details.',
     {
       min_precision_score: z.coerce.number().min(0).max(100).optional().default(50).describe('Minimum precision score 0-100 (default 50)'),
       min_win_rate: z.coerce.number().min(0).max(100).optional().default(55).describe('Minimum recent win rate % (default 55)'),
@@ -28,7 +28,7 @@ export function registerIntelligenceTools(server) {
 
   server.tool(
     'po_risk_check',
-    'Pre-trade audit for an asset. Evaluates all 4 MODE D patterns against current bar data, scores each (gates passed, gates failed, strength), and returns: verdict GOOD/CAUTION/RISKY/AVOID, score 0-100, trade_verdict (one sentence on the requested direction\'s pattern), mode_d.ranked_verdicts (strongest pattern first with verdict_summary), lookback_narrative (how the setup formed), and warnings. Lead field for the Analyst is trade_verdict — reads pattern verdicts, not raw numbers.',
+    'Pre-trade audit for an asset. Evaluates all 4   patterns against current bar data, scores each (gates passed, gates failed, strength), and returns: verdict GOOD/CAUTION/RISKY/AVOID, score 0-100, trade_verdict (one sentence on the requested direction\'s pattern), mode_d.ranked_verdicts (strongest pattern first with verdict_summary), lookback_narrative (how the setup formed), and warnings. Lead field for the Analyst is trade_verdict — reads pattern verdicts, not raw numbers.',
     {
       asset: z.string().describe('Asset symbol to check, e.g. EURUSD_otc'),
       direction: z.enum(['CALL', 'PUT']).optional().describe('Trade direction to check against precision score direction'),

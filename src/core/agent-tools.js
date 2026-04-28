@@ -94,7 +94,7 @@ export async function getSignalContext(asset) {
   // current = indRows[0], bar-1 = indRows[1], bar-2 = indRows[2], bar-3 = indRows[3]
   const [bar0, barM1, barM2, barM3] = indRows;
 
-  // Evaluate all 4 MODE D patterns against current bar window
+  // Evaluate all 4   patterns against current bar window
   // bars array newest-first matches evaluateModeD() contract
   const modeD = evaluateModeD(indRows);
 
@@ -106,17 +106,17 @@ export async function getSignalContext(asset) {
     price_age_sec: priceAge,
     data_fresh: priceAge !== null && priceAge < 30,
 
-    // The 4-bar indicator window the MODE D gates need
+    // The 4-bar indicator window the   gates need
     bars: {
-      current:  bar0  || null,
-      minus_1:  barM1 || null,
-      minus_2:  barM2 || null,
-      minus_3:  barM3 || null,
+      current: bar0 || null,
+      minus_1: barM1 || null,
+      minus_2: barM2 || null,
+      minus_3: barM3 || null,
     },
 
     // Candle OHLC for same bars
     candles: candles.reduce((m, c) => {
-      if      (!bar0  || c.timestamp === bar0.timestamp)  m.current = c;
+      if (!bar0 || c.timestamp === bar0.timestamp) m.current = c;
       else if (!barM1 || c.timestamp === barM1.timestamp) m.minus_1 = c;
       else if (!barM2 || c.timestamp === barM2.timestamp) m.minus_2 = c;
       return m;
@@ -124,29 +124,29 @@ export async function getSignalContext(asset) {
 
     // Latest signal fired on this asset
     latest_signal: latestSignal ? {
-      id:        latestSignal.id,
+      id: latestSignal.id,
       direction: latestSignal.direction,
-      age_sec:   nowSec - latestSignal.timestamp,
-      strategy:  latestSignal.strategy_used,
-      reasons:   (() => { try { return JSON.parse(latestSignal.reasons); } catch { return []; } })(),
+      age_sec: nowSec - latestSignal.timestamp,
+      strategy: latestSignal.strategy_used,
+      reasons: (() => { try { return JSON.parse(latestSignal.reasons); } catch { return []; } })(),
     } : null,
 
     // Recent performance context
-    recent_trades:    recentTrades.length,
-    recent_win_rate:  recentWinRate,
-    consec_losses:    consecLosses,
-    recent_pl:        parseFloat(recentPL.toFixed(2)),
+    recent_trades: recentTrades.length,
+    recent_win_rate: recentWinRate,
+    consec_losses: consecLosses,
+    recent_pl: parseFloat(recentPL.toFixed(2)),
 
-    // MODE D pattern evaluation — all 4 patterns scored against current bars
+    //   pattern evaluation — all 4 patterns scored against current bars
     mode_d: modeD.success ? {
-      top_pattern:   modeD.top_pattern,
+      top_pattern: modeD.top_pattern,
       top_direction: modeD.top_direction,
-      best_call:     modeD.best_call,
-      best_put:      modeD.best_put,
-      bb_bps:        modeD.bb_bps,
-      ma_gap_bps:    modeD.ma_gap_bps,
-      lookback:      modeD.lookback,
-      patterns:      modeD.patterns,
+      best_call: modeD.best_call,
+      best_put: modeD.best_put,
+      bb_bps: modeD.bb_bps,
+      ma_gap_bps: modeD.ma_gap_bps,
+      lookback: modeD.lookback,
+      patterns: modeD.patterns,
     } : null,
   };
 }
@@ -164,13 +164,13 @@ export async function getSignalContext(asset) {
 
 export async function drawdownCheck(opts = {}) {
   const {
-    dailyLossLimit  = 2000,   // stop trading if today's loss exceeds this ($)
+    dailyLossLimit = 2000,   // stop trading if today's loss exceeds this ($)
     maxConsecLosses = 4,      // stop if N losses in a row across all assets
     maxTradesPerDay = 50,     // hard cap on daily trade count
   } = opts;
 
-  const nowSec      = Math.floor(Date.now() / 1000);
-  const todayStart  = nowSec - (nowSec % 86400);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const todayStart = nowSec - (nowSec % 86400);
 
   // Today's trades
   const todayTrades = await all(
@@ -181,10 +181,10 @@ export async function drawdownCheck(opts = {}) {
     [todayStart]
   );
 
-  const todayPL     = todayTrades.reduce((a, t) => a + (t.profit_loss || 0), 0);
-  const todayWins   = todayTrades.filter(t => t.result === 'WIN').length;
+  const todayPL = todayTrades.reduce((a, t) => a + (t.profit_loss || 0), 0);
+  const todayWins = todayTrades.filter(t => t.result === 'WIN').length;
   const todayLosses = todayTrades.filter(t => t.result === 'LOSS').length;
-  const todayCount  = todayTrades.length;
+  const todayCount = todayTrades.length;
 
   // Consecutive losses across ALL assets (most recent trades first)
   let globalConsecLosses = 0;
@@ -197,8 +197,8 @@ export async function drawdownCheck(opts = {}) {
   const latestPrice = await get(
     'SELECT timestamp FROM prices ORDER BY timestamp DESC LIMIT 1'
   );
-  const priceAge  = latestPrice ? nowSec - latestPrice.timestamp : null;
-  const botLive   = priceAge !== null && priceAge < 30;
+  const priceAge = latestPrice ? nowSec - latestPrice.timestamp : null;
+  const botLive = priceAge !== null && priceAge < 30;
 
   // Pending MCP orders (already queued, not yet executed)
   const pendingOrders = await all(
@@ -222,9 +222,9 @@ export async function drawdownCheck(opts = {}) {
   }
 
   let verdict;
-  if (blocks.length === 0)               verdict = 'GO';
+  if (blocks.length === 0) verdict = 'GO';
   else if (!botLive || todayPL <= -Math.abs(dailyLossLimit)) verdict = 'STOP';
-  else                                   verdict = 'PAUSE';
+  else verdict = 'PAUSE';
 
   return {
     success: true,
@@ -232,20 +232,20 @@ export async function drawdownCheck(opts = {}) {
     safe_to_trade: verdict === 'GO',
     blocks,               // reasons for PAUSE/STOP
     today: {
-      trades:         todayCount,
-      wins:           todayWins,
-      losses:         todayLosses,
-      pnl:            parseFloat(todayPL.toFixed(2)),
-      consec_losses:  globalConsecLosses,
+      trades: todayCount,
+      wins: todayWins,
+      losses: todayLosses,
+      pnl: parseFloat(todayPL.toFixed(2)),
+      consec_losses: globalConsecLosses,
     },
     limits: {
-      daily_loss_limit:  dailyLossLimit,
+      daily_loss_limit: dailyLossLimit,
       max_consec_losses: maxConsecLosses,
       max_trades_per_day: maxTradesPerDay,
     },
-    bot_live:        botLive,
-    price_age_sec:   priceAge,
-    pending_orders:  pendingOrders.length,
+    bot_live: botLive,
+    price_age_sec: priceAge,
+    pending_orders: pendingOrders.length,
   };
 }
 
@@ -357,7 +357,7 @@ export async function unblockAsset(asset) {
 // Returns { blocked: true, trigger, reason } or { blocked: false }
 
 export async function autoBlockCheck(asset) {
-  const nowSec     = Math.floor(Date.now() / 1000);
+  const nowSec = Math.floor(Date.now() / 1000);
   const todayStart = nowSec - (nowSec % 86400);
 
   // Already blocked? Skip.
@@ -395,7 +395,7 @@ export async function autoBlockCheck(asset) {
   // Trigger B: win rate < 35% with >= 5 trades today
   if (trades.length >= 5) {
     const wins = trades.filter(t => t.result === 'WIN').length;
-    const wr   = (wins / trades.length) * 100;
+    const wr = (wins / trades.length) * 100;
     if (wr < 35) {
       const reason = `auto-block: win rate ${wr.toFixed(0)}% on ${trades.length} trades today`;
       await blockAsset(asset, reason, 'auto', 120);
@@ -460,7 +460,7 @@ export async function autoBlockVolatilitySweep() {
 // BB width = (bb_upper - bb_lower) / bb_middle * 10000
 //
 // Classification:
-//   ≥ 10 bps  → GOOD     (healthy volatility, MODE D gates work well)
+//   ≥ 10 bps  → GOOD     (healthy volatility,   gates work well)
 //   5–10 bps  → MARGINAL (tradeable but borderline)
 //   2–5 bps   → WEAK     (low volatility, poor signal quality)
 //   < 2 bps   → FLAT     (pegged/broken, block this)
@@ -513,38 +513,38 @@ export async function getAssetVolatility(minBbBps = 0) {
 
   function classify(bps) {
     if (bps >= 10) return 'GOOD';
-    if (bps >= 5)  return 'MARGINAL';
-    if (bps >= 2)  return 'WEAK';
+    if (bps >= 5) return 'MARGINAL';
+    if (bps >= 2) return 'WEAK';
     return 'FLAT';
   }
 
   const assets = volRows.map(r => {
-    const bps   = parseFloat((r.avg_bb_bps || 0).toFixed(2));
-    const perf  = plMap.get(r.asset);
+    const bps = parseFloat((r.avg_bb_bps || 0).toFixed(2));
+    const perf = plMap.get(r.asset);
     const block = blockedSet.get(r.asset);
 
     return {
-      asset:       r.asset,
-      avg_bb_bps:  bps,
-      vol_class:   classify(bps),
+      asset: r.asset,
+      avg_bb_bps: bps,
+      vol_class: classify(bps),
       bars_sampled: r.bar_count,
       data_age_sec: now - r.last_seen,
-      blocked:      block ? true : false,
+      blocked: block ? true : false,
       block_reason: block?.reason ?? null,
-      total_pl:     perf ? parseFloat(perf.total_pl.toFixed(2)) : null,
+      total_pl: perf ? parseFloat(perf.total_pl.toFixed(2)) : null,
       total_trades: perf?.total_trades ?? 0,
-      win_rate:     perf && perf.total_trades > 0
-                      ? parseFloat(((perf.wins / perf.total_trades) * 100).toFixed(1))
-                      : null,
+      win_rate: perf && perf.total_trades > 0
+        ? parseFloat(((perf.wins / perf.total_trades) * 100).toFixed(1))
+        : null,
     };
   });
 
   const summary = {
-    good:     assets.filter(a => a.vol_class === 'GOOD').length,
+    good: assets.filter(a => a.vol_class === 'GOOD').length,
     marginal: assets.filter(a => a.vol_class === 'MARGINAL').length,
-    weak:     assets.filter(a => a.vol_class === 'WEAK').length,
-    flat:     assets.filter(a => a.vol_class === 'FLAT').length,
-    blocked:  assets.filter(a => a.blocked).length,
+    weak: assets.filter(a => a.vol_class === 'WEAK').length,
+    flat: assets.filter(a => a.vol_class === 'FLAT').length,
+    blocked: assets.filter(a => a.blocked).length,
   };
 
   return {

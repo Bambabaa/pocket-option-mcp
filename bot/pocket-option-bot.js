@@ -359,21 +359,21 @@ const STATE = {
     AUTHENTICATED: false,
     INDICATORS: {},
     // ============================================================================
-    // BOT SETTINGS — KT STRATEGY ONLY (Katie Tutorials / YouTube videos)
+    // BOT SETTINGS —  STRATEGY ONLY (Katie Tutorials / YouTube videos)
     // ============================================================================
-    // Pipeline uses only KT strategy tier (see docs/youtube_strategies.md).
+    // Pipeline uses only  strategy tier (see docs/youtube_strategies.md).
     // No other strategies (e.g. vote-based MA/RSI/MACD) are used.
     // ============================================================================
     SETTINGS: {
-        // ---------- KT Strategy (YouTube videos) ----------
-        ktStrategy: 'video2',                 // 'video1' | 'video2' | 'video3' (Set to null to run all)
+        // ----------  Strategy (YouTube videos) ----------
+        Strategy: ' ',                 // 'video1' | ' ' | 'video3' (Set to null to run all)
         // Optional Video 1 (calibrated to displayed: ZigZag periods 6 and 4, avoid high vol):
-        // ktZigZagDeviation: 0.5,            // default 0.5
-        // ktZigZagMinBars: 4,                // default 4 (matches "Periods 6 and 4")
-        // ktVideo1MaxATRPercent: 0.5,        // skip when ATR% > this
-        // ktVideo1ATRPeriod: 14,             // ATR period for ATR% (default 14)
+        // ZigZagDeviation: 0.5,            // default 0.5
+        // ZigZagMinBars: 4,                // default 4 (matches "Periods 6 and 4")
+        // Video1MaxATRPercent: 0.5,        // skip when ATR% > this
+        // Video1ATRPeriod: 14,             // ATR period for ATR% (default 14)
 
-        // ---------- (Legacy/unused: gates are now KT per-video only) ----------
+        // ---------- (Legacy/unused: gates are now  per-video only) ----------
         // adxPeriod: 14,
         // adxThreshold: 10,
         // minTradeADX: 10,
@@ -796,134 +796,134 @@ async function processWebSocketMessage(payload, page) {
                         // ignore duplicates
                     }
 
-                if (DEBUG_OHLC) {
-                    log(`✅ Finalize ${asset} @ ${STATE.CURRENT_CANDLE_START[asset]} O=${currentCandle.open} H=${currentCandle.high} L=${currentCandle.low} C=${currentCandle.close}`, 'green');
-                }
+                    if (DEBUG_OHLC) {
+                        log(`✅ Finalize ${asset} @ ${STATE.CURRENT_CANDLE_START[asset]} O=${currentCandle.open} H=${currentCandle.high} L=${currentCandle.low} C=${currentCandle.close}`, 'green');
+                    }
 
-                // Push finalized candle to STATE.CANDLES for indicators [timestamp, open, close, high, low]
-                // Guard 2: skip the entire indicator + signal pipeline if this candle timestamp is already
-                // the last entry in STATE.CANDLES — the feed is frozen and re-firing the same bar.
-                // Asset volatility fluctuates; we never hardcode asset lists — all filtering is data-driven.
-                if (!STATE.CANDLES[asset]) STATE.CANDLES[asset] = [];
-                const _lastEntry = STATE.CANDLES[asset][STATE.CANDLES[asset].length - 1];
-                const _isDupCandle = _lastEntry && _lastEntry[0] === STATE.CURRENT_CANDLE_START[asset];
-                if (_isDupCandle) {
-                    log(`[STALE] Skipping duplicate candle push for ${asset} @ ${STATE.CURRENT_CANDLE_START[asset]} — feed may be frozen`, 'yellow');
-                } else {
+                    // Push finalized candle to STATE.CANDLES for indicators [timestamp, open, close, high, low]
+                    // Guard 2: skip the entire indicator + signal pipeline if this candle timestamp is already
+                    // the last entry in STATE.CANDLES — the feed is frozen and re-firing the same bar.
+                    // Asset volatility fluctuates; we never hardcode asset lists — all filtering is data-driven.
+                    if (!STATE.CANDLES[asset]) STATE.CANDLES[asset] = [];
+                    const _lastEntry = STATE.CANDLES[asset][STATE.CANDLES[asset].length - 1];
+                    const _isDupCandle = _lastEntry && _lastEntry[0] === STATE.CURRENT_CANDLE_START[asset];
+                    if (_isDupCandle) {
+                        log(`[STALE] Skipping duplicate candle push for ${asset} @ ${STATE.CURRENT_CANDLE_START[asset]} — feed may be frozen`, 'yellow');
+                    } else {
 
-                STATE.CANDLES[asset].push([
-                    STATE.CURRENT_CANDLE_START[asset],
-                    currentCandle.open,
-                    currentCandle.close,
-                    currentCandle.high,
-                    currentCandle.low
-                ]);
+                        STATE.CANDLES[asset].push([
+                            STATE.CURRENT_CANDLE_START[asset],
+                            currentCandle.open,
+                            currentCandle.close,
+                            currentCandle.high,
+                            currentCandle.low
+                        ]);
 
-                // Recalculate indicators on finalized candle
-                const candlesArr = STATE.CANDLES[asset];
-                const minCandles = Indicators.getMinCandlesForKT(STATE.SETTINGS);
-                if (candlesArr.length >= minCandles) {
-                    const indicatorData = indicators.calculateAll(asset, candlesArr, STATE.SETTINGS);
-                    if (indicatorData) {
-                        STATE.INDICATORS[asset] = indicatorData;
+                        // Recalculate indicators on finalized candle
+                        const candlesArr = STATE.CANDLES[asset];
+                        const minCandles = Indicators.getMinCandlesForKT(STATE.SETTINGS);
+                        if (candlesArr.length >= minCandles) {
+                            const indicatorData = indicators.calculateAll(asset, candlesArr, STATE.SETTINGS);
+                            if (indicatorData) {
+                                STATE.INDICATORS[asset] = indicatorData;
 
-                        try {
-                            await database.insertIndicators(asset, STATE.CURRENT_CANDLE_START[asset], indicatorData);
-                            if (DEBUG_OHLC) {
-                                log(`✅ Indicators stored for ${asset} on candle finalize`, 'green');
-                            }
-                        } catch (error) {
-                            // Log error but don't spam console - only log if it's not a duplicate
-                            if (!error.message || !error.message.includes('UNIQUE constraint')) {
-                                console.error(`❌ Error inserting indicators for ${asset} on finalize:`, error.message);
-                            }
-                        }
-
-                        // Only insert signals if direction is valid and not NEUTRAL
-                        if (indicatorData.signals &&
-                            indicatorData.signals.direction &&
-                            indicatorData.signals.direction !== 'NEUTRAL' &&
-                            (indicatorData.signals.direction === 'CALL' || indicatorData.signals.direction === 'PUT')) {
-                            try {
-                                const finalSignals = indicatorData.signals;
-                                const signalTimestamp = STATE.CURRENT_CANDLE_START[asset];
-
-                                // Guard 1: reject signal if the candle array hasn't advanced.
-                                // Compare the signal timestamp against the second-to-last candle in the
-                                // array. If they match, the finalizer just re-fired on the same bar it
-                                // fired on last time — the feed is frozen.
-                                // Uses only DB-relative timestamps so no wall-clock alignment needed.
-                                const _candleArr = STATE.CANDLES[asset] || [];
-                                const _prevCandle = _candleArr.length >= 2 ? _candleArr[_candleArr.length - 2] : null;
-                                const _isStale = _prevCandle && _prevCandle[0] === signalTimestamp;
-                                if (_isStale) {
-                                    log(`[STALE] Signal blocked for ${asset}: same candle timestamp ${signalTimestamp} fired again — feed frozen`, 'red');
-                                } else {
-
-                                const insertResult = await database.insertSignal(asset, signalTimestamp, {
-                                    ...finalSignals
-                                });
-
-                                // Enqueue ALL signals directly — no qualification gate.
-                                // The validation loop still runs separately for analysis (signal_outcomes).
-                                if (insertResult?.id || finalSignals) {
-                                    const sigId = insertResult?.id || (await database.get('SELECT id FROM signals WHERE asset = ? AND timestamp = ?', [asset, signalTimestamp])).id;
-                                    const inFlight = await database.hasAssetInFlightLiveOrder(asset);
-                                    if (!inFlight && sigId) {
-                                        const enqResultId = await database.enqueueOrder(sigId, asset, finalSignals.direction, signalTimestamp);
-                                        const exec = STATE.SETTINGS.execution;
-                                        const isLiveExecution = exec?.enabled === true;
-                                        if (STATE.SETTINGS.executeInlineWithBot && isLiveExecution && enqResultId) {
-                                            const shouldExecute = !(await database.hasOrderedTradeForOrder(enqResultId));
-                                            if (shouldExecute) {
-                                                const blockEntry = await isAssetBlocked(asset);
-                                                if (blockEntry) {
-                                                    log(`[BLOCK] Skipping ${asset}: ${blockEntry.reason}`, 'yellow');
-                                                    await database.updateOrderStatus(enqResultId, 'SKIPPED', `asset-blocked: ${blockEntry.reason}`);
-                                                } else {
-                                                    const order = { id: enqResultId, signal_id: sigId, asset, direction: finalSignals.direction, signal_timestamp: signalTimestamp };
-                                                    executionQueue.push({
-                                                        database,
-                                                        order,
-                                                        config: {
-                                                            tradeAmount: STATE.SETTINGS.tradeAmount || 1,
-                                                            skipQualifiedGate: true,
-                                                            riskMax: null,
-                                                            execution: STATE.SETTINGS.execution,
-                                                            requireLiveExecution: true
-                                                        }
-                                                    });
-                                                    runExecutionWorker(page);
-                                                } // end !blockEntry
-                                            }
-                                        }
+                                try {
+                                    await database.insertIndicators(asset, STATE.CURRENT_CANDLE_START[asset], indicatorData);
+                                    if (DEBUG_OHLC) {
+                                        log(`✅ Indicators stored for ${asset} on candle finalize`, 'green');
+                                    }
+                                } catch (error) {
+                                    // Log error but don't spam console - only log if it's not a duplicate
+                                    if (!error.message || !error.message.includes('UNIQUE constraint')) {
+                                        console.error(`❌ Error inserting indicators for ${asset} on finalize:`, error.message);
                                     }
                                 }
 
-                                if (DEBUG_OHLC) {
-                                    log(`✅ Signal stored for ${asset}: ${indicatorData.signals.direction}`, 'green');
-                                }
+                                // Only insert signals if direction is valid and not NEUTRAL
+                                if (indicatorData.signals &&
+                                    indicatorData.signals.direction &&
+                                    indicatorData.signals.direction !== 'NEUTRAL' &&
+                                    (indicatorData.signals.direction === 'CALL' || indicatorData.signals.direction === 'PUT')) {
+                                    try {
+                                        const finalSignals = indicatorData.signals;
+                                        const signalTimestamp = STATE.CURRENT_CANDLE_START[asset];
 
-                                } // end Guard 1 stale-signal check
-                            } catch (error) {
-                                // Log error but don't spam console - only log if it's not a duplicate
-                                if (!error.message || !error.message.includes('UNIQUE constraint')) {
-                                    console.error(`❌ Error inserting signal for ${asset} on finalize:`, error.message);
+                                        // Guard 1: reject signal if the candle array hasn't advanced.
+                                        // Compare the signal timestamp against the second-to-last candle in the
+                                        // array. If they match, the finalizer just re-fired on the same bar it
+                                        // fired on last time — the feed is frozen.
+                                        // Uses only DB-relative timestamps so no wall-clock alignment needed.
+                                        const _candleArr = STATE.CANDLES[asset] || [];
+                                        const _prevCandle = _candleArr.length >= 2 ? _candleArr[_candleArr.length - 2] : null;
+                                        const _isStale = _prevCandle && _prevCandle[0] === signalTimestamp;
+                                        if (_isStale) {
+                                            log(`[STALE] Signal blocked for ${asset}: same candle timestamp ${signalTimestamp} fired again — feed frozen`, 'red');
+                                        } else {
+
+                                            const insertResult = await database.insertSignal(asset, signalTimestamp, {
+                                                ...finalSignals
+                                            });
+
+                                            // Enqueue ALL signals directly — no qualification gate.
+                                            // The validation loop still runs separately for analysis (signal_outcomes).
+                                            if (insertResult?.id || finalSignals) {
+                                                const sigId = insertResult?.id || (await database.get('SELECT id FROM signals WHERE asset = ? AND timestamp = ?', [asset, signalTimestamp])).id;
+                                                const inFlight = await database.hasAssetInFlightLiveOrder(asset);
+                                                if (!inFlight && sigId) {
+                                                    const enqResultId = await database.enqueueOrder(sigId, asset, finalSignals.direction, signalTimestamp);
+                                                    const exec = STATE.SETTINGS.execution;
+                                                    const isLiveExecution = exec?.enabled === true;
+                                                    if (STATE.SETTINGS.executeInlineWithBot && isLiveExecution && enqResultId) {
+                                                        const shouldExecute = !(await database.hasOrderedTradeForOrder(enqResultId));
+                                                        if (shouldExecute) {
+                                                            const blockEntry = await isAssetBlocked(asset);
+                                                            if (blockEntry) {
+                                                                log(`[BLOCK] Skipping ${asset}: ${blockEntry.reason}`, 'yellow');
+                                                                await database.updateOrderStatus(enqResultId, 'SKIPPED', `asset-blocked: ${blockEntry.reason}`);
+                                                            } else {
+                                                                const order = { id: enqResultId, signal_id: sigId, asset, direction: finalSignals.direction, signal_timestamp: signalTimestamp };
+                                                                executionQueue.push({
+                                                                    database,
+                                                                    order,
+                                                                    config: {
+                                                                        tradeAmount: STATE.SETTINGS.tradeAmount || 1,
+                                                                        skipQualifiedGate: true,
+                                                                        riskMax: null,
+                                                                        execution: STATE.SETTINGS.execution,
+                                                                        requireLiveExecution: true
+                                                                    }
+                                                                });
+                                                                runExecutionWorker(page);
+                                                            } // end !blockEntry
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            if (DEBUG_OHLC) {
+                                                log(`✅ Signal stored for ${asset}: ${indicatorData.signals.direction}`, 'green');
+                                            }
+
+                                        } // end Guard 1 stale-signal check
+                                    } catch (error) {
+                                        // Log error but don't spam console - only log if it's not a duplicate
+                                        if (!error.message || !error.message.includes('UNIQUE constraint')) {
+                                            console.error(`❌ Error inserting signal for ${asset} on finalize:`, error.message);
+                                        }
+                                    }
+                                }
+                            } else {
+                                if (DEBUG_OHLC) {
+                                    log(`⚠️  calculateAll returned null/undefined for ${asset} on finalize`, 'yellow');
                                 }
                             }
+                        } else {
+                            if (DEBUG_OHLC) {
+                                log(`⚠️  Not enough candles for ${asset} on finalize: ${candlesArr.length} < ${minCandles}`, 'yellow');
+                            }
                         }
-                    } else {
-                        if (DEBUG_OHLC) {
-                            log(`⚠️  calculateAll returned null/undefined for ${asset} on finalize`, 'yellow');
-                        }
-                    }
-                } else {
-                    if (DEBUG_OHLC) {
-                        log(`⚠️  Not enough candles for ${asset} on finalize: ${candlesArr.length} < ${minCandles}`, 'yellow');
-                    }
-                }
 
-                } // end Guard 2: else (not a duplicate candle push)
+                    } // end Guard 2: else (not a duplicate candle push)
                 } // end shouldStore else (candle persisted → push + recompute indicators)
             }
 

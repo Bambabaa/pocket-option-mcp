@@ -46,13 +46,13 @@ class TradingDatabase {
                     reject(err);
                 } else {
                     console.log(`✅ Connected to SQLite database: ${this.dbPath}`);
-                    
+
                     // Increase busy timeout to 60s to handle concurrent batch writes
                     this.db.run('PRAGMA busy_timeout = 60000');
                     // Enable WAL mode to allow concurrent reads from the dashboard
                     this.db.run('PRAGMA journal_mode = WAL');
                     this.db.run('PRAGMA synchronous = NORMAL');
-                    
+
                     this.createTables()
                         .then(() => resolve())
                         .catch(reject);
@@ -80,7 +80,7 @@ class TradingDatabase {
                 UNIQUE(asset, timestamp)
             )`,
 
-            // 2. Indicators table - KT-only: MA1/2/3, RSI, bands, stochastic (v1+v2), Keltner, Schaff
+            // 2. Indicators table - -only: MA1/2/3, RSI, bands, stochastic (v1+v2), Keltner, Schaff
             `CREATE TABLE IF NOT EXISTS indicators (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset TEXT NOT NULL,
@@ -148,7 +148,7 @@ class TradingDatabase {
             // Migration: add updated_at to signal_outcomes if missing (safe, idempotent)
             `ALTER TABLE signal_outcomes ADD COLUMN updated_at INTEGER`,
 
-            // KT indicators remodel: add columns for cascade (video1 → video2 → video3)
+            //  indicators remodel: add columns for cascade 
             `ALTER TABLE indicators ADD COLUMN keltner_upper REAL`,
             `ALTER TABLE indicators ADD COLUMN keltner_lower REAL`,
             `ALTER TABLE indicators ADD COLUMN ma1 REAL`,
@@ -162,7 +162,7 @@ class TradingDatabase {
             // Add strategy_used directly to signals table
             `ALTER TABLE signals ADD COLUMN strategy_used TEXT`,
 
-            // Video2 stochastic (5,3,3) — separate columns to avoid overwriting Video1 (13,3,3)
+            //   stochastic (5,3,3) — separate columns to avoid overwriting v1 (13,3,3)
             `ALTER TABLE indicators ADD COLUMN stochastic_k_v2 REAL`,
             `ALTER TABLE indicators ADD COLUMN stochastic_d_v2 REAL`,
 
@@ -257,8 +257,8 @@ class TradingDatabase {
             }
 
             // Cleanup: asset_controls belongs in mcp.db only — drop it from trading_data.db if present
-            try { await this.run(`DROP TABLE IF EXISTS asset_controls`); } catch (_) {}
-            try { await this.run(`DROP INDEX IF EXISTS idx_asset_controls_asset`); } catch (_) {}
+            try { await this.run(`DROP TABLE IF EXISTS asset_controls`); } catch (_) { }
+            try { await this.run(`DROP INDEX IF EXISTS idx_asset_controls_asset`); } catch (_) { }
 
             // Schema migrations: drop deprecated columns from indicators/signals tables if present
             await this.migrateIndicatorsDropLegacyColumns();
@@ -503,7 +503,7 @@ class TradingDatabase {
     // ==================== INDICATOR OPERATIONS ====================
 
     /**
-     * Insert indicator data (KT cascade: video3 → video2 → video1).
+     * Insert indicator data 
      * Indicator table features (KT-only columns):
      *   ma1, ma2, ma3     — Video 2 SMAs (6, 50, 14)
      *   rsi               — RSI (v2 period 5 or v3 period 8)
@@ -517,7 +517,7 @@ class TradingDatabase {
     async insertIndicators(asset, timestamp, indicators) {
         const keltner = indicators.keltner;
         const stoch = indicators.stochasticKT;
-        const bb = indicators.bollingerKT || indicators.bollinger;
+        const bb = indicators.bollinger || indicators.bollinger;
         const rsiKT = indicators.rsiKT_v2 != null ? indicators.rsiKT_v2 : (indicators.rsiKT_v3 != null ? indicators.rsiKT_v3 : indicators.rsiKT);
         const schaff = indicators.schaffTrendCycle;
 
@@ -537,21 +537,21 @@ class TradingDatabase {
         const params = [
             asset,
             timestamp,
-            // KT Video 2: MA1, MA2, MA3 (6, 50, 14) — null when not yet available
+            //  : MA1, MA2, MA3 (6, 50, 14) — null when not yet available
             indicators.ma1 ?? indicators.ma6,   // ma1 // ?? null
             indicators.ma2 ?? indicators.ma50,  // ma2 // ?? null
             indicators.ma3 ?? indicators.ma14,  // ma3 // ?? null
             rsiKT ?? indicators.rsi,            // rsi (legacy/fallback)
             indicators.rsi_5,                   // rsi_5
             indicators.rsi_8,                   // rsi_8
-            // KT Video 1 & 3 bands — null when not available
+            //   & 3 bands — null when not available
             bb?.upper ?? keltner?.upper,        // bb_upper // ?? null
             bb?.middle ?? keltner?.middle,      // bb_middle // ?? null
             bb?.lower ?? keltner?.lower,        // bb_lower // ?? null
-            // KT Video 1 stochastic (13,3,3) — null when not available
+            //   stochastic (13,3,3) — null when not available
             stoch?.k ?? null,                      // stochastic_k
             stoch?.d ?? null,                      // stochastic_d
-            // KT Video 2 stochastic (5,3,3) — flat properties set in indicators.js
+            //   stochastic (5,3,3) — flat properties set in indicators.js
             indicators.stochastic_k ?? null,       // stochastic_k_v2
             indicators.stochastic_d ?? null,       // stochastic_d_v2
             // keltner/schaff — null when not available
@@ -590,7 +590,7 @@ class TradingDatabase {
     async insertSignal(asset, timestamp, signal) {
         let strategy = signal.strategyUsed || null;
         if (strategy === 'video1') strategy = 'Mean Reversion';
-        if (strategy === 'video2') strategy = 'Fast Trend Follower';
+        if (strategy === 'video2 ') strategy = 'Fast Trend Follower';
         if (strategy === 'video3') strategy = 'Cyclical Sniper';
 
         const sql = `INSERT OR IGNORE INTO signals
@@ -765,7 +765,7 @@ class TradingDatabase {
 
             await this.run('BEGIN TRANSACTION');
 
-            // New KT-only schema: asset, timestamp, direction, reasons, created_at
+            // New -only schema: asset, timestamp, direction, reasons, created_at
             await this.run(`CREATE TABLE IF NOT EXISTS signals_tmp (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset TEXT NOT NULL,
@@ -1168,7 +1168,7 @@ class TradingDatabase {
                      COALESCE((SELECT candle_id FROM signals WHERE id = ?),
                               (SELECT id FROM candles WHERE asset = ? AND timestamp = ?)))`,
             [asset, signalTimestamp, signalId, direction, entryPrice, now,
-             signalId, asset, signalTimestamp]
+                signalId, asset, signalTimestamp]
         );
         if (result != null) {
             await this.run(
@@ -1239,7 +1239,7 @@ class TradingDatabase {
                                       (SELECT id FROM candles WHERE asset = ? AND timestamp = ?)))`;
         try {
             const result = await this.run(sql, [signalId, asset, direction, signalTimestamp,
-                                                signalId, asset, signalTimestamp]);
+                signalId, asset, signalTimestamp]);
             if (!result.id || result.id === 0) {
                 const row = await this.get('SELECT id FROM orders_queue WHERE asset = ? AND signal_timestamp = ?', [asset, signalTimestamp]);
                 if (row) return row.id;
@@ -1299,7 +1299,7 @@ class TradingDatabase {
                                       (SELECT candle_id FROM orders_queue WHERE id = ?)))`;
         try {
             await this.run(sql, [orderId, signalId, asset, entryTimestamp, direction, amount, entryPrice, exitTimestamp, exitPrice, result, profitLoss, payout, notes,
-                                  signalId, orderId]);
+                signalId, orderId]);
         } catch (error) {
             console.error('Error inserting ordered trade:', error.message);
             throw error;
