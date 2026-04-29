@@ -79,7 +79,30 @@ function computeLookback(candles, t) {
         bb_expanding = widthNow > widthPrev;
     }
 
-    return { rsi_peak_10, rsi_trough_10, k_bars_above_65, k_bars_below_35, ma_gap_trend, bb_expanding };
+    // RSI 5-bar lookback (prior 5 bars)
+    const rsiVals5 = history.slice(-5).map(c => c.rsi_5).filter(v => v != null);
+    const rsi_max_5 = rsiVals5.length > 0 ? Math.max(...rsiVals5) : null;
+    const rsi_min_5 = rsiVals5.length > 0 ? Math.min(...rsiVals5) : null;
+
+    // Stoch crossover detection (within last 3 candles)
+    let bullCross3 = false;
+    let bearCross3 = false;
+    for (let offset = 0; offset < 3; offset++) {
+        const cIdx = t - offset;
+        const pIdx = cIdx - 1;
+        if (cIdx >= 0 && pIdx >= 0 && cIdx < candles.length) {
+            const kC = candles[cIdx].stochastic_k_v2;
+            const dC = candles[cIdx].stochastic_d_v2;
+            const kP = candles[pIdx].stochastic_k_v2;
+            const dP = candles[pIdx].stochastic_d_v2;
+            if (kC != null && dC != null && kP != null && dP != null) {
+                if (kP <= dP && kC > dC) bullCross3 = true;
+                if (kP >= dP && kC < dC) bearCross3 = true;
+            }
+        }
+    }
+
+    return { rsi_peak_10, rsi_trough_10, k_bars_above_65, k_bars_below_35, ma_gap_trend, bb_expanding, rsi_min_5, rsi_max_5, bullCross3, bearCross3 };
 }
 
 // ─── STC Gate Definitions ─────────────────────────────────────────────────────
@@ -87,7 +110,7 @@ function computeLookback(candles, t) {
 
 // ctx = { bb_expanding, ma_gap_trend } from computeLookback()
 function checkCallReversal(barM1, bar0, params = {}, ctx = {}) {
-    const { stc_floor = 25, rsi_max = 40, bb_bps_min = 10 } = params;
+    const { stc_floor = 25, rsi_max = 35, bb_bps_min = 10 } = params;
 
     if (bar0.schaff_value == null || barM1.schaff_value == null) return { pass: false, gates: {}, values: {} };
 
@@ -101,23 +124,25 @@ function checkCallReversal(barM1, bar0, params = {}, ctx = {}) {
     const maTrendBps = bar0.ma1 != null && bar0.ma3 != null
         ? ((bar0.ma1 - bar0.ma3) / bar0.ma3) * 10000 : null;
 
-    const g1_stcFloor    = stcValue <= stc_floor;
-    const g2_stcRising   = stcValue > stcPrev;
-    const g3_rsiOversold = rsi != null && rsi < rsi_max;
-    const g4_stochBull   = k != null && d != null && k > d && k < 50;
-    const g5_bbWide      = bbBps != null && bbBps >= bb_bps_min;
+    const g1_stcFloor    = stcPrev <= stc_floor;          // prev bar STC was at floor
+    const g2_stcRange    = stcValue < 75;                 // current STC hasn't crossed to ceiling
+    const g3_stcRising   = stcValue > stcPrev;            // STC hooking up
+    const g4_rsiOversold = ctx.rsi_min_5 != null && ctx.rsi_min_5 <= rsi_max;
+    const g5_stochBull   = ctx.bullCross3 === true;
+    const g6_bbWide      = bbBps != null && bbBps >= bb_bps_min;
+    const g7_bbPierce    = bar0.low != null && bar0.bb_lower != null && bar0.low <= bar0.bb_lower;
 
-    const pass = g1_stcFloor && g2_stcRising && g3_rsiOversold && g4_stochBull && g5_bbWide;
+    const pass = g1_stcFloor && g2_stcRange && g3_stcRising && g4_rsiOversold && g5_stochBull && g6_bbWide && g7_bbPierce;
 
     return {
         pass, direction: 'CALL', patternName: 'STC_CALL_REVERSAL',
-        gates: { g1_stcFloor, g2_stcRising, g3_rsiOversold, g4_stochBull, g5_bbWide },
+        gates: { g1_stcFloor, g2_stcRange, g3_stcRising, g4_rsiOversold, g5_stochBull, g6_bbWide, g7_bbPierce },
         values: { stcValue, stcPrev, rsi, k, d, bbBps, maTrendBps, bb_expanding: ctx.bb_expanding, ma_gap_trend: ctx.ma_gap_trend },
     };
 }
 
 function checkPutReversal(barM1, bar0, params = {}, ctx = {}) {
-    const { stc_ceiling = 75, rsi_min = 60, bb_bps_min = 10 } = params;
+    const { stc_ceiling = 75, rsi_min = 65, bb_bps_min = 10 } = params;
 
     if (bar0.schaff_value == null || barM1.schaff_value == null) return { pass: false, gates: {}, values: {} };
 
@@ -131,17 +156,19 @@ function checkPutReversal(barM1, bar0, params = {}, ctx = {}) {
     const maTrendBps = bar0.ma1 != null && bar0.ma3 != null
         ? ((bar0.ma1 - bar0.ma3) / bar0.ma3) * 10000 : null;
 
-    const g1_stcCeiling  = stcValue >= stc_ceiling;
-    const g2_stcFalling  = stcValue < stcPrev;
-    const g3_rsiOB       = rsi != null && rsi > rsi_min;
-    const g4_stochBear   = k != null && d != null && k < d && k > 50;
-    const g5_bbWide      = bbBps != null && bbBps >= bb_bps_min;
+    const g1_stcCeiling  = stcPrev >= stc_ceiling;        // prev bar STC was at ceiling
+    const g2_stcRange    = stcValue > 25;                 // current STC hasn't crossed to floor
+    const g3_stcFalling  = stcValue < stcPrev;            // STC hooking down
+    const g4_rsiOB       = ctx.rsi_max_5 != null && ctx.rsi_max_5 >= rsi_min;
+    const g5_stochBear   = ctx.bearCross3 === true;
+    const g6_bbWide      = bbBps != null && bbBps >= bb_bps_min;
+    const g7_bbPierce    = bar0.high != null && bar0.bb_upper != null && bar0.high >= bar0.bb_upper;
 
-    const pass = g1_stcCeiling && g2_stcFalling && g3_rsiOB && g4_stochBear && g5_bbWide;
+    const pass = g1_stcCeiling && g2_stcRange && g3_stcFalling && g4_rsiOB && g5_stochBear && g6_bbWide && g7_bbPierce;
 
     return {
         pass, direction: 'PUT', patternName: 'STC_PUT_REVERSAL',
-        gates: { g1_stcCeiling, g2_stcFalling, g3_rsiOB, g4_stochBear, g5_bbWide },
+        gates: { g1_stcCeiling, g2_stcRange, g3_stcFalling, g4_rsiOB, g5_stochBear, g6_bbWide, g7_bbPierce },
         values: { stcValue, stcPrev, rsi, k, d, bbBps, maTrendBps, bb_expanding: ctx.bb_expanding, ma_gap_trend: ctx.ma_gap_trend },
     };
 }
@@ -220,8 +247,8 @@ export async function replayCandles(asset = null, params = {}) {
 
     const signals = [];
     let totalCandles = 0, candlesWithIndicators = 0, candlesWithHistory = 0;
-    const callRejections = { g1_stcFloor: 0, g2_stcRising: 0, g3_rsiOversold: 0, g4_stochBull: 0, g5_bbWide: 0 };
-    const putRejections  = { g1_stcCeiling: 0, g2_stcFalling: 0, g3_rsiOB: 0, g4_stochBear: 0, g5_bbWide: 0 };
+    const callRejections = { g1_stcFloor: 0, g2_stcRange: 0, g3_stcRising: 0, g4_rsiOversold: 0, g5_stochBull: 0, g6_bbWide: 0, g7_bbPierce: 0 };
+    const putRejections  = { g1_stcCeiling: 0, g2_stcRange: 0, g3_stcFalling: 0, g4_rsiOB: 0, g5_stochBear: 0, g6_bbWide: 0, g7_bbPierce: 0 };
 
     for (const [assetName, candles] of Object.entries(byAsset)) {
         const priceMap = pricesByAsset[assetName] || null;
@@ -721,15 +748,15 @@ export async function simulateGates(params = {}) {
                 });
             }
 
-            // Baseline CALL
-            if (checkCallReversal(barM1, bar0, { stc_floor: 25, rsi_max: 30, bb_bps_min: 10 }, ctx).pass)
+            // Baseline CALL (paper defaults: rsi ≤35, no K midline)
+            if (checkCallReversal(barM1, bar0, { stc_floor: 25, rsi_max: 35, bb_bps_min: 10 }, ctx).pass)
                 pushSig(baselineSigs.call, 'CALL');
             // Modified CALL
             if (checkCallReversal(barM1, bar0, { stc_floor: call_stc_floor, rsi_max: call_rsi_max, bb_bps_min }, ctx).pass)
                 pushSig(modifiedSigs.call, 'CALL');
 
-            // Baseline PUT
-            if (checkPutReversal(barM1, bar0, { stc_ceiling: 90, rsi_min: 70, bb_bps_min: 10 }, ctx).pass)
+            // Baseline PUT (paper defaults: rsi ≥65, no K midline)
+            if (checkPutReversal(barM1, bar0, { stc_ceiling: 75, rsi_min: 65, bb_bps_min: 10 }, ctx).pass)
                 pushSig(baselineSigs.put, 'PUT');
             // Modified PUT
             if (checkPutReversal(barM1, bar0, { stc_ceiling: put_stc_ceiling, rsi_min: put_rsi_min, bb_bps_min }, ctx).pass)
