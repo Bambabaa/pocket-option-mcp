@@ -12,11 +12,11 @@ const AMOUNT = 500, PAYOUT = 0.92;
 const EXPIRIES = [1, 2, 3, 4, 5]; // minutes
 
 // ─── THRESHOLDS FROM CONDITION.TXT ───────────────────────────────────────────
-const CALL_STC_MAX = 30;
+const CALL_STC_MAX = 25;          // Adjusted based on chart visual lines (25/75)
 const CALL_RSI_MIN_5 = 35;        // RSI must have hit ≤35 in last 5 bars
 const CALL_STOCH_OVERSOLD = 35;
 
-const PUT_STC_MIN = 70;
+const PUT_STC_MIN = 75;           // Adjusted based on chart visual lines (25/75)
 const PUT_RSI_MAX_5 = 65;         // RSI must have hit ≥65 in last 5 bars
 const PUT_STOCH_OVERBOUGHT = 65;
 
@@ -88,9 +88,21 @@ function computeFeatures(assetRows, idx) {
   const rsiMin5 = rsiVals5.length > 0 ? Math.min(...rsiVals5) : null;
   const rsiMax5 = rsiVals5.length > 0 ? Math.max(...rsiVals5) : null;
 
-  // Stoch crossover detection
-  const bullCross = kPrev <= dPrev && k > d;
-  const bearCross = kPrev >= dPrev && k < d;
+  // Stoch crossover detection (within last 3 candles)
+  let bullCross = false;
+  let bearCross = false;
+  for (let offset = 0; offset < 3; offset++) {
+    const cIdx = idx - offset;
+    const pIdx = cIdx - 1;
+    const kC = assetRows[cIdx].stochastic_k_v2;
+    const dC = assetRows[cIdx].stochastic_d_v2;
+    const kP = assetRows[pIdx].stochastic_k_v2;
+    const dP = assetRows[pIdx].stochastic_d_v2;
+    if (kC != null && dC != null && kP != null && dP != null) {
+      if (kP <= dP && kC > dC) bullCross = true;
+      if (kP >= dP && kC < dC) bearCross = true;
+    }
+  }
 
   return {
     // Core indicators
@@ -126,16 +138,22 @@ function computeFeatures(assetRows, idx) {
 // ─── CALL REVERSAL STRATEGY (HARD GATES ONLY) ────────────────────────────────
 
 function checkCallReversal(f) {
-  // Gate 1: STC ≤ 30
-  if (f.stc > CALL_STC_MAX) return null;
+  // Gate 1a: PREVIOUS STC was ≤ 25
+  if (f.stcPrev > CALL_STC_MAX) return null;
 
-  // Gate 2: STC turned up
+  // Gate 1b: Current STC hooked up, but hasn't crossed 75
+  if (f.stc >= PUT_STC_MIN) return null;
+
+  // Gate 2: STC turned up (hook)
   if (!f.stcTurningUp) return null;
 
-  // Gate 3: RSI was ≤ 35 in last 5 bars (critical retracement check)
+  // Gate 3: Price must have pierced the lower Bollinger Band
+  if (f.low > f.bbLower) return null;
+
+  // Gate 4: RSI was ≤ 35 in last 5 bars (critical retracement check)
   if (f.rsiMin5 === null || f.rsiMin5 > CALL_RSI_MIN_5) return null;
 
-  // Gate 4: Stoch bull cross (K crossed above D)
+  // Gate 5: Stoch bull cross (K crossed above D)
   if (!f.bullCross) return null;
 
   // All gates passed
@@ -145,16 +163,22 @@ function checkCallReversal(f) {
 // ─── PUT REVERSAL STRATEGY (HARD GATES ONLY) ─────────────────────────────────
 
 function checkPutReversal(f) {
-  // Gate 1: STC ≥ 70
-  if (f.stc < PUT_STC_MIN) return null;
+  // Gate 1a: PREVIOUS STC was ≥ 75
+  if (f.stcPrev < PUT_STC_MIN) return null;
 
-  // Gate 2: STC turned down
+  // Gate 1b: Current STC hooked down, but hasn't crossed 25
+  if (f.stc <= CALL_STC_MAX) return null;
+
+  // Gate 2: STC turned down (hook)
   if (!f.stcTurningDown) return null;
 
-  // Gate 3: RSI was ≥ 65 in last 5 bars (critical extension check)
+  // Gate 3: Price must have pierced the upper Bollinger Band
+  if (f.high < f.bbUpper) return null;
+
+  // Gate 4: RSI was ≥ 65 in last 5 bars (critical extension check)
   if (f.rsiMax5 === null || f.rsiMax5 < PUT_RSI_MAX_5) return null;
 
-  // Gate 4: Stoch bear cross (K crossed below D)
+  // Gate 5: Stoch bear cross (K crossed below D)
   if (!f.bearCross) return null;
 
   // All gates passed
@@ -239,7 +263,7 @@ console.log(`Wrote ${lines.length - 1} signal rows -> ${outPath}`);
 console.log(`DB rows scanned: ${rows.length}`);
 console.log(`Signals fired: ${sigCount}`);
 console.log(`\nHard gates enforced:`);
-console.log(`  CALL: STC≤30 + STC turning up + RSI min 5 bars ≤35 + Stoch bull cross`);
-console.log(`  PUT:  STC≥70 + STC turning down + RSI max 5 bars ≥65 + Stoch bear cross`);
+console.log(`  CALL: Prev STC≤25 + STC turning up (current <75) + Pierced BB Lower + RSI min 5 bars ≤35 + Stoch bull cross (last 3 bars)`);
+console.log(`  PUT:  Prev STC≥75 + STC turning down (current >25) + Pierced BB Upper + RSI max 5 bars ≥65 + Stoch bear cross (last 3 bars)`);
 console.log(`  BB width ≥ 10 bps (all signals)`);
 console.log(`\nNext: Analyze ${outPath} for 2m performance validation\n`);
