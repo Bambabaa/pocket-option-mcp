@@ -1,12 +1,10 @@
 /**
  * replay-multi-db.mjs
  *
- * Runs the validated STC reversal gates (7-gate CALL + 6-gate PUT) across
- * ALL historical datasets and reports results collectively by date.
- *
- * Gates applied:
- *   CALL: STC≤25, rising STC, RSI<30, K>D&&K<50, BB≥10bps, bb_expanding≠false, ma_gap≠narrowing
- *   PUT:  STC≥90, falling STC, RSI>70, K<D&&K>50, BB≥10bps, ma_gap≠narrowing
+ * Runs full 7-gate STC reversal logic across ALL historical datasets.
+ * Gates mirror analysis.js exactly:
+ *   CALL: prevSTC≤25, STC<75, STC rising, rsi_min_5≤40, bullCross3&&K<50, BB≥10bps, low≤bb_lower
+ *   PUT:  prevSTC≥75, STC>25, STC falling, rsi_max_5≥60, bearCross3&&K>50, BB≥10bps, high≥bb_upper
  *   Expiry: 120s primary (60s shown for reference)
  */
 
@@ -77,32 +75,32 @@ function sigMark(p){
     return '   ';
 }
 
-// ── Context (lookback) ─────────────────────────────────────────────────────────
+// ── Lookback context ───────────────────────────────────────────────────────────
 function computeCtx(candles, t) {
-    const bar0    = candles[t];
-    const barPrev = t >= 3 ? candles[t - 3] : null;
+    const LOOKBACK = 10;
+    const history = [];
+    for (let i = Math.max(0, t - LOOKBACK); i < t; i++) history.push(candles[i]);
 
-    let ma_gap_trend = 'unknown';
-    if (bar0.ma1 != null && bar0.ma3 != null && barPrev?.ma1 != null && barPrev?.ma3 != null) {
-        const gapNow  = bar0.ma1 - bar0.ma3;
-        const gapPrev = barPrev.ma1 - barPrev.ma3;
-        const deltaBps = ((gapNow - gapPrev) / bar0.ma3) * 10000;
-        if      (Math.abs(deltaBps) < 1) ma_gap_trend = 'flat';
-        else if (deltaBps > 0)           ma_gap_trend = 'widening_up';
-        else                             ma_gap_trend = 'widening_down';
-        if (Math.abs(gapPrev) - Math.abs(gapNow) > bar0.ma3 * 0.0001) ma_gap_trend = 'narrowing';
+    // RSI 5-bar min/max from prior 5 bars
+    const rsiVals5 = history.slice(-5).map(c => c.rsi_5).filter(v => v != null);
+    const rsi_min_5 = rsiVals5.length > 0 ? Math.min(...rsiVals5) : null;
+    const rsi_max_5 = rsiVals5.length > 0 ? Math.max(...rsiVals5) : null;
+
+    // Stoch crossover within last 3 candles
+    let bullCross3 = false, bearCross3 = false;
+    for (let offset = 0; offset < 3; offset++) {
+        const cIdx = t - offset, pIdx = cIdx - 1;
+        if (cIdx >= 0 && pIdx >= 0 && cIdx < candles.length) {
+            const kC = candles[cIdx].stochastic_k_v2, dC = candles[cIdx].stochastic_d_v2;
+            const kP = candles[pIdx].stochastic_k_v2, dP = candles[pIdx].stochastic_d_v2;
+            if (kC != null && dC != null && kP != null && dP != null) {
+                if (kP <= dP && kC > dC) bullCross3 = true;
+                if (kP >= dP && kC < dC) bearCross3 = true;
+            }
+        }
     }
 
-    let bb_expanding = null;
-    const barBbPrev = t >= 5 ? candles[t - 5] : null;
-    if (bar0.bb_upper != null && bar0.bb_lower != null && bar0.bb_middle != null &&
-        barBbPrev?.bb_upper != null && barBbPrev?.bb_lower != null && barBbPrev?.bb_middle != null) {
-        const wNow  = (bar0.bb_upper - bar0.bb_lower) / bar0.bb_middle;
-        const wPrev = (barBbPrev.bb_upper - barBbPrev.bb_lower) / barBbPrev.bb_middle;
-        bb_expanding = wNow > wPrev;
-    }
-
-    return { ma_gap_trend, bb_expanding };
+    return { rsi_min_5, rsi_max_5, bullCross3, bearCross3 };
 }
 
 // ── Gate checks ────────────────────────────────────────────────────────────────
@@ -114,27 +112,26 @@ function bbBps(bar) {
 function gatesCall(barM1, bar0, ctx) {
     const bps = bbBps(bar0);
     return (
-        bar0.schaff_value <= 25 &&
-        bar0.schaff_value > barM1.schaff_value &&
-        bar0.rsi_5 != null && bar0.rsi_5 < 30 &&
-        bar0.stochastic_k_v2 != null && bar0.stochastic_d_v2 != null &&
-        bar0.stochastic_k_v2 > bar0.stochastic_d_v2 && bar0.stochastic_k_v2 < 50 &&
-        bps != null && bps >= 10 &&
-        ctx.bb_expanding !== false &&
-        ctx.ma_gap_trend !== 'narrowing'
+        barM1.schaff_value <= 25 &&                          // g1: prev bar at floor
+        bar0.schaff_value < 75 &&                           // g2: range guard
+        bar0.schaff_value > barM1.schaff_value &&            // g3: STC hooking up
+        ctx.rsi_min_5 != null && ctx.rsi_min_5 <= 35 &&    // g4: RSI min in last 5 bars ≤35
+        ctx.bullCross3 === true &&                          // g5: K crossed above D within 3 bars
+        bps != null && bps >= 10 &&                         // g6: BB wide enough
+        bar0.low != null && bar0.bb_lower != null && bar0.low <= bar0.bb_lower // g7: BB pierce
     );
 }
 
 function gatesPut(barM1, bar0, ctx) {
     const bps = bbBps(bar0);
     return (
-        bar0.schaff_value >= 90 &&
-        bar0.schaff_value < barM1.schaff_value &&
-        bar0.rsi_5 != null && bar0.rsi_5 > 70 &&
-        bar0.stochastic_k_v2 != null && bar0.stochastic_d_v2 != null &&
-        bar0.stochastic_k_v2 < bar0.stochastic_d_v2 && bar0.stochastic_k_v2 > 50 &&
-        bps != null && bps >= 10 &&
-        ctx.ma_gap_trend !== 'narrowing'
+        barM1.schaff_value >= 75 &&                          // g1: prev bar at ceiling
+        bar0.schaff_value > 25 &&                           // g2: range guard
+        bar0.schaff_value < barM1.schaff_value &&            // g3: STC hooking down
+        ctx.rsi_max_5 != null && ctx.rsi_max_5 >= 65 &&    // g4: RSI max in last 5 bars ≥65
+        ctx.bearCross3 === true &&                          // g5: K crossed below D within 3 bars
+        bps != null && bps >= 10 &&                         // g6: BB wide enough
+        bar0.high != null && bar0.bb_upper != null && bar0.high >= bar0.bb_upper // g7: BB pierce
     );
 }
 
@@ -166,7 +163,7 @@ async function replayDb(dbPath, label) {
     const db = await openDb(dbPath);
 
     const rows = await dbAll(db, `
-        SELECT c.asset, c.timestamp, c.close,
+        SELECT c.asset, c.timestamp, c.open, c.high, c.low, c.close,
                i.rsi_5, i.stochastic_k_v2, i.stochastic_d_v2,
                i.ma1, i.ma3, i.bb_upper, i.bb_middle, i.bb_lower, i.schaff_value
         FROM candles c
