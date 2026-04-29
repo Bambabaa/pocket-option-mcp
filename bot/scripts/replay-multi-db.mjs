@@ -3,14 +3,17 @@
  *
  * Runs full 7-gate STC reversal logic across ALL historical datasets.
  * Gates mirror analysis.js exactly:
- *   CALL: prevSTC≤25, STC<75, STC rising, rsi_min_5≤40, bullCross3&&K<50, BB≥10bps, low≤bb_lower
- *   PUT:  prevSTC≥75, STC>25, STC falling, rsi_max_5≥60, bearCross3&&K>50, BB≥10bps, high≥bb_upper
+ *   CALL: prevSTC≤25, STC<75, STC rising, rsi_min_5≤35, bullCross3, BB≥10bps, low≤bb_lower
+ *   PUT:  prevSTC≥75, STC>25, STC falling, rsi_max_5≥65, bearCross3, BB≥10bps, high≥bb_upper
  *   Expiry: 120s primary (60s shown for reference)
+ *
+ * Outputs: console report + data/replay_signals.csv for deep analysis
  */
 
 import sqlite3pkg from 'sqlite3';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { writeFileSync } from 'fs';
 
 const sqlite3 = sqlite3pkg.verbose();
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -198,17 +201,46 @@ async function replayDb(dbPath, label) {
             const tick120 = findExpiry(priceList, bar0.timestamp, 120);
             const bar1 = candles[t + 1], bar2 = candles[t + 2];
 
+            const bps = bbBps(bar0);
+            const bbPct = (bps != null && bar0.bb_lower != null && bar0.bb_upper != null && bar0.bb_upper !== bar0.bb_lower)
+                ? (bar0.close - bar0.bb_lower) / (bar0.bb_upper - bar0.bb_lower) : null;
+
+            function buildRow(dir, e60, e120) {
+                return {
+                    db: label.trim(), date, asset,
+                    timestamp: bar0.timestamp,
+                    dir,
+                    // Entry OHLC
+                    open: bar0.open, high: bar0.high, low: bar0.low, close: bar0.close,
+                    // STC
+                    stc: bar0.schaff_value, stc_prev: barM1.schaff_value,
+                    // RSI
+                    rsi: bar0.rsi_5, rsi_min_5: ctx.rsi_min_5, rsi_max_5: ctx.rsi_max_5,
+                    // Stoch
+                    k: bar0.stochastic_k_v2, d: bar0.stochastic_d_v2,
+                    bull_cross3: ctx.bullCross3 ? 1 : 0,
+                    bear_cross3: ctx.bearCross3 ? 1 : 0,
+                    // BB
+                    bb_upper: bar0.bb_upper, bb_middle: bar0.bb_middle, bb_lower: bar0.bb_lower,
+                    bb_bps: bps != null ? +bps.toFixed(2) : null,
+                    bb_pct: bbPct != null ? +bbPct.toFixed(4) : null,
+                    // MA
+                    ma6: bar0.ma1, ma14: bar0.ma3,
+                    // Results
+                    r60: e60.result, pl60: e60.pl,
+                    r120: e120.result, pl120: e120.pl,
+                };
+            }
+
             if (gatesCall(barM1, bar0, ctx)) {
                 const e60  = resolveExit('CALL', bar0.close, tick60,  bar1?.close, bar1?.timestamp, bar0.timestamp, 60);
                 const e120 = resolveExit('CALL', bar0.close, tick120, bar2?.close, bar2?.timestamp, bar0.timestamp, 120);
-                signals.push({ db: label.trim(), date, asset, dir: 'CALL',
-                    r60: e60.result, pl60: e60.pl, r120: e120.result, pl120: e120.pl });
+                signals.push(buildRow('CALL', e60, e120));
             }
             if (gatesPut(barM1, bar0, ctx)) {
                 const e60  = resolveExit('PUT', bar0.close, tick60,  bar1?.close, bar1?.timestamp, bar0.timestamp, 60);
                 const e120 = resolveExit('PUT', bar0.close, tick120, bar2?.close, bar2?.timestamp, bar0.timestamp, 120);
-                signals.push({ db: label.trim(), date, asset, dir: 'PUT',
-                    r60: e60.result, pl60: e60.pl, r120: e120.result, pl120: e120.pl });
+                signals.push(buildRow('PUT', e60, e120));
             }
         }
     }
@@ -358,3 +390,23 @@ for (const date of Object.keys(byDate).sort()) {
 }
 console.log(`  ${'─'.repeat(60)}`);
 console.log(`  ${'TOTAL'.padEnd(12)}  ${String(gtAll.n).padStart(3)}  ${gtAll.wr.padEnd(7)}  ${''.padEnd(11)}  $${cumPl}`);
+
+// ── CSV export ─────────────────────────────────────────────────────────────────
+const CSV_PATH = resolve(__dirname, '../../data/replay_signals.csv');
+const CSV_COLS = [
+    'db', 'date', 'asset', 'timestamp', 'dir',
+    'open', 'high', 'low', 'close',
+    'stc', 'stc_prev',
+    'rsi', 'rsi_min_5', 'rsi_max_5',
+    'k', 'd', 'bull_cross3', 'bear_cross3',
+    'bb_upper', 'bb_middle', 'bb_lower', 'bb_bps', 'bb_pct',
+    'ma6', 'ma14',
+    'r60', 'pl60', 'r120', 'pl120',
+];
+const fmt = v => (v === null || v === undefined) ? '' : String(v);
+const csvLines = [
+    CSV_COLS.join(','),
+    ...allSigs.map(s => CSV_COLS.map(c => fmt(s[c])).join(',')),
+];
+writeFileSync(CSV_PATH, csvLines.join('\n') + '\n');
+console.log(`\nCSV saved → ${CSV_PATH}  (${allSigs.length} rows, ${CSV_COLS.length} columns)`);
