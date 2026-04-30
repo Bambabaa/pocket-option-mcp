@@ -15,7 +15,7 @@ class Indicators {
         this._v2ConsecCount = {};
         this._v2LastTs = {};
         this._lastSchaffValues = {};
-        this._rsiHistory   = {};  // last 5 RSI values per asset
+        this._rsiHistory = {};  // last 5 RSI values per asset
         this._stochHistory = {};  // last 4 [k,d] pairs per asset (for 3-bar cross)
     }
 
@@ -302,7 +302,7 @@ class Indicators {
 
     /**
      * Schaff Trend Cycle: cycle = EMA(fast) - EMA(slow), then double-smoothed stochastic of cycle.
-     * Video 3: (30, 55, 8, 4, 3). Returns { value, signal } (main line = "pink", signal = "blue").
+     *  (30, 55, 8, 4, 3). Returns { value, signal } (main line = "pink", signal = "blue").
      */
     calculateSchaffTrendCycle(candles, emaFast = 30, emaSlow = 55, cyclePeriod = 8, smooth1 = 4, smooth2 = 3) {
         if (!candles || candles.length < emaSlow + cyclePeriod + Math.max(smooth1, smooth2)) {
@@ -686,14 +686,14 @@ class Indicators {
     // ==================== SIGNAL TRADE GENERATION ====================
 
     signalstrade(indicators, settings, signals) {
-        const stc       = indicators.schaffTrendCycle ? indicators.schaffTrendCycle.value : null;
-        const stcPrev   = indicators.prevSchaffValue;
+        const stc = indicators.schaffTrendCycle ? indicators.schaffTrendCycle.value : null;
+        const stcPrev = indicators.prevSchaffValue;
         const rsi_min_5 = indicators.rsi_min_5;
         const rsi_max_5 = indicators.rsi_max_5;
-        const k         = indicators.stochastic_k;
-        const d         = indicators.stochastic_d;
-        const bb        = indicators.bollinger;
-        const lc        = indicators.lastCandle;
+        const k = indicators.stochastic_k;
+        const d = indicators.stochastic_d;
+        const bb = indicators.bollinger;
+        const lc = indicators.lastCandle;
 
         if (stc == null || stcPrev == null || k == null || d == null || !bb || !bb.middle || !lc) {
             return false;
@@ -711,8 +711,8 @@ class Indicators {
             indicators.bullCross3 === true &&             // g6: K crossed above D within last 3 bars
             bbBps >= 10                                   // g7: BB wide enough
         ) {
-            signals.buy          = true;
-            signals.direction    = 'CALL';
+            signals.buy = true;
+            signals.direction = 'CALL';
             signals.strategyUsed = 'STC_CALL_REVERSAL';
             signals.reasons.push(
                 `STC_CALL_REVERSAL: stc=${stc.toFixed(1)} prev=${stcPrev.toFixed(1)} rsiMin5=${rsi_min_5.toFixed(1)} k=${k.toFixed(1)} d=${d.toFixed(1)} low=${lc[4]?.toFixed(5)} bbLow=${bb.lower?.toFixed(5)} bbBps=${bbBps.toFixed(1)}`
@@ -730,8 +730,8 @@ class Indicators {
             indicators.bearCross3 === true &&             // g6: K crossed below D within last 3 bars
             bbBps >= 10                                   // g7: BB wide enough
         ) {
-            signals.sell         = true;
-            signals.direction    = 'PUT';
+            signals.sell = true;
+            signals.direction = 'PUT';
             signals.strategyUsed = 'STC_PUT_REVERSAL';
             signals.reasons.push(
                 `STC_PUT_REVERSAL: stc=${stc.toFixed(1)} prev=${stcPrev.toFixed(1)} rsiMax5=${rsi_max_5.toFixed(1)} k=${k.toFixed(1)} d=${d.toFixed(1)} high=${lc[3]?.toFixed(5)} bbUp=${bb.upper?.toFixed(5)} bbBps=${bbBps.toFixed(1)}`
