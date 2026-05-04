@@ -13,8 +13,8 @@ const Indicators = require('../indicators');
 const DB_PATH = process.argv[2] || path.join(__dirname, '..', '..', 'data', 'trading_data.db');
 
 // New STC params — must match INDICATOR_CONFIG in indicators.js
-const STC_EMA_FAST  = 12;
-const STC_EMA_SLOW  = 25;
+const STC_EMA_FAST  = 10;
+const STC_EMA_SLOW  = 20;
 const STC_CYCLE     = 5;
 const STC_SMOOTH1   = 3;
 const STC_SMOOTH2   = 3;

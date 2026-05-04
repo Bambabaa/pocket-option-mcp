@@ -65,7 +65,7 @@ function calculateCCI(candles, period = CCI_PERIOD) {
     console.log('Step 1: Adding cci_8 column...');
     const columns = await db.all('PRAGMA table_info(indicators)');
     const hasColumn = columns.some(c => c.name === 'cci_8');
-    
+
     if (hasColumn) {
         console.log('  ✓ Column cci_8 already exists');
     } else {
@@ -100,9 +100,9 @@ function calculateCCI(candles, period = CCI_PERIOD) {
 
         for (let i = 0; i < arr.length; i++) {
             const ts = arr[i][0];
-            if (!indicatorTs.has(ts)) { 
-                noRow++; 
-                continue; 
+            if (!indicatorTs.has(ts)) {
+                noRow++;
+                continue;
             }
 
             if (i < CCI_PERIOD - 1) {
@@ -127,8 +127,8 @@ function calculateCCI(candles, period = CCI_PERIOD) {
         }
 
         totalUpdated += updated;
-        totalNull    += nulled;
-        totalNoRow   += noRow;
+        totalNull += nulled;
+        totalNoRow += noRow;
         console.log(`  ${asset.padEnd(12)} updated=${String(updated).padStart(5)}  nulled=${String(nulled).padStart(3)}  no_row=${String(noRow).padStart(4)}`);
     }
 

@@ -9,7 +9,7 @@ const dbPath = process.argv[2] || 'data/trading_data.db';
 const outPath = process.argv[3] || 'data/paper_reversal_today.csv';
 const db = new Database(dbPath, { readonly: true });
 const AMOUNT = 500, PAYOUT = 0.92;
-const EXPIRIES = [1, 2, 3, 5, 10]; // minutes = bars (1-min candles)
+const EXPIRIES = [1, 2, 3, 4, 5]; // minutes = bars (1-min candles)
 
 // ─── STC Reversal Gate Thresholds ────────────────────────────────────────────
 const CALL_STC_FLOOR = 20;        // STC ≤ 20 (deeply oversold, tightened from 25)
@@ -26,41 +26,48 @@ const PUT_TREND_MAX = 20;         // MA6-MA14 gap < 20 bps (not strong uptrend)
 
 const BB_WIDTH_MIN = 10;          // BB width ≥ 10 bps (volatility gate, validated)
 
-// ─── Signal Definitions (7-gate STC reversals) ────────────────────────────────
+const CALL_CCI_FLOOR = -100;      // CCI must cross back above -100 (G8)
+const PUT_CCI_CEILING = 100;      // CCI must cross back below +100 (G8)
+
+// ─── Signal Definitions (8-gate STC reversals with CCI crossover) ─────────────
 const SIG_DEFS = [
   {
-    key: 'STC_CALL_7G',
+    key: 'STC_CALL_8G',
     call: (c, hist) => {
       if (c.stc == null || c.stcPrev == null) return false;
+      if (c.cci == null || c.cciPrev == null) return false;
       const g1 = c.stc <= CALL_STC_FLOOR;
       const g2 = c.stc > c.stcPrev;
-      const g3 = c.rsi != null && c.rsi < CALL_RSI_MAX;
+      // const g3 = c.rsi != null && c.rsi < CALL_RSI_MAX;
       const g4 = c.k != null && c.d != null && c.k > c.d && c.k < CALL_K_MAX;
       const g5 = c.bbWidthBps != null && c.bbWidthBps >= BB_WIDTH_MIN;
       const g6 = hist.rsiTrough10 != null && hist.rsiTrough10 < CALL_RETRACEMENT_MIN;
-      const g7 = c.maTrendBps != null && c.maTrendBps > CALL_TREND_MIN;
-      return g1 && g2 && g3 && g4 && g5 && g6 && g7;
+      // const g7 = c.maTrendBps != null && c.maTrendBps > CALL_TREND_MIN;
+      const g8 = c.cciPrev <= CALL_CCI_FLOOR && c.cci > CALL_CCI_FLOOR;
+      return g1 && g2 && g4 && g5 && g6 && g8;
     },
     put: () => false,
   },
   {
-    key: 'STC_PUT_7G',
+    key: 'STC_PUT_8G',
     call: () => false,
     put: (c, hist) => {
       if (c.stc == null || c.stcPrev == null) return false;
+      if (c.cci == null || c.cciPrev == null) return false;
       const g1 = c.stc >= PUT_STC_CEILING;
       const g2 = c.stc < c.stcPrev;
-      const g3 = c.rsi != null && c.rsi > PUT_RSI_MIN;
+      // const g3 = c.rsi != null && c.rsi > PUT_RSI_MIN;
       const g4 = c.k != null && c.d != null && c.k < c.d && c.k > PUT_K_MIN;
       const g5 = c.bbWidthBps != null && c.bbWidthBps >= BB_WIDTH_MIN;
       const g6 = hist.rsiPeak10 != null && hist.rsiPeak10 > PUT_EXTENSION_MIN;
-      const g7 = c.maTrendBps != null && c.maTrendBps < PUT_TREND_MAX;
-      return g1 && g2 && g3 && g4 && g5 && g6 && g7;
+      // const g7 = c.maTrendBps != null && c.maTrendBps < PUT_TREND_MAX;
+      const g8 = c.cciPrev >= PUT_CCI_CEILING && c.cci < PUT_CCI_CEILING;
+      return g1 && g2 && g4 && g5 && g6 && g8;
     },
   },
 ];
 
-// Join indicators + candles by (asset, timestamp). Pull everything needed for 7-gate logic.
+// Join indicators + candles by (asset, timestamp). Pull everything needed for 8-gate logic.
 const rows = db.prepare(`
   SELECT
     i.asset, i.timestamp,
@@ -68,23 +75,27 @@ const rows = db.prepare(`
     i.rsi_5, i.stochastic_k_v2, i.stochastic_d_v2,
     i.bb_upper, i.bb_middle, i.bb_lower,
     i.ma1, i.ma3,
-    i.schaff_value
+    i.schaff_value,
+    i.cci_8
   FROM indicators i
   JOIN candles c ON c.asset = i.asset AND c.timestamp = i.timestamp
   WHERE i.rsi_5 IS NOT NULL
     AND i.stochastic_k_v2 IS NOT NULL
     AND i.bb_upper IS NOT NULL
     AND i.schaff_value IS NOT NULL
+    AND i.cci_8 IS NOT NULL
   ORDER BY i.asset, i.timestamp ASC
 `).all();
 
-// Index close prices + STC by (asset, timestamp) for lookups.
+// Index close prices + STC + CCI by (asset, timestamp) for lookups.
 const closeByKey = new Map();
 const stcByKey = new Map();
+const cciByKey = new Map();
 for (const r of rows) {
   const key = r.asset + '|' + r.timestamp;
   closeByKey.set(key, r.close);
   stcByKey.set(key, r.schaff_value);
+  cciByKey.set(key, r.cci_8);
 }
 
 // Build per-asset history for lookback context (retracement depth)
@@ -96,7 +107,7 @@ for (const r of rows) {
 
 // Compute lookback context for each bar
 function computeLookback(assetRows, idx) {
-  const LOOKBACK = 10;
+  const LOOKBACK = 4
   const history = [];
   for (let i = Math.max(0, idx - LOOKBACK); i < idx; i++) {
     history.push(assetRows[i]);
@@ -118,6 +129,7 @@ const header = [
   'bb_upper', 'bb_middle', 'bb_lower', 'bb_width_bps',
   'ma6', 'ma14', 'ma_trend_bps',
   'stc', 'stc_prev',
+  'cci_8', 'cci_prev',
   'rsi_peak_10', 'rsi_trough_10',
   'signal', 'direction',
 ];
@@ -137,10 +149,11 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
   for (let idx = 1; idx < assetRows.length; idx++) {
     const r = assetRows[idx];
     const rPrev = assetRows[idx - 1];
-    
+
     const bbWidthBps = r.bb_middle ? (r.bb_upper - r.bb_lower) / r.bb_middle * 10000 : null;
     const maTrendBps = (r.ma1 != null && r.ma3 != null && r.ma3) ? (r.ma1 - r.ma3) / r.ma3 * 10000 : null;
     const stcPrev = rPrev.schaff_value;
+    const cciPrev = rPrev.cci_8;
     const lookback = computeLookback(assetRows, idx);
 
     const ctx = {
@@ -149,6 +162,8 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
       d: r.stochastic_d_v2,
       stc: r.schaff_value,
       stcPrev: stcPrev,
+      cci: r.cci_8,
+      cciPrev: cciPrev,
       bbWidthBps: bbWidthBps,
       maTrendBps: maTrendBps,
       close: r.close,
@@ -169,6 +184,7 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
         r.bb_upper, r.bb_middle, r.bb_lower, bbWidthBps,
         r.ma1, r.ma3, maTrendBps,
         r.schaff_value, stcPrev,
+        r.cci_8, cciPrev,
         lookback.rsiPeak10, lookback.rsiTrough10,
         s.key, dir,
       ];
