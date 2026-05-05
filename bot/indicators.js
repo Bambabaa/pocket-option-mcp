@@ -7,7 +7,7 @@ const INDICATOR_CONFIG = {
     rsi: 5,
     stoch: { kPeriod: 5, dPeriod: 3, smoothPeriod: 3 },
     bb: { period: 20, stdDev: 2 },
-    schaff: { emaFast: 12, emaSlow: 25, cycle: 5, smooth1: 3, smooth2: 3 },
+    schaff: { emaFast: 10, emaSlow: 20, cycle: 5, smooth1: 3, smooth2: 3 },
 };
 
 class Indicators {

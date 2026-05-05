@@ -1,0 +1,124 @@
+TIMEFRAME         = 1 minute
+BB_PERIOD         = 20
+BB_STDDEV         = 2
+STOCH_K           = 5
+STOCH_D           = 3
+STOCH_SMOOTH      = 3
+STC_PERIODS       = [10, 20, 5, 3, 3]   # (10,20,5,3,3)
+CCI_PERIOD        = 8
+LOOKBACK_BB       = 3        # candles before entry
+LOOKBACK_STOCH_CROSS = 2     # candles to check for cross (including current)
+CCI_DEPTH_LOOKBACK = 10      # candles before CCI cross to find extreme
+CCI_BUY_THRESH    = -150     # lowest CCI must be below this before crossing
+CCI_SELL_THRESH   = 150      # highest CCI must be above this before crossing
+STC_BUY_ZONE      = 25
+STC_SELL_ZONE     = 75
+CURRENT_K_BUY_MAX = 50       # current %K must be < 50 for buy
+CURRENT_K_SELL_MIN = 50      # current %K must be > 50 for sell
+DELTA_MIN         = 0.5      # minimum absolute difference between %K and %D
+EXIT_MINUTES      = 2        # M2 expiry
+
+function did_stoch_cross_from_deep(direction):
+
+    # direction = "BUY" or "SELL"
+    lookback = LOOKBACK_STOCH_CROSS   # e.g., 2 candles (current and previous)
+
+    for each candle i from (current - lookback) to current:
+        if direction == "BUY":
+            # cross up:
+            if %K(i-1) <= %D(i-1) and %K(i) > %D(i):
+                # both K and D were below 30 BEFORE the cross?
+                if %K(i-1) < 30 and %D(i-1) < 30:
+                    return True
+        else: # SELL
+            # cross down:
+            if %K(i-1) >= %D(i-1) and %K(i) < %D(i):
+                if %K(i-1) > 80 and %D(i-1) > 80:
+                    return True
+    return False
+
+
+# ------------------------------------------------------------
+# 1. Bollinger Band Touch (1-3 candles before entry)
+# ------------------------------------------------------------
+bb_touch = False
+for each j in [1, 2, 3]:
+    if direction == "BUY":
+        if low[C - j] <= lower_bb[C - j]:
+            bb_touch = True
+            break
+    else:
+        if high[C - j] >= upper_bb[C - j]:
+            bb_touch = True
+            break
+
+if not bb_touch:
+    SKIP
+
+# ------------------------------------------------------------
+# 2. Stochastic: cross from deep + current K < 50 (buy) / > 50 (sell) + delta not zero
+# ------------------------------------------------------------
+stoch_ok = False
+
+if did_stoch_cross_from_deep(direction):
+    current_K = %K[C]
+    current_D = %D[C]
+    if direction == "BUY":
+        if current_K < CURRENT_K_BUY_MAX and abs(current_K - current_D) > DELTA_MIN:
+            stoch_ok = True
+    else:
+        if current_K > CURRENT_K_SELL_MIN and abs(current_K - current_D) > DELTA_MIN:
+            stoch_ok = True
+
+if not stoch_ok:
+    SKIP
+
+# ------------------------------------------------------------
+# 3. CCI: crossed threshold at some point BEFORE current candle, 
+#        and prior extreme reached deep zone
+# ------------------------------------------------------------
+cci_ok = False
+
+# Find the most recent candle X (X <= C-1) where CCI crossed above -100 (buy) or below +100 (sell)
+if direction == "BUY":
+    # Cross above -100: CCI[X-1] <= -100 and CCI[X] > -100
+    # Check from C-1 backwards
+    for X from C-1 down to 1:
+        if CCI[X-1] <= -100 and CCI[X] > -100:
+            # Now check depth in 10 candles before X
+            lowest_cci = min(CCI[X-10 : X-1])   # 10 candles before cross candle
+            if lowest_cci < CCI_BUY_THRESH:
+                cci_ok = True
+            break
+else:
+    for X from C-1 down to 1:
+        if CCI[X-1] >= 100 and CCI[X] < 100:
+            highest_cci = max(CCI[X-10 : X-1])
+            if highest_cci > CCI_SELL_THRESH:
+                cci_ok = True
+            break
+
+if not cci_ok:
+    SKIP
+
+# ------------------------------------------------------------
+# 4. STC – PRIMARY TRIGGER: hook from oversold (<=25) or overbought (>=75)
+# ------------------------------------------------------------
+stc_ok = False
+if direction == "BUY":
+    if STC[C-1] <= STC_BUY_ZONE and STC[C] > STC[C-1]:
+        stc_ok = True
+else:
+    if STC[C-1] >= STC_SELL_ZONE and STC[C] < STC[C-1]:
+        stc_ok = True
+
+if not stc_ok:
+    SKIP
+
+# ------------------------------------------------------------
+# 5. All conditions met → enter at OPEN of NEXT candle (C+1)
+# ------------------------------------------------------------
+if ALL Conditions True:
+    EntryTime = time_of_candle(C+1)
+    ExpiryTime = EntryTime + EXIT_MINUTES minutes
+    Execute order: BUY or SELL at market
