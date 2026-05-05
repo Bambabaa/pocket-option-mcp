@@ -148,10 +148,12 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
 
         for (const direction of ['BUY', 'SELL']) {
 
-            // ── Gate 4: STC hook ──────────────────────────────────────────────
+            // ── Gate 4: STC hook + delta bounds ──────────────────────────────
+            // BUY:  0 ≤ stc_delta < 0.5  (barely hooking up from floor)
+            // SELL: -0.5 ≤ stc_delta ≤ 0 (barely rolling down from ceiling)
             const stc_ok = direction === 'BUY'
-                ? stcPrev <= STC_BUY_ZONE && stc > stcPrev
-                : stcPrev >= STC_SELL_ZONE && stc < stcPrev;
+                ? stcPrev <= STC_BUY_ZONE  && stcDelta >= 0   && stcDelta < 0.5
+                : stcPrev >= STC_SELL_ZONE && stcDelta >= -0.5 && stcDelta <= 0;
             if (!stc_ok) continue;
 
             // ── Gate 1: BB touch ──────────────────────────────────────────────
