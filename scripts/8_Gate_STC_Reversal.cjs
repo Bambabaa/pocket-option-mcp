@@ -163,6 +163,7 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
             // ── Gate 2: Stoch cross from deep + K zone + delta ────────────────
             const g2 = checkStochCross(assetRows, idx, direction);
             if (!g2) continue;
+            if (g2.barsAgo !== 1) continue;        // cross must be exactly 1 bar ago
             const stoch_ok = direction === 'BUY'
                 ? k < CURRENT_K_BUY_MAX  && Math.abs(k - d) > DELTA_MIN
                 : k > CURRENT_K_SELL_MIN && Math.abs(k - d) > DELTA_MIN;

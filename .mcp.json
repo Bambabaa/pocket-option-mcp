@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "pocket-option": {
+      "command": "node",
+      "args": ["C:/Users/M2S30/Documents/GitHub/pocket-option-mcp/src/server.js"],
+      "env": {
+        "PO_DB_PATH": "C:/Users/M2S30/Documents/GitHub/pocket-option-mcp/data/trading_data.db"
+      }
+    }
+  }
+}
