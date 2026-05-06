@@ -15,7 +15,6 @@ export async function healthCheck() {
   const prices   = await get('SELECT COUNT(*) as n FROM prices');
   const signals  = await get('SELECT COUNT(*) as n FROM signals');
   const orders   = await get('SELECT COUNT(*) as n FROM orders_queue');
-  const qualified = await get('SELECT COUNT(*) as n FROM qualified_assets');
   const latestPrice  = await get('SELECT asset, price, timestamp FROM prices ORDER BY timestamp DESC LIMIT 1');
   const latestCandle = await get('SELECT asset, timestamp FROM candles ORDER BY timestamp DESC LIMIT 1');
 
@@ -26,7 +25,6 @@ export async function healthCheck() {
     price_count:    prices?.n   ?? 0,
     signal_count:   signals?.n  ?? 0,
     order_count:    orders?.n   ?? 0,
-    qualified_asset_count: qualified?.n ?? 0,
     latest_price:  latestPrice  || null,
     latest_candle: latestCandle || null,
   };

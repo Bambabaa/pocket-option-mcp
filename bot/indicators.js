@@ -15,8 +15,8 @@ class Indicators {
         this._v2ConsecCount = {};
         this._v2LastTs = {};
         this._lastSchaffValues = {};
-        this._rsiHistory = {};  // last 5 RSI values per asset
-        this._stochHistory = {};  // last 4 [k,d] pairs per asset (for 3-bar cross)
+        this._stochHistory = {};  // last 4 [k,d] pairs per asset (cross detection)
+        this._cciHistory = {};    // last 25 CCI(8) values per asset (cross + depth detection)
     }
 
     // ==================== BASIC INDICATORS ====================
@@ -432,7 +432,7 @@ class Indicators {
         }
 
         const recentCandles = candles.slice(-period);
-        const typicalPrices = recentCandles.map(c => (c[1] + c[3] + c[2]) / 3); // (High + Low + Close) / 3
+        const typicalPrices = recentCandles.map(c => (c[3] + c[4] + c[2]) / 3); // (High + Low + Close) / 3
 
         const sma = typicalPrices.reduce((a, b) => a + b, 0) / period;
 
@@ -607,34 +607,15 @@ class Indicators {
 
         indicators.rsi_5 = this.calculateRSI(candles, INDICATOR_CONFIG.rsi);
 
-        // 5-bar RSI min/max cache
-        if (!this._rsiHistory[asset]) this._rsiHistory[asset] = [];
-        if (indicators.rsi_5 != null) this._rsiHistory[asset].push(indicators.rsi_5);
-        if (this._rsiHistory[asset].length > 5) this._rsiHistory[asset].shift();
-        const _rh = this._rsiHistory[asset];
-        indicators.rsi_min_5 = _rh.length > 0 ? Math.min(..._rh) : null;
-        indicators.rsi_max_5 = _rh.length > 0 ? Math.max(..._rh) : null;
-
         const stoch = this.calculateStochastic(candles, INDICATOR_CONFIG.stoch.kPeriod, INDICATOR_CONFIG.stoch.dPeriod, INDICATOR_CONFIG.stoch.smoothPeriod);
         indicators.stochastic_k = stoch ? stoch.k : null;
         indicators.stochastic_d = stoch ? stoch.d : null;
         indicators.stochastic_prevD = stoch ? stoch.prevD : null;
 
-        // 3-bar stoch crossover cache
+        // 4-bar stoch history for cross-age detection (barsAgo=1 gate)
         if (!this._stochHistory[asset]) this._stochHistory[asset] = [];
         this._stochHistory[asset].push({ k: indicators.stochastic_k, d: indicators.stochastic_d });
         if (this._stochHistory[asset].length > 4) this._stochHistory[asset].shift();
-        let _bullCross3 = false, _bearCross3 = false;
-        const _sh = this._stochHistory[asset];
-        for (let _i = 1; _i < _sh.length; _i++) {
-            const p = _sh[_i - 1], c = _sh[_i];
-            if (p.k != null && p.d != null && c.k != null && c.d != null) {
-                if (p.k <= p.d && c.k > c.d) _bullCross3 = true;
-                if (p.k >= p.d && c.k < c.d) _bearCross3 = true;
-            }
-        }
-        indicators.bullCross3 = _bullCross3;
-        indicators.bearCross3 = _bearCross3;
 
         indicators.bollinger = this.calculateBollingerBands(candles, INDICATOR_CONFIG.bb.period, INDICATOR_CONFIG.bb.stdDev);
         indicators.schaffTrendCycle = this.calculateSchaffTrendCycle(
@@ -647,33 +628,25 @@ class Indicators {
         indicators.prevSchaffValue = this._lastSchaffValues[asset] ?? null;
         this._lastSchaffValues[asset] = indicators.schaffTrendCycle ? indicators.schaffTrendCycle.value : null;
 
-        // BB expansion context: current width vs width 5 bars ago
-        indicators.bb_expanding = null;
-        if (candles.length >= 6 && indicators.bollinger) {
-            const bbPrev = this.calculateBollingerBands(candles.slice(0, -5), INDICATOR_CONFIG.bb.period, INDICATOR_CONFIG.bb.stdDev);
-            if (bbPrev && bbPrev.middle) {
-                const wNow = (indicators.bollinger.upper - indicators.bollinger.lower) / indicators.bollinger.middle;
-                const wPrev = (bbPrev.upper - bbPrev.lower) / bbPrev.middle;
-                indicators.bb_expanding = wNow > wPrev;
-            }
-        }
+        // CCI(8) + rolling history for cross+depth detection (Gate 3)
+        indicators.cci_8 = this.calculateCCI(candles, 8);
+        if (!this._cciHistory[asset]) this._cciHistory[asset] = [];
+        this._cciHistory[asset].push(indicators.cci_8);
+        if (this._cciHistory[asset].length > 25) this._cciHistory[asset].shift();
 
-        // MA gap trend: compare MA6–MA14 gap now vs 3 bars ago
-        indicators.ma_gap_trend = 'unknown';
-        if (candles.length >= 4 && indicators.ma6 != null && indicators.ma14 != null) {
-            const ma6Prev = this.calculateSMA(candles.slice(0, -3), INDICATOR_CONFIG.ma1);
-            const ma14Prev = this.calculateSMA(candles.slice(0, -3), INDICATOR_CONFIG.ma3);
-            if (ma6Prev != null && ma14Prev != null) {
-                const gapNow = indicators.ma6 - indicators.ma14;
-                const gapPrev = ma6Prev - ma14Prev;
-                const deltaBps = ((gapNow - gapPrev) / indicators.ma14) * 10000;
-                if (Math.abs(deltaBps) < 1) indicators.ma_gap_trend = 'flat';
-                else if (deltaBps > 0) indicators.ma_gap_trend = 'widening_up';
-                else indicators.ma_gap_trend = 'widening_down';
-                if (Math.abs(gapPrev) - Math.abs(gapNow) > indicators.ma14 * 0.0001)
-                    indicators.ma_gap_trend = 'narrowing';
-            }
+        // Gate 1 — BB touch precomputation (j=1..3 bars before current bar)
+        let _g1Buy = null, _g1Sell = null;
+        for (let _j = 1; _j <= 3; _j++) {
+            const _jIdx = candles.length - 1 - _j;
+            if (_jIdx < 0) break;
+            const _bbAtJ = this.calculateBollingerBands(candles.slice(0, _jIdx + 1), INDICATOR_CONFIG.bb.period, INDICATOR_CONFIG.bb.stdDev);
+            if (!_bbAtJ) continue;
+            const _c = candles[_jIdx];
+            if (_g1Buy  == null && _c[4] != null && _c[4] <= _bbAtJ.lower) _g1Buy  = { barsAgo: _j, price: _c[4], band: _bbAtJ.lower };
+            if (_g1Sell == null && _c[3] != null && _c[3] >= _bbAtJ.upper) _g1Sell = { barsAgo: _j, price: _c[3], band: _bbAtJ.upper };
         }
+        indicators.g1_buy  = _g1Buy;
+        indicators.g1_sell = _g1Sell;
 
         indicators.lastCandle = candles[candles.length - 1];
         indicators.currentPrice = indicators.lastCandle[2];
@@ -686,59 +659,84 @@ class Indicators {
     // ==================== SIGNAL TRADE GENERATION ====================
 
     signalstrade(indicators, settings, signals) {
-        const stc = indicators.schaffTrendCycle ? indicators.schaffTrendCycle.value : null;
+        const stc     = indicators.schaffTrendCycle ? indicators.schaffTrendCycle.value : null;
         const stcPrev = indicators.prevSchaffValue;
-        const rsi_min_5 = indicators.rsi_min_5;
-        const rsi_max_5 = indicators.rsi_max_5;
-        const k = indicators.stochastic_k;
-        const d = indicators.stochastic_d;
-        const bb = indicators.bollinger;
-        const lc = indicators.lastCandle;
+        const k       = indicators.stochastic_k;
+        const d       = indicators.stochastic_d;
 
-        if (stc == null || stcPrev == null || k == null || d == null || !bb || !bb.middle || !lc) {
-            return false;
-        }
+        if (stc == null || stcPrev == null || k == null || d == null) return false;
 
-        const bbBps = ((bb.upper - bb.lower) / bb.middle) * 10000;
+        const stcDelta = stc - stcPrev;
+        const asset    = indicators.asset;
+        const _sh      = this._stochHistory[asset] || [];
+        const _cciH    = this._cciHistory[asset]   || [];
 
-        // ── STC_CALL_REVERSAL — 7 gates (matches paper_condition_txt.cjs) ────
-        if (
-            stcPrev <= 25 &&                              // g1: prev bar STC at floor
-            stc < 75 &&                                   // g2: range guard
-            stc > stcPrev &&                              // g3: STC hooking upward
-            lc[4] != null && lc[4] <= bb.lower &&        // g4: candle low pierced BB lower
-            rsi_min_5 != null && rsi_min_5 <= 35 &&      // g5: RSI min last 5 bars ≤ 35
-            indicators.bullCross3 === true &&             // g6: K crossed above D within last 3 bars
-            bbBps >= 10                                   // g7: BB wide enough
-        ) {
-            signals.buy = true;
-            signals.direction = 'CALL';
-            signals.strategyUsed = 'STC_CALL_REVERSAL';
-            signals.reasons.push(
-                `STC_CALL_REVERSAL: stc=${stc.toFixed(1)} prev=${stcPrev.toFixed(1)} rsiMin5=${rsi_min_5.toFixed(1)} k=${k.toFixed(1)} d=${d.toFixed(1)} low=${lc[4]?.toFixed(5)} bbLow=${bb.lower?.toFixed(5)} bbBps=${bbBps.toFixed(1)}`
-            );
+        for (const direction of ['CALL', 'PUT']) {
+            const isBuy = direction === 'CALL';
+
+            // ── Gate 4: STC hook + delta bounds ──────────────────────────────────
+            const g4_ok = isBuy
+                ? stcPrev <= 25 && stcDelta >= 0    && stcDelta < 0.5
+                : stcPrev >= 75 && stcDelta >= -0.5 && stcDelta <= 0;
+            if (!g4_ok) continue;
+
+            // ── Gate 1: BB touch within last 3 bars ──────────────────────────────
+            const g1 = isBuy ? indicators.g1_buy : indicators.g1_sell;
+            if (!g1) continue;
+
+            // ── Gate 2: Stoch cross from deep, exactly 1 bar ago ─────────────────
+            // _sh after push: [..., C-2, C-1, C] — barsAgo=1: prev=C-2, cross=C-1
+            let g2_ok = false;
+            if (_sh.length >= 3) {
+                const _prev = _sh[_sh.length - 3]; // C-2
+                const _cur  = _sh[_sh.length - 2]; // C-1
+                const _now  = _sh[_sh.length - 1]; // C
+                if (_prev.k != null && _prev.d != null && _cur.k != null && _cur.d != null && _now.k != null && _now.d != null) {
+                    const crossedUp   = _prev.k <= _prev.d && _cur.k > _cur.d && _prev.k < 30 && _prev.d < 30;
+                    const crossedDown = _prev.k >= _prev.d && _cur.k < _cur.d && _prev.k > 80 && _prev.d > 80;
+                    const kOkBuy  = _now.k < 50  && Math.abs(_now.k - _now.d) > 0.5;
+                    const kOkSell = _now.k > 50  && Math.abs(_now.k - _now.d) > 0.5;
+                    if (isBuy  && crossedUp   && kOkBuy)  g2_ok = true;
+                    if (!isBuy && crossedDown && kOkSell) g2_ok = true;
+                }
+            }
+            if (!g2_ok) continue;
+
+            // ── Gate 3: CCI cross ±100 + depth ±150 ──────────────────────────────
+            // Walk _cciH backward from C-1 (index len-2), stop at first cross found
+            let g3_ok = false;
+            for (let _x = _cciH.length - 2; _x >= 1; _x--) {
+                const _cX   = _cciH[_x];
+                const _cXm1 = _cciH[_x - 1];
+                if (_cX == null || _cXm1 == null) continue;
+                const crossed = isBuy ? (_cXm1 <= -100 && _cX > -100) : (_cXm1 >= 100 && _cX < 100);
+                if (crossed) {
+                    const _depthSlice = _cciH.slice(Math.max(0, _x - 10), Math.max(0, _x - 1)).filter(v => v != null);
+                    const _depth = _depthSlice.length > 0 ? (isBuy ? Math.min(..._depthSlice) : Math.max(..._depthSlice)) : null;
+                    if (_depth != null && (isBuy ? _depth < -150 : _depth > 150)) g3_ok = true;
+                    break;
+                }
+            }
+            if (!g3_ok) continue;
+
+            // ── All gates passed ──────────────────────────────────────────────────
+            if (isBuy) {
+                signals.buy = true;
+                signals.direction = 'CALL';
+                signals.strategyUsed = 'STC_CALL_8GSR';
+                signals.reasons.push(
+                    `STC_CALL_8GSR: stc=${stc.toFixed(1)} prev=${stcPrev.toFixed(1)} delta=${stcDelta.toFixed(3)} g1=BB${g1.barsAgo}b k=${k.toFixed(1)} d=${d.toFixed(1)}`
+                );
+            } else {
+                signals.sell = true;
+                signals.direction = 'PUT';
+                signals.strategyUsed = 'STC_PUT_8GSR';
+                signals.reasons.push(
+                    `STC_PUT_8GSR: stc=${stc.toFixed(1)} prev=${stcPrev.toFixed(1)} delta=${stcDelta.toFixed(3)} g1=BB${g1.barsAgo}b k=${k.toFixed(1)} d=${d.toFixed(1)}`
+                );
+            }
             return true;
         }
-
-        // ── STC_PUT_REVERSAL — 7 gates (matches paper_condition_txt.cjs) ─────
-        if (
-            stcPrev >= 75 &&                              // g1: prev bar STC at ceiling
-            stc > 25 &&                                   // g2: range guard
-            stc < stcPrev &&                              // g3: STC hooking downward
-            lc[3] != null && lc[3] >= bb.upper &&        // g4: candle high pierced BB upper
-            rsi_max_5 != null && rsi_max_5 >= 65 &&      // g5: RSI max last 5 bars ≥ 65
-            indicators.bearCross3 === true &&             // g6: K crossed below D within last 3 bars
-            bbBps >= 10                                   // g7: BB wide enough
-        ) {
-            signals.sell = true;
-            signals.direction = 'PUT';
-            signals.strategyUsed = 'STC_PUT_REVERSAL';
-            signals.reasons.push(
-                `STC_PUT_REVERSAL: stc=${stc.toFixed(1)} prev=${stcPrev.toFixed(1)} rsiMax5=${rsi_max_5.toFixed(1)} k=${k.toFixed(1)} d=${d.toFixed(1)} high=${lc[3]?.toFixed(5)} bbUp=${bb.upper?.toFixed(5)} bbBps=${bbBps.toFixed(1)}`
-            );
-            return true;
-        }
-
         return false;
     }
 
@@ -755,7 +753,7 @@ class Indicators {
         if (!indicators.currentPrice) return signals;
 
         const fired =
-            indicators.ma6 != null && indicators.ma14 != null && indicators.rsi_5 != null && indicators.lastCandle
+            indicators.schaffTrendCycle != null && indicators.prevSchaffValue != null && indicators.stochastic_k != null && indicators.lastCandle
                 ? this.signalstrade(indicators, settings, signals)
                 : false;
 

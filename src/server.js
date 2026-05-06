@@ -68,12 +68,12 @@ Results and performance (trades_ordered):
 - po_performance → daily performance table
 - po_hourly_breakdown → which hours of day are most profitable
 
-Qualification layer:
-- po_qualified_assets → assets currently on the bot's trading allow-list
-- po_asset_streaks → current win streak per asset
+Asset analytics:
+- po_asset_analytics → what drives wins/losses per asset (STC zone, RSI zone, direction, BB width, hour)
+- po_asset_streaks → current win streak per asset (computed from trades_ordered)
 - po_streak_leaderboard → rank assets by consecutive wins
 - po_signal_outcomes → signal validation history (entry/exit price, WIN/LOSS)
-- po_asset_trades → trade outcomes for qualified assets only
+- po_asset_trades → executed trade outcomes from trades_ordered
 - po_validation_stats → aggregate win rate from validation history
 
 Multi-agent system (autonomous trading pipeline):

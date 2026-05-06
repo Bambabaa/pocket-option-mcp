@@ -90,7 +90,7 @@ pocket-option-mcp/
 ## MODE D Strategy — STC Reversal Gates (active as of 2026-04-28)
 
 Replaced K Flash Crash / Late Overbought Reversal with STC (Schaff Trend Cycle) reversal strategy.
-STC params: (12, 25, 5, 3, 3) — recalibrated 2026-04-28 via `bot/scripts/recalculate-schaff.js`.
+STC params: (10, 20, 5, 3, 3) — recalibrated 2026-04-28 via `bot/scripts/recalculate-schaff.js`.
 Use **120s expiry** — 60s is not statistically viable for either direction.
 
 | Column | Indicator | Role |
@@ -127,7 +127,7 @@ Use **120s expiry** — 60s is not statistically viable for either direction.
 - g5: BB width ≥ 10 bps (not a flat/dead market)
 - g6: ma_gap_trend ≠ narrowing ← **new, p=0.007 — bb_expanding not added (shrinks n too much)**
 
-## Tool Reference (43 tools)
+## Tool Reference
 
 ### Health & Market
 | Tool | What it does |
@@ -198,14 +198,10 @@ Use **120s expiry** — 60s is not statistically viable for either direction.
 | `po_session_log_write` | Write agent decision to audit trail |
 | `po_session_log_read` | Read full agent decision history |
 
-### Qualification
+### Validation
 | Tool | What it does |
 |---|---|
-| `po_qualified_assets` | Bot trading allow-list |
-| `po_asset_streaks` | Win streak per asset |
-| `po_streak_leaderboard` | Assets ranked by streak |
 | `po_signal_outcomes` | Signal validation history |
-| `po_asset_trades` | Outcomes for qualified assets |
 | `po_validation_stats` | Aggregate WR from validation |
 
 ## Research Workflow
@@ -237,5 +233,4 @@ Use **120s expiry** — 60s is not statistically viable for either direction.
 - **PUT has more edge than CALL** — RSI > 70 + STC ≥ 90 is the highest-quality setup
 - **BB < 10 bps = losing zone**: 45.8% WR validated. Gate live at 10 bps.
 - **Flat assets (BB < 5 bps) must be identified dynamically** — use `po_auto_block_sweep` at session start.
-- **Qualification layer disabled** (`useQualifiedAssetsLayer: false`) — every signal trades
 - **`po_significance` tool** — run after accumulating new live trades to track whether edge holds

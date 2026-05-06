@@ -1098,7 +1098,7 @@ export async function marketState() {
     const nowSec = Math.floor(Date.now() / 1000);
     const todayStart = nowSec - (nowSec % 86400);
 
-    const [activeAssets, signalCount, todayTrades, overallStats, signalDirections, topAsset, qualCount, avgStreak, totalTracked] = await Promise.all([
+    const [activeAssets, signalCount, todayTrades, overallStats, signalDirections, topAsset, totalTracked] = await Promise.all([
         get(`SELECT COUNT(DISTINCT asset) as n FROM candles WHERE timestamp >= ?`, [nowSec - 300]),
         get(`SELECT COUNT(*) as n FROM signals WHERE timestamp >= ?`, [nowSec - 3600]),
         all(
@@ -1125,8 +1125,6 @@ export async function marketState() {
              GROUP BY asset ORDER BY pnl DESC LIMIT 3`,
             [todayStart]
         ),
-        get('SELECT COUNT(*) as n FROM qualified_assets'),
-        get(`SELECT ROUND(AVG(consecutive_wins), 1) as avg FROM asset_streaks`),
         get('SELECT COUNT(DISTINCT asset) as n FROM candles'),
     ]);
 
@@ -1141,8 +1139,6 @@ export async function marketState() {
         market: {
             active_assets: activeAssets?.n ?? 0,
             total_tracked: totalTracked?.n ?? 0,
-            qualified_count: qualCount?.n ?? 0,
-            avg_streak: avgStreak?.avg ?? 0,
         },
         signals_last_hour: {
             total: signalCount?.n ?? 0,

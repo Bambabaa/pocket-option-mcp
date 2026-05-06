@@ -49,14 +49,34 @@ export async function getValidationStats(asset = null) {
 }
 
 export async function getStreakLeaderboard(minWins = 1) {
-  const rows = await all(
-    `SELECT s.asset, s.consecutive_wins, s.last_result, s.last_result_timestamp,
-            q.qualified_since
-     FROM asset_streaks s
-     LEFT JOIN qualified_assets q ON q.asset = s.asset
-     WHERE s.consecutive_wins >= ?
-     ORDER BY s.consecutive_wins DESC`,
-    [minWins]
-  );
-  return { count: rows.length, streaks: rows };
+  const rows = await all(`
+    SELECT asset, result, entry_timestamp
+    FROM trades_ordered
+    WHERE result IN ('WIN','LOSS','DRAW')
+    ORDER BY asset, entry_timestamp DESC
+  `);
+
+  const byAsset = {};
+  for (const r of rows) {
+    if (!byAsset[r.asset]) byAsset[r.asset] = [];
+    byAsset[r.asset].push(r);
+  }
+
+  const streaks = Object.entries(byAsset).map(([asset, trades]) => {
+    let consecutive_wins = 0;
+    for (const t of trades) {
+      if (t.result === 'WIN') consecutive_wins++;
+      else break;
+    }
+    return {
+      asset,
+      consecutive_wins,
+      last_result: trades[0]?.result ?? null,
+      last_result_timestamp: trades[0]?.entry_timestamp ?? null,
+    };
+  })
+    .filter(s => s.consecutive_wins >= minWins)
+    .sort((a, b) => b.consecutive_wins - a.consecutive_wins);
+
+  return { count: streaks.length, streaks };
 }

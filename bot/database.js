@@ -166,6 +166,9 @@ class TradingDatabase {
             `ALTER TABLE indicators ADD COLUMN stochastic_k_v2 REAL`,
             `ALTER TABLE indicators ADD COLUMN stochastic_d_v2 REAL`,
 
+            // CCI(8) — Gate 3 of 8GSR strategy
+            `ALTER TABLE indicators ADD COLUMN cci_8 REAL`,
+
             // candle_id soft FK → candles.id. Stable now that insertCandle uses ON CONFLICT DO UPDATE.
             // Backfilled by migrateBackfillCandleId(); populated on new inserts by app code.
             `ALTER TABLE indicators       ADD COLUMN candle_id INTEGER`,
@@ -530,8 +533,9 @@ class TradingDatabase {
                       stochastic_k_v2, stochastic_d_v2,
                       keltner_upper, keltner_lower,
                       schaff_value,
+                      cci_8,
                       candle_id)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                              (SELECT id FROM candles WHERE asset = ? AND timestamp = ?))`;
 
         const params = [
@@ -558,6 +562,7 @@ class TradingDatabase {
             keltner?.upper,   // ?? null
             keltner?.lower,   // ?? null
             schaff?.value,    // ?? null
+            indicators.cci_8 ?? null,              // cci_8 (CCI period 8 — Gate 3)
             asset, timestamp  // ← subquery params for candle_id resolution
         ];
 

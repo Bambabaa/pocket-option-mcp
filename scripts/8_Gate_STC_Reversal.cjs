@@ -94,8 +94,28 @@ const rows = db.prepare(`
   ORDER BY i.asset, i.timestamp ASC
 `).all();
 
-const closeByKey = new Map();
-for (const r of rows) closeByKey.set(r.asset + '|' + r.timestamp, r.close);
+// ─── Prices table — tick-level exit lookup (±30s window) ─────────────────────
+const priceRows = db.prepare(
+    'SELECT asset, timestamp, price FROM prices ORDER BY asset, timestamp ASC'
+).all();
+const pricesByAsset = {};
+for (const p of priceRows) {
+    if (!pricesByAsset[p.asset]) pricesByAsset[p.asset] = [];
+    pricesByAsset[p.asset].push(p);
+}
+
+function findExpiryPrice(priceList, signalTs, expirySeconds) {
+    if (!priceList || priceList.length === 0) return null;
+    const target = signalTs + expirySeconds;
+    let closest = null, minDiff = Infinity;
+    for (const p of priceList) {
+        if (p.timestamp < target - 30) continue;
+        if (p.timestamp > target + 30) break;
+        const diff = Math.abs(p.timestamp - target);
+        if (diff < minDiff) { minDiff = diff; closest = p.price; }
+    }
+    return closest;
+}
 
 const byAsset = {};
 for (const r of rows) {
@@ -191,8 +211,7 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
                 g3.barsAgo, g3.cciBefore, g3.cciAfter, g3.depth,
             ];
             for (const e of EXPIRIES) {
-                const exitTs = r.timestamp + e * 60;
-                const exit   = closeByKey.get(asset + '|' + exitTs);
+                const exit = findExpiryPrice(pricesByAsset[asset], r.timestamp, e * 60);
                 if (exit == null) { row.push('', '', ''); continue; }
                 const win = direction === 'BUY' ? exit > r.close : exit < r.close;
                 const pl  = win ? AMOUNT * PAYOUT : -AMOUNT;

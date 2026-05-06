@@ -1,7 +1,19 @@
 import { all, get } from '../connection.js';
 
 export async function getDailyPerformance(days = 30) {
-  const rows = await all('SELECT * FROM performance ORDER BY date DESC LIMIT ?', [days]);
+  const rows = await all(`
+    SELECT date(entry_timestamp, 'unixepoch') as date,
+           COUNT(*) as trades,
+           SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END) as wins,
+           SUM(CASE WHEN result='LOSS' THEN 1 ELSE 0 END) as losses,
+           ROUND(100.0 * SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END) / COUNT(*), 1) as win_rate_pct,
+           ROUND(SUM(profit_loss), 2) as pnl
+    FROM trades_ordered
+    WHERE result IN ('WIN','LOSS','DRAW')
+    GROUP BY date
+    ORDER BY date DESC
+    LIMIT ?
+  `, [days]);
   return { count: rows.length, performance: rows };
 }
 
