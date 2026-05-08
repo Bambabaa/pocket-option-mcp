@@ -51,6 +51,18 @@ export function registerAnalysisTools(server) {
   );
 
   server.tool(
+    'po_grid_search',
+    'Multivariate grid search over 8GSR gate thresholds. Captures a loose signal pool (STC ≤30/≥70, delta ±1.0, G3 depth ±100) then post-filters across all combinations of stc_prev × stc_delta × g3_depth × g1_bars_ago. Returns top 20 parameter sets per direction with n≥20 at 120s expiry, ranked by win rate. Each result includes: win rate, net PnL, profit factor, avg win, avg loss, avg W/L ratio, z-score, p-value (one-tailed vs 50%), and Wilson 95% confidence interval.',
+    {
+      direction: z.enum(['call', 'put', 'both']).optional().default('both').describe('Which direction to search (default both)'),
+    },
+    async ({ direction }) => {
+      try { return jsonResult(core.gridSearch(direction)); }
+      catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    }
+  );
+
+  server.tool(
     'po_simulate',
     'Replay historical candles with custom 8GSR gate thresholds and compare against baseline defaults. Shows side-by-side: signal count, win rate, P/L for CALL and PUT at both 60s and 120s expiry — plus delta vs baseline. Use this to test a gate change before modifying the bot. Example: "what if I tightened call_stc_floor to 20?" or "what if I raised call_delta_max to 0.3?".',
     {

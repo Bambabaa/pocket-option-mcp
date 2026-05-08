@@ -25,13 +25,18 @@ Before starting, check if the user specified any of these. Use defaults if not:
 | `max_consec_losses` | 4 | Stop if N consecutive losses today |
 | `loop_count` | 1 | How many scan cycles to run (1 = single scan, N = repeat) |
 | `loop_interval_sec` | 60 | Seconds between scan cycles if loop_count > 1 |
-| `direction_filter` | both | Only trade CALL, only PUT, or both |
+| `direction_filter` | put | Only trade CALL, only PUT, or both — default PUT (CALL has no confirmed edge at 120s expiry) |
 | `min_bb_bps` | 10 | Skip assets where BB width < this bps at entry bar — validated gate |
 
 ## Step 1: Pre-flight
 
-Call `po_health` directly. If bot not live → STOP:
-> "Bot is not running — no live data. Start pocket-option-bot.js first."
+Call `po_health` directly.
+
+**If bot is NOT live → the trading session is over. Do not stop — pivot to analysis:**
+> "Bot is offline — session has ended. Switching to post-session analysis."
+> Run `/session-review` immediately (ANALYSIS MODE). Do not proceed with the trading pipeline.
+
+If bot IS live → continue below.
 
 Call `po_drawdown_check` directly. If verdict is `STOP` → STOP:
 > "Session safety block: [reason]. No trades will be placed today."
@@ -170,11 +175,11 @@ Decision log:
 
 ## Kill Switches
 
-Stop immediately at ANY point if:
-1. `po_health` shows bot not live
-2. `po_drawdown_check` returns `STOP`
-3. `trades_placed >= max_trades`
-4. User says "stop", "cancel", "abort", or "enough"
+Stop trading and pivot to analysis at ANY point if:
+1. `po_health` shows bot not live → pivot to `/session-review` ANALYSIS MODE
+2. `po_drawdown_check` returns `STOP` → tell user reason, then pivot to `/session-review`
+3. `trades_placed >= max_trades` → end pipeline, report session summary
+4. User says "stop", "cancel", "abort", or "enough" → end immediately
 
 ## Important Notes
 

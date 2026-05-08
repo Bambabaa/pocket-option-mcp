@@ -1,11 +1,13 @@
 ---
 name: block-flat-assets
-description: One-shot cleanup of flat, pegged, and consistently losing assets. Runs volatility scan + asset bias analysis, identifies all assets that should be blocked, and blocks them all with reasons logged. Use when the user says "clean up bad assets", "block flat assets", "remove losing assets", or "housekeeping".
+description: One-shot cleanup of flat and pegged OTC assets based on CURRENT BB width only. Blocks assets where volatility is dead (< 5 bps) right now. Never blocks by historical win rate — OTC conditions change. Use when the user says "clean up bad assets", "block flat assets", or "housekeeping".
 ---
 
-# Block Flat Assets — Asset Cleanup
+# Block Flat Assets — Volatility-Based Cleanup (OTC Only)
 
-You are performing a one-shot cleanup to remove flat, pegged, and consistently losing assets from the bot's trading universe. This is a housekeeping operation — run it before a new trading session or after a bad run.
+You are performing a one-shot cleanup to remove flat and pegged OTC assets from the bot's trading universe based on **current BB width only**. This is a volatility housekeeping operation — not a performance-based purge.
+
+**OTC market rule: never block an asset based on historical win rate.** OTC conditions change constantly — an asset that lost yesterday may be the best setup today. Only block assets that are dead/flat RIGHT NOW (BB < 5 bps).
 
 ## Step 1: Health Check
 
@@ -21,94 +23,70 @@ Classify all assets:
 - **MARGINAL** (10–20 bps): Keep — in profitable range.
 - **GOOD** (20+ bps): Keep — best setups.
 
-## Step 3: Asset Bias Analysis
+## Step 3: Build Block List
 
-Call `po_asset_bias(min_trades=3)`.
+From the volatility scan only — no historical WR used.
 
-From the results, identify:
-- **AVOID** verdict: block regardless of BB width
-- **BLOCK_RECOMMENDED** verdict: already flagged by bias engine as flat/pegged
-- **Consistent losers**: any asset where both CALL WR < 40% AND PUT WR < 40% with 5+ trades
+**Block:**
+- BB < 5 bps (FLAT/PEGGED) — dead market, no signal quality possible
 
-## Step 4: Build Block List
-
-Combine the two sources into a single block list. Remove duplicates.
-
-**Always block:**
-- BB < 5 bps (FLAT)
-- Bias verdict = AVOID
-- Bias verdict = BLOCK_RECOMMENDED
-
-**Block if both conditions met:**
-- BB 5–10 bps (WEAK) AND bias shows no directional edge (BOTH verdict with < 50% WR)
-
-**Do NOT block:**
-- BB 5–10 bps but strong directional bias (e.g. PUT_ONLY at 70% WR) — keep but note
-- Assets with < 3 trades in history — insufficient data, skip for now
+**Do NOT block based on:**
+- Historical win rate (OTC conditions change — a "loser" yesterday may set up today)
+- Direction bias (CALL vs PUT preference changes with market conditions)
+- Any time-based reason
 
 Present the block list to the user before executing:
 ```
-PROPOSED BLOCKS (N assets):
+PROPOSED BLOCKS (N assets) — CURRENT BB WIDTH ONLY:
 
 FLAT (BB < 5 bps):
   EURTRY_otc      — BB 0.12 bps
   JODCNY_otc      — BB 0.30 bps
   [...]
 
-WEAK + NO EDGE (BB 5-10 bps, low WR):
-  [asset]         — BB N bps, WR N%/N% (CALL/PUT)
-
-CONSISTENT LOSERS:
-  [asset]         — CALL N% / PUT N% over N trades
-
 TOTAL: N assets to block
 
+All blocks are temporary — auto-unblock when BB recovers above 5 bps.
 Proceed? (yes/no)
 ```
 
 Wait for user confirmation before blocking.
 
-## Step 5: Execute Blocks
+## Step 4: Execute Blocks
 
 For each asset in the confirmed block list, call `po_block_asset`:
-- FLAT assets: reason = `"flat asset — BB N bps (< 5 bps dead zone)"`
-- WEAK + no edge: reason = `"weak volatility — BB N bps, CALL N% / PUT N% WR"`
-- Consistent losers: reason = `"consistent loser — CALL N% / PUT N% over N trades"`
+- FLAT assets: reason = `"flat asset — BB N bps (< 5 bps, dead market right now)"`
 
 After each block, confirm it was written successfully.
 
-## Step 6: Verify
+## Step 5: Verify
 
 Call `po_asset_volatility` again after blocking to confirm the blocked assets are flagged.
 
-Check `po_asset_bias` — BLOCK_RECOMMENDED assets should no longer appear in the active trading universe.
-
-## Step 7: Report
+## Step 6: Report
 
 Tell the user:
 
 ```
-CLEANUP COMPLETE
+CLEANUP COMPLETE — Volatility-based (OTC)
 ═══════════════════════════════════════
 
 Blocked N assets:
-
-  FLAT (BB < 5 bps):          N assets
-  Weak volatility + no edge:  N assets
-  Consistent losers:          N assets
+  FLAT (BB < 5 bps): N assets
 
 Assets still in play: N
   Best volatility: [top 5 by BB bps]
-  Strongest bias:  [top 3 by WR with direction]
 
-To unblock any asset: po_unblock_asset [asset_name]
-To review blocks later: po_asset_volatility
+All blocks are TEMPORARY — unblock when BB recovers.
+To unblock: po_unblock_asset [asset_name]
+To check later: po_asset_volatility
 ```
 
 ## Rules
 
+- **Block only on current BB width — never on historical win rate.** OTC market conditions change too fast for static performance-based blocks.
+- **No time-based blocks** — OTC markets run 24/7, hour-of-day has no persistent meaning.
 - Always show the block list and wait for confirmation before executing
-- Never block an asset with < 3 historical trades — insufficient data
 - Never block ALL assets — if the list covers > 50% of tracked assets, flag this as unusual and ask the user to confirm
-- Log the reason with every block — the reason string is visible in `po_asset_volatility` and the agent audit trail
-- Blocking is reversible via `po_unblock_asset` — this is not destructive
+- Log the reason with every block — the reason string is visible in `po_asset_volatility`
+- Blocking is reversible via `po_unblock_asset` — always temporary

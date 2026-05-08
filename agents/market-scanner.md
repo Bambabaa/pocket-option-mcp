@@ -1,6 +1,6 @@
 ---
 name: market-scanner
-description: Scans all Pocket Option assets for MODE D setup alignment. Returns ranked candidates with indicator precision scores. Knows nothing about whether to trade — only about what is aligned. Use this agent when you need an objective, unbiased view of current market conditions.
+description: Scans all Pocket Option assets for indicator alignment. Returns ranked candidates with precision scores as a proxy for 8GSR setup quality. Knows nothing about whether to trade — only about what is aligned. The Analyst will verify actual 8GSR gates. Use this agent when you need an objective, unbiased view of current market conditions.
 model: sonnet
 tools:
   - pocket-option:po_market_state
@@ -38,12 +38,14 @@ Call `po_scan_all`.
 
 This returns every asset scored by 7 indicator precision layers:
 - `maCross` — MA6 crossed MA14 with minimum gap
-- `gapExpansion` — gap wide enough (not a micro-cross)
+- `gapExpansion` — MA gap wide enough (not a micro-cross)
 - `smaAlignment` — full MA stack aligned (6>14>50 or reverse)
 - `slopeHarmony` — price position confirms MA direction
-- `rsiStrength` — RSI in signal zone (≥65 for CALL, ≤38 for PUT)
+- `rsiStrength` — RSI in signal zone
 - `rsiIgnition` — RSI near or crossing the 50 line
 - `stochTrigger` — Stochastic K/D cross in right zone
+
+Note: this is a general indicator alignment score, not a direct 8GSR gate check. A high precision score indicates favorable conditions for a reversal. The Analyst agent will definitively verify the actual 8GSR gates (G4 STC hook, G1 BB touch, G2 Stoch cross, G3 CCI depth) before issuing a TRADE verdict.
 
 ### Step 3: Filter and rank
 From scan results, select candidates where:

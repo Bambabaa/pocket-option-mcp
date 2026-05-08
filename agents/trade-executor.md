@@ -92,7 +92,7 @@ Call `po_session_log_write`:
     "today_pnl": -230.00,
     "today_trades": 8,
     "analyst_confidence": 0.82,
-    "analyst_gates": "6/7"
+    "analyst_gates": "4/4"
   }
 }
 ```

@@ -13,6 +13,16 @@
 
 import { all, get } from '../connection.js';
 
+// ─── Statistical helpers ──────────────────────────────────────────────────────
+
+// Normal CDF approximation (Abramowitz & Stegun 26.2.17) — max error 7.5e-8
+function normCDF(z) {
+    const t = 1 / (1 + 0.2316419 * Math.abs(z));
+    const d = 0.3989423 * Math.exp(-z * z / 2);
+    const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.7814779 + t * (-1.821256 + t * 1.3302744))));
+    return z > 0 ? 1 - p : p;
+}
+
 // ─── Pattern label helpers ────────────────────────────────────────────────────
 
 function parsePatternFromReasons(reasons, direction) {
@@ -323,14 +333,34 @@ export async function findEdge() {
         const plKey     = expiryLabel === '60s' ? 'profitLoss_60' : 'profitLoss_120';
 
         function bStats(arr) {
-            const wins = arr.filter(s => s[resultKey] === 'WIN').length;
-            const gp   = arr.reduce((a, s) => s[resultKey] === 'WIN'  ? a + (s[plKey] || 0) : a, 0);
-            const gl   = arr.reduce((a, s) => s[resultKey] === 'LOSS' ? a + Math.abs(s[plKey] || 0) : a, 0);
+            const n      = arr.length;
+            const wins   = arr.filter(s => s[resultKey] === 'WIN').length;
+            const losses = n - wins;
+            const gp     = arr.reduce((a, s) => s[resultKey] === 'WIN'  ? a + (s[plKey] || 0) : a, 0);
+            const gl     = arr.reduce((a, s) => s[resultKey] === 'LOSS' ? a + Math.abs(s[plKey] || 0) : a, 0);
+            const avg_win     = wins   > 0 ? parseFloat((gp / wins).toFixed(2))   : null;
+            const avg_loss    = losses > 0 ? parseFloat((gl / losses).toFixed(2)) : null;
+            const avg_wl_ratio = avg_win != null && avg_loss != null && avg_loss > 0
+                ? parseFloat((avg_win / avg_loss).toFixed(2)) : null;
+            let z_score = null, p_value = null, wilson_lower = null, wilson_upper = null;
+            if (n >= 5) {
+                const p_hat  = wins / n;
+                z_score      = parseFloat(((p_hat - 0.5) / Math.sqrt(0.25 / n)).toFixed(3));
+                p_value      = parseFloat((1 - normCDF(z_score)).toFixed(4));
+                const z95    = 1.96, denom = 1 + z95 * z95 / n;
+                const center = (p_hat + z95 * z95 / (2 * n)) / denom;
+                const margin = z95 * Math.sqrt(p_hat * (1 - p_hat) / n + z95 * z95 / (4 * n * n)) / denom;
+                wilson_lower = parseFloat(Math.max(0, center - margin).toFixed(3));
+                wilson_upper = parseFloat(Math.min(1, center + margin).toFixed(3));
+            }
             return {
-                trades: arr.length, wins, losses: arr.length - wins,
-                win_rate: arr.length > 0 ? ((wins / arr.length) * 100).toFixed(1) + '%' : 'N/A',
-                net_pnl: parseFloat((gp - gl).toFixed(2)),
+                trades: n, wins, losses,
+                win_rate:      n > 0 ? ((wins / n) * 100).toFixed(1) + '%' : 'N/A',
+                net_pnl:       parseFloat((gp - gl).toFixed(2)),
                 profit_factor: gl > 0 ? parseFloat((gp / gl).toFixed(2)) : null,
+                avg_win, avg_loss, avg_wl_ratio,
+                z_score, p_value,
+                wilson_95ci:   wilson_lower != null ? [wilson_lower, wilson_upper] : null,
             };
         }
 
@@ -666,10 +696,29 @@ export async function findEdge() {
             total_pl: parseFloat(src.pl.toFixed(2)) };
     }).filter(Boolean).sort((a, b) => b.trades - a.trades);
 
+    // Time-based cross-validation: split 120s signals at median timestamp
+    let cross_validation = null;
+    if (valid120.length >= 20) {
+        const sorted = [...valid120].sort((a, b) => a.signalTs - b.signalTs);
+        const midIdx  = Math.floor(sorted.length / 2);
+        const splitTs = sorted[midIdx].signalTs;
+        const half1   = sorted.slice(0, midIdx);
+        const half2   = sorted.slice(midIdx);
+        if (half1.length >= 5 && half2.length >= 5) {
+            cross_validation = {
+                split_timestamp: splitTs,
+                note: `120s signals split at bar ${midIdx}/${sorted.length}. In-sample = first half, out-of-sample = second half.`,
+                in_sample:     analyzeSet(half1, '120s'),
+                out_of_sample: analyzeSet(half2, '120s'),
+            };
+        }
+    }
+
     return {
         success: true,
         exp_60s:  analyzeSet(valid60,  '60s'),
         exp_120s: analyzeSet(valid120, '120s'),
+        cross_validation,
         live_trade_patterns: dbPatternData,
     };
 }
@@ -877,6 +926,108 @@ export async function simulateGates(params = {}) {
             },
         },
         note: 'delta = modified − baseline. Positive win_rate/pl delta means improvement.',
+    };
+}
+
+// ─── gridSearch() — Multivariate parameter grid search ───────────────────────
+// Captures a loose signal pool (wide gates), then post-filters across all
+// combinations of stc_prev / stc_delta / g3_depth / g1_bars_ago thresholds.
+// Returns top 20 per direction (n≥20) ranked by 120s win rate with full stats.
+
+export async function gridSearch(direction = 'both') {
+    const replay = await replayCandles(null, {
+        stc_floor: 30, stc_ceiling: 70,
+        call_delta_max: 1.0, put_delta_min: -1.0,
+        call_g3_depth_min: -100, put_g3_depth_max: 100,
+    });
+    if (!replay.success) return replay;
+
+    const allSigs = (replay.signals_all || []).filter(s => s.result_120 != null);
+
+    function bStatsGrid(arr) {
+        const n      = arr.length;
+        const wins   = arr.filter(s => s.result_120 === 'WIN').length;
+        const losses = n - wins;
+        const gp     = arr.reduce((a, s) => s.result_120 === 'WIN'  ? a + (s.profitLoss_120 || 0) : a, 0);
+        const gl     = arr.reduce((a, s) => s.result_120 === 'LOSS' ? a + Math.abs(s.profitLoss_120 || 0) : a, 0);
+        const avg_win  = wins   > 0 ? parseFloat((gp / wins).toFixed(2))   : null;
+        const avg_loss = losses > 0 ? parseFloat((gl / losses).toFixed(2)) : null;
+        let z_score = null, p_value = null, wl = null, wu = null;
+        if (n >= 5) {
+            const p_hat = wins / n;
+            z_score = parseFloat(((p_hat - 0.5) / Math.sqrt(0.25 / n)).toFixed(3));
+            p_value = parseFloat((1 - normCDF(z_score)).toFixed(4));
+            const z95 = 1.96, denom = 1 + z95 * z95 / n;
+            const center = (p_hat + z95 * z95 / (2 * n)) / denom;
+            const margin = z95 * Math.sqrt(p_hat * (1 - p_hat) / n + z95 * z95 / (4 * n * n)) / denom;
+            wl = parseFloat(Math.max(0, center - margin).toFixed(3));
+            wu = parseFloat(Math.min(1, center + margin).toFixed(3));
+        }
+        return {
+            trades: n, wins, losses,
+            win_rate:      n > 0 ? ((wins / n) * 100).toFixed(1) + '%' : 'N/A',
+            net_pnl:       parseFloat((gp - gl).toFixed(2)),
+            profit_factor: gl > 0 ? parseFloat((gp / gl).toFixed(2)) : null,
+            avg_win, avg_loss,
+            avg_wl_ratio:  avg_win != null && avg_loss != null && avg_loss > 0
+                ? parseFloat((avg_win / avg_loss).toFixed(2)) : null,
+            z_score, p_value,
+            wilson_95ci:   wl != null ? [wl, wu] : null,
+        };
+    }
+
+    const callResults = [], putResults = [];
+    const MIN_N = 20;
+
+    if (direction === 'both' || direction === 'call') {
+        const cs           = allSigs.filter(s => s.direction === 'CALL');
+        const stcMaxVals   = [5, 10, 15, 20, 25, 30];
+        const deltaMaxVals = [0.1, 0.2, 0.3, 0.5, 1.0];
+        const depthMinVals = [-200, -175, -150, -125, -100];
+        const g1Vals       = [1, 2, 3, null];
+        for (const stcMax of stcMaxVals) for (const dMax of deltaMaxVals) for (const depth of depthMinVals) for (const g1 of g1Vals) {
+            const sub = cs.filter(s =>
+                s.stcPrev  != null && s.stcPrev  <= stcMax &&
+                s.stcDelta != null && s.stcDelta <  dMax   &&
+                s.g3_depth != null && s.g3_depth <  depth  &&
+                (g1 === null || s.g1_barsAgo === g1)
+            );
+            if (sub.length >= MIN_N)
+                callResults.push({ direction: 'CALL',
+                    params: { stc_prev_max: stcMax, delta_max: dMax, g3_depth_min: depth, g1_bars_ago: g1 ?? 'any' },
+                    ...bStatsGrid(sub) });
+        }
+        callResults.sort((a, b) => parseFloat(b.win_rate) - parseFloat(a.win_rate));
+    }
+
+    if (direction === 'both' || direction === 'put') {
+        const ps           = allSigs.filter(s => s.direction === 'PUT');
+        const stcMinVals   = [95, 90, 85, 80, 75, 70];
+        const deltaMinVals = [-0.1, -0.2, -0.3, -0.5, -0.9, -1.0];
+        const depthMaxVals = [200, 175, 150, 125, 100];
+        const g1Vals       = [1, 2, 3, null];
+        for (const stcMin of stcMinVals) for (const dMin of deltaMinVals) for (const depth of depthMaxVals) for (const g1 of g1Vals) {
+            const sub = ps.filter(s =>
+                s.stcPrev  != null && s.stcPrev  >= stcMin &&
+                s.stcDelta != null && s.stcDelta >= dMin   &&
+                s.g3_depth != null && s.g3_depth >  depth  &&
+                (g1 === null || s.g1_barsAgo === g1)
+            );
+            if (sub.length >= MIN_N)
+                putResults.push({ direction: 'PUT',
+                    params: { stc_prev_min: stcMin, delta_min: dMin, g3_depth_max: depth, g1_bars_ago: g1 ?? 'any' },
+                    ...bStatsGrid(sub) });
+        }
+        putResults.sort((a, b) => parseFloat(b.win_rate) - parseFloat(a.win_rate));
+    }
+
+    return {
+        success: true,
+        note: 'Loose pool: stc_floor=30/ceiling=70, delta=±1.0, g3_depth=±100. Post-filtered n≥20 at 120s expiry.',
+        total_loose_signals: replay.signals_all?.length ?? 0,
+        total_validated_120s: allSigs.length,
+        call: { combinations_passing_n20: callResults.length, top_20: callResults.slice(0, 20) },
+        put:  { combinations_passing_n20: putResults.length,  top_20: putResults.slice(0, 20) },
     };
 }
 

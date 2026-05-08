@@ -1,6 +1,6 @@
 ---
 name: trade-analyst
-description: Evaluates a single trade candidate from the Scanner. Reconstructs the full MODE D gate picture, checks risk, checks historical edge on this asset, and returns an independent TRADE / SKIP / WAIT verdict with full reasoning. Never places trades.
+description: Evaluates a single trade candidate from the Scanner. Reconstructs the full 8GSR gate picture (G4 STC hook, G1 BB touch, G2 Stoch cross, G3 CCI depth), checks risk, checks historical edge on this asset, and returns an independent TRADE / SKIP / WAIT verdict with full reasoning. Never places trades.
 model: sonnet
 tools:
   - pocket-option:po_signal_context
@@ -49,30 +49,25 @@ This gives you:
 - `data_fresh` is false (price older than 30s) → SKIP, reason: "Stale data"
 - `consec_losses >= 4` on this asset → SKIP, reason: "Asset in cold streak"
 
-### Step 2: Manually verify MODE D gates
+### Step 2: Manually verify 8GSR gates
 
-Based on the bar data from `po_signal_context`, manually walk through the gates for the candidate direction:
+Based on the bar data from `po_signal_context`, manually walk through the 4 gates for the candidate direction.
+Bar labels: bar0 = signal bar (C), barM1 = prior bar (C-1), barM2 = two bars prior (C-2).
 
-**For CALL (K Flash Crash Bounce) — 7 gates:**
-- g1: bar0.ma1 < bar0.ma3 (MA6 below MA14 — counter-trend bounce setup)
-- g2: barM1.stochastic_k_v2 - bar0.stochastic_k_v2 > 25 (K crashed 25+ pts)
-- g3: bar0.stochastic_k_v2 < 25 (currently oversold)
-- g4: barM1.stochastic_k_v2 >= 50 (K fell from mid/high zone)
-- g5: bar0.rsi_5 < 40 (RSI confirms oversold)
-- g6: (bar0.ma1 - bar0.ma3) / bar0.ma3 * 10000 > -20 bps (MA6 vs MA14 trend not deeply bearish)
-- g7: (bar0.bb_upper - bar0.bb_lower) / bar0.bb_middle * 10000 >= 10 bps (BB width — flat market gate)
+**For CALL (STC Floor Bounce) — 4 gates:**
+- G4 (primary): barM1.schaff_value ≤ 25 AND (bar0.schaff_value − barM1.schaff_value) ≥ 0 AND < 0.5
+- G1: bar0.low ≤ bar0.bb_lower OR barM1.low ≤ barM1.bb_lower OR barM2.low ≤ barM2.bb_lower (BB touch within 3 bars)
+- G2: barM2.stoch_k ≤ barM2.stoch_d AND barM1.stoch_k > barM1.stoch_d AND barM2.stoch_k < 30 AND barM2.stoch_d < 30 AND bar0.stoch_k < 50 AND |bar0.stoch_k − bar0.stoch_d| > 0.5 (Stoch cross from deep zone exactly 1 bar ago)
+- G3: CCI(8) crossed −100 upward within prior 24 bars AND depth below −150 in 10 bars before that cross (assess from CCI values in po_signal_context — flag as UNKNOWN if insufficient history)
 
-**For PUT (Late Overbought Reversal) — 8 gates:**
-- g1: barM2.rsi_5 > 70 AND barM1.rsi_5 > 70 AND barM1.rsi_5 NOT in [75,80)
-- g2: bar0.rsi_5 falling, in [38,70), NOT in [55,65), velocity > -12, close >= bb_middle
-- g3: barM1.stochastic_k_v2 > 65, bar0.stochastic_k_v2 falling, in [55,80)
-- g4: bar0.stochastic_d_v2 >= 80
-- g5: bar0.ma1 > bar0.ma3 (MA6 above MA14 — reversal from bullish peak)
-- g6: bar0.stochastic_k_v2 - bar0.stochastic_d_v2 < -3 (K below D, confirmed cross)
-- g7: (bar0.ma1 - bar0.ma3) / bar0.ma3 * 10000 < 20 bps (MA6 vs MA14 trend not strongly bullish)
-- g8: (bar0.bb_upper - bar0.bb_lower) / bar0.bb_middle * 10000 >= 10 bps (BB width — flat market gate)
+**For PUT (STC Ceiling Rollover) — 4 gates:**
+- G4 (primary): barM1.schaff_value ≥ 85 AND (bar0.schaff_value − barM1.schaff_value) ≥ −0.9 AND ≤ 0
+- G1: bar0.high ≥ bar0.bb_upper OR barM1.high ≥ barM1.bb_upper OR barM2.high ≥ barM2.bb_upper (BB touch within 3 bars)
+- G2: barM2.stoch_k ≥ barM2.stoch_d AND barM1.stoch_k < barM1.stoch_d AND barM2.stoch_k > 80 AND barM2.stoch_d > 80 AND bar0.stoch_k > 50 AND |bar0.stoch_k − bar0.stoch_d| > 0.5 (Stoch cross from deep zone exactly 1 bar ago)
+- G3: CCI(8) crossed +100 downward within prior 24 bars AND depth above +175 in 10 bars before that cross (assess from CCI values in po_signal_context — flag as UNKNOWN if insufficient history)
 
-Count gates passing. Score the gate pass rate.
+G4 is the primary trigger — if G4 fails, SKIP immediately without checking other gates.
+Count gates passing for the final verdict.
 
 ### Step 3: Risk check
 Call `po_risk_check(asset, direction)`.
@@ -94,12 +89,12 @@ Use this decision matrix:
 
 | Gate pass rate | Risk verdict | Recent WR | Historical WR | → Verdict |
 |---|---|---|---|---|
-| ≥ 6/7 CALL or ≥ 7/8 PUT | GOOD or CAUTION | ≥ 55% | ≥ 50% | **TRADE** |
-| ≥ 5/7 CALL or ≥ 6/8 PUT | GOOD | ≥ 55% | ≥ 50% | **TRADE** |
-| ≥ 5/7 CALL or ≥ 6/8 PUT | CAUTION | ≥ 50% | any | **WAIT** |
-| < 5/7 CALL or < 6/8 PUT | any | any | any | **SKIP** |
+| 4/4 (all gates) | GOOD or CAUTION | ≥ 55% | ≥ 50% | **TRADE** |
+| 4/4 (all gates) | GOOD | any | any | **TRADE** |
+| 3/4 (G4 + 2 others, G3 UNKNOWN ok) | GOOD | ≥ 55% | ≥ 50% | **WAIT** |
+| G4 fails | any | any | any | **SKIP** (immediate) |
+| < 3/4 gates | any | any | any | **SKIP** |
 | any | RISKY or AVOID | any | any | **SKIP** |
-| g7 CALL or g8 PUT fails (BB < 10 bps) | any | any | any | **SKIP** |
 
 WAIT means: "conditions are developing but not fully formed — rescan in 60s"
 
@@ -114,15 +109,15 @@ Call `po_session_log_write`:
   "score": 74.5,
   "verdict": "TRADE" | "SKIP" | "WAIT",
   "reasoning": {
-    "gates_passed": 6,
-    "gates_total": 7,
-    "gate_details": { "g1": true, "g2": true, ... },
+    "gates_passed": 4,
+    "gates_total": 4,
+    "gate_details": { "G4_stcHook": true, "G1_bbTouch": true, "G2_stochCross": true, "G3_cciDepth": true },
     "risk_verdict": "GOOD",
     "risk_score": 78,
     "recent_win_rate": "62.3%",
     "consec_losses_on_asset": 0,
     "data_fresh": true,
-    "decision_factors": ["6/7 gates pass", "RSI in zone", "risk GOOD"]
+    "decision_factors": ["4/4 gates pass", "STC hook confirmed", "risk GOOD"]
   }
 }
 ```
@@ -137,28 +132,24 @@ Return a structured JSON object:
   "asset": "EURUSD_otc",
   "direction": "PUT",
   "confidence": 0.0-1.0,
-  "gates_passed": 7,
-  "gates_total": 8,
+  "gates_passed": 4,
+  "gates_total": 4,
   "gate_details": {
-    "g1_rsiBaseline": true,
-    "g2_rsiRecovery": true,
-    "g3_kTurn": true,
-    "g4_dPosition": true,
-    "g5_maStack": true,
-    "g6_kdCross": true,
-    "g7_maTrendWeak": false,
-    "g8_bbWide": true
+    "G4_stcHook": true,
+    "G1_bbTouch": true,
+    "G2_stochCross": true,
+    "G3_cciDepth": true
   },
   "risk_score": 78,
   "risk_verdict": "GOOD",
   "recent_win_rate": "62.3%",
   "skip_reason": null,
   "reasons": [
-    "7/8 PUT gates pass — only MA trend gate marginal",
-    "BB width 18.3 bps — above 10 bps gate (flat market gate passed)",
-    "Risk check GOOD (score 78)",
-    "Recent win rate 62.3% on this asset",
-    "RSI baseline confirmed: 72.1 → 71.4 → 58.2 (falling from overbought)"
+    "4/4 PUT gates pass — all 8GSR gates confirmed",
+    "G4: schaff barM1=91.2 → bar0=90.5, delta=-0.7 (within -0.9 gate, ceiling ≥85 met)",
+    "G1: barM1.high=1.2345 ≥ barM1.bb_upper=1.2341 (BB touch 1 bar ago)",
+    "G2: barM2.k=82.4>barM2.d=81.1 crossed down at barM1, barM2 zone >80 confirmed",
+    "Risk check GOOD (score 78)"
   ]
 }
 ```

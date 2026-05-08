@@ -27,17 +27,27 @@ This fires all historical CALL and PUT signals bar-by-bar and validates against 
 
 Call `po_find_edge`.
 
-This returns 11 analysis dimensions. Extract findings from each:
+**Primary target: `exp_120s` (2m expiry). Secondary context: `exp_60s` (1m expiry — optional).**
+
+Where 60s and 120s WR diverge by >15% on the same bucket: flag as expiry-sensitive — the signal is real at 1m but fades (or reverses) by 2m. This is critical for gate tuning since 2m is the trading target.
+
+This returns 11+ analysis dimensions. Extract findings from each:
 
 **Capture these specifically:**
-- `by_bb_width` — which BB tiers are profitable vs losing (key gate validation)
-- `by_pattern` — CALL_REVERSAL vs PUT_REVERSAL vs CALL_CONTINUATION vs PUT_CONTINUATION win rates
-- `by_retracement_depth` — does deeper RSI peak/trough before signal improve win rate?
-- `by_k_extension` — does more bars of K extension before crash improve win rate?
-- `by_ma_gap_trend` — narrowing vs widening MA gap at signal time
-- `by_bb_expansion` — expanding vs contracting BB at signal time
-- `by_hour` — which UTC hours are most profitable
-- `by_asset` — per-asset win rates with CALL/PUT breakdown
+- `by_direction` — CALL vs PUT overall WR and PnL at 60s and 120s expiry
+- `by_stc_prev` — STC zone depth at signal bar (CALL: 0-5, 5-10, 10-25; PUT: 75-85, 85-95, 95-100)
+- `by_stc_delta` — hook size: CALL 0.0-0.1, 0.1-0.2, 0.2-0.3, 0.3-0.5; PUT mirror
+- `by_g1_barsAgo` — BB touch recency: 1, 2, or 3 bars before signal
+- `by_g2_cross_depth` — K at C-2 (pre-cross bar): how deep was stoch before crossing
+- `by_g2_cross_kd` — K at C-1 (the cross bar itself): momentum at the crossing point
+- `by_stoch_levels` — current K at signal bar vs direction gate
+- `by_g3_depth` — CCI depth: CALL -250 to -150 buckets; PUT 150 to 250 buckets
+- `by_g3_cross_bars_ago` — recency of CCI cross: 1-3, 4-6, 7-10, 11-24 bars ago
+- `by_cci_current` — CCI value at the signal bar itself
+- `by_coincidence_score` — gates at max intensity (0-5): does higher score predict better WR?
+- `by_bb_width` — BB bps at signal (flat <2, weak 2-5, marginal 5-10, ok 10-20, good 20+)
+- `by_asset` — per-asset win rates with CALL/PUT breakdown and preferred direction
+- `best_thresholds` — auto-selected best bucket per parameter with ≥5 trades
 
 ## Step 4: Asset Bias Check
 
@@ -92,21 +102,15 @@ Structure:
 [CALL: RSI trough depth before bounce — does deeper trough improve WR?]
 [K extension: does more bars above/below 65/35 improve WR?]
 
-## 6. Market Timing
-[Best and worst UTC hours]
-[MA gap trend at signal: narrowing vs widening]
-[BB expansion state at signal: expanding vs contracting]
-
-## 7. Asset Analysis
+## 6. Asset Analysis
 [Top 5 assets by win rate — with preferred direction]
-[Bottom 5 assets — with reason (low vol, wrong direction, etc.)]
-[Assets to block: AVOID or BLOCK_RECOMMENDED]
+[Bottom 5 assets — with reason (low vol / wrong direction)]
+[Assets currently below 5 bps BB — flag for dynamic block only, not permanent]
 
-## 8. Recommendations
+## 7. Recommendations
 [Specific gate change proposals with po_simulate commands to test them]
-[Assets to block immediately]
-[Pattern focus: which pattern to prioritise]
-[Timing filter: which hours to avoid if any]
+[Dynamic blocks: assets with current BB < 5 bps only — OTC conditions change, never block by historical WR alone]
+[Pattern focus: which direction (CALL/PUT) has the strongest current edge]
 ```
 
 ## Step 7: Simulate Top Recommendations
@@ -114,9 +118,12 @@ Structure:
 For any gate change identified in the report, run `po_simulate` to validate before recommending it as a live bot change.
 
 Example simulations to run based on findings:
-- If `by_bb_width` shows 15 bps improves WR: `po_simulate bar_bb_bps_min=15`
-- If `by_k_extension` shows 3+ bars is best: `po_simulate call_k_crash_min=30`
-- If `by_retracement_depth` shows RSI peak > 85 for PUT: note in report as hypothesis to test
+- If `by_stc_delta` shows CALL delta 0.2-0.3 outperforms: test `po_simulate call_delta_max=0.3`
+- If `by_g3_depth` shows CALL -175 to -150 outperforms deeper zones: test `po_simulate call_g3_depth_min=-175`
+- If `by_stc_prev` shows PUT 95-100 outperforms: test `po_simulate put_stc_ceiling=95`
+- If `by_g3_depth` shows PUT >175 outperforms >150: test `po_simulate put_g3_depth_max=175`
+- If `by_stc_prev` shows CALL 0-5 outperforms: test `po_simulate call_stc_floor=5`
+- Combine the best univariate results into one joint simulation to see the full cumulative effect
 
 Add simulation results to the Recommendations section.
 
