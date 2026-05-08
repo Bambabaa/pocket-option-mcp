@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(node:*)",
-      "Bash(sqlite3 *)"
+      "Bash(sqlite3 *)",
+      "mcp__pocket-option__po_simulate"
     ]
   }
 }

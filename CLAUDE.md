@@ -87,22 +87,7 @@ pocket-option-mcp/
     └── trade-executor.md
 ```
 
-## MODE D Strategy — STC Reversal Gates (active as of 2026-04-28)
 
-Replaced K Flash Crash / Late Overbought Reversal with STC (Schaff Trend Cycle) reversal strategy.
-STC params: (10, 20, 5, 3, 3) — recalibrated 2026-04-28 via `bot/scripts/recalculate-schaff.js`.
-Use **120s expiry** — 60s is not statistically viable for either direction.
-
-| Column | Indicator | Role |
-|---|---|---|
-| `ma1` | MA6 | Fast MA — context |
-| `ma3` | MA14 | Slow MA — context |
-| `ma2` | MA50 | NOT used in gates |
-| `schaff_value` | STC (12,25,5,3,3) | Primary timing signal |
-| `stochastic_k_v2` | Stoch K (5,3,3) | Confirmation |
-| `stochastic_d_v2` | Stoch D (5,3,3) | Confirmation signal line |
-| `rsi_5` | RSI period 5 | Momentum depth gate |
-| `bb_upper/lower/middle` | BB (20,2) | Volatility gate |
 
 **STC zone interpretation:**
 - ≤ 25 = floor (CALL reversal zone — cycle exhausted to downside)
@@ -221,16 +206,3 @@ Use **120s expiry** — 60s is not statistically viable for either direction.
 12. po_trade asset direction amount → place trade
 ```
 
-## Known Validated Facts
-
-- **STC gates validated 2026-04-28** via binomial significance + correlation analysis:
-  - CALL 7-gate 120s: n=25, WR=84.0%, p=0.0005 → SIGNIFICANT_99, Kelly=66.6%
-  - PUT  6-gate 120s: n=14, WR=78.6%, p=0.029  → SIGNIFICANT_95, Kelly=55.3%
-  - G6 (bb_expanding): chi²=4.33, phi=+0.218, p=0.019 — BB expanding = volatility releasing into reversal
-  - G7 (no_narrow_gap): chi²=6.16, phi=-0.259, p=0.007 — narrowing MA gap = trend losing momentum
-  - CALL STC≤10 + G6+G7: n=21, WR=90.5%, p=0.0001 — highest-conviction CALL subset
-- **60s expiry is not viable** — CALL 60s 46.2% (LOSING), PUT 60s 50.0% (coin flip). Use 120s only.
-- **PUT has more edge than CALL** — RSI > 70 + STC ≥ 90 is the highest-quality setup
-- **BB < 10 bps = losing zone**: 45.8% WR validated. Gate live at 10 bps.
-- **Flat assets (BB < 5 bps) must be identified dynamically** — use `po_auto_block_sweep` at session start.
-- **`po_significance` tool** — run after accumulating new live trades to track whether edge holds

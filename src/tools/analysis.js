@@ -52,14 +52,15 @@ export function registerAnalysisTools(server) {
 
   server.tool(
     'po_simulate',
-    'Replay historical candles with custom STC reversal gate thresholds and compare against the baseline defaults. Shows side-by-side: signal count, win rate, P/L for CALL and PUT at both 60s and 120s expiry — plus delta vs baseline. Use this to test a gate change before modifying the bot. Example: "what if I tightened call_stc_floor to 20?" or "what if I raised bb_bps_min to 15?".',
+    'Replay historical candles with custom 8GSR gate thresholds and compare against baseline defaults. Shows side-by-side: signal count, win rate, P/L for CALL and PUT at both 60s and 120s expiry — plus delta vs baseline. Use this to test a gate change before modifying the bot. Example: "what if I tightened call_stc_floor to 20?" or "what if I raised call_delta_max to 0.3?".',
     {
-      call_stc_floor:   z.coerce.number().optional().describe('Max STC value for CALL entry (default 25)'),
-      call_rsi_max:     z.coerce.number().optional().describe('Max RSI for CALL — deeply oversold (default 30)'),
-      put_stc_ceiling:  z.coerce.number().optional().describe('Min STC value for PUT entry (default 90)'),
-      put_rsi_min:      z.coerce.number().optional().describe('Min RSI for PUT — deeply overbought (default 70)'),
-      bb_bps_min:       z.coerce.number().optional().default(10).describe('Min BB width bps both directions (default 10)'),
-      amount:           z.coerce.number().positive().optional().default(500).describe('Trade amount for P/L calc (default 500)'),
+      call_stc_floor:    z.coerce.number().optional().describe('G4 CALL: max stcPrev allowed (default 25)'),
+      put_stc_ceiling:   z.coerce.number().optional().describe('G4 PUT: min stcPrev required (default 75)'),
+      call_delta_max:    z.coerce.number().optional().describe('G4 CALL: max STC hook size — stcDelta < this (default 0.5)'),
+      put_delta_min:     z.coerce.number().optional().describe('G4 PUT: min STC hook size — stcDelta > this (default -0.5)'),
+      call_g3_depth_min: z.coerce.number().optional().describe('G3 CALL: CCI depth must be below this value (default -150)'),
+      put_g3_depth_max:  z.coerce.number().optional().describe('G3 PUT: CCI depth must be above this value (default 150)'),
+      amount:            z.coerce.number().positive().optional().default(500).describe('Trade amount for P/L calc (default 500)'),
     },
     async (p) => {
       try { return jsonResult(core.simulateGates(p)); }

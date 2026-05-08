@@ -41,7 +41,6 @@
 ### **Documentation**
 - **User Guide**: `docs/user-guide.md` — Full tool reference
 - **Strategy Guide**: `scripts/UPGRADE_SUMMARY.md` — 7-gate spec
-- **Backtest Report**: `data/BACKTEST_REPORT_2026-04-28.md` — Results from 3 databases
 - **Schaff Report**: `data/SCHAFF_RECALC_REPORT.md` — Recalculation summary
 
 ---

@@ -677,7 +677,7 @@ class Indicators {
             // ── Gate 4: STC hook + delta bounds ──────────────────────────────────
             const g4_ok = isBuy
                 ? stcPrev <= 25 && stcDelta >= 0    && stcDelta < 0.5
-                : stcPrev >= 75 && stcDelta >= -0.5 && stcDelta <= 0;
+                : stcPrev >= 85 && stcDelta >= -0.9 && stcDelta <= 0;
             if (!g4_ok) continue;
 
             // ── Gate 1: BB touch within last 3 bars ──────────────────────────────
@@ -713,7 +713,7 @@ class Indicators {
                 if (crossed) {
                     const _depthSlice = _cciH.slice(Math.max(0, _x - 10), Math.max(0, _x - 1)).filter(v => v != null);
                     const _depth = _depthSlice.length > 0 ? (isBuy ? Math.min(..._depthSlice) : Math.max(..._depthSlice)) : null;
-                    if (_depth != null && (isBuy ? _depth < -150 : _depth > 150)) g3_ok = true;
+                    if (_depth != null && (isBuy ? _depth < -150 : _depth > 175)) g3_ok = true;
                     break;
                 }
             }

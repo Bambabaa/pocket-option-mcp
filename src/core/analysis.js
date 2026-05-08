@@ -127,13 +127,22 @@ function check8GSR(candles, t, direction, params = {}) {
     const bbBps = bar0.bb_upper != null && bar0.bb_lower != null && bar0.bb_middle != null && bar0.bb_middle > 0
         ? (bar0.bb_upper - bar0.bb_lower) / bar0.bb_middle * 10000 : null;
 
+    // G2 cross depth: K/D at C-2 (pre-cross) and C-1 (cross bar)
+    const barC2_ref = candles[t - 2];
+    const barC1_ref = candles[t - 1];
+    const g2_preCrossK = g2_stochCross ? (barC2_ref?.stochastic_k_v2 ?? null) : null;
+    const g2_preCrossD = g2_stochCross ? (barC2_ref?.stochastic_d_v2 ?? null) : null;
+    const g2_crossK    = g2_stochCross ? (barC1_ref?.stochastic_k_v2 ?? null) : null;
+    const g2_crossD    = g2_stochCross ? (barC1_ref?.stochastic_d_v2 ?? null) : null;
+
     const pass = g4_stcHook && g1_bbTouch && g2_stochCross && g3_cciCross;
     return {
         pass, direction, patternName: isBuy ? 'STC_CALL_8GSR' : 'STC_PUT_8GSR',
         gates:  { g4_stcHook, g1_bbTouch, g2_stochCross, g3_cciCross },
         values: { stcCurrent, stcPrev, stcDelta, bbBps,
                   k: bar0.stochastic_k_v2, d: bar0.stochastic_d_v2,
-                  g1_barsAgo, g3_depth, g3_crossBarsAgo },
+                  cci_8_current: bar0.cci_8,
+                  g1_barsAgo, g2_preCrossK, g2_preCrossD, g2_crossK, g2_crossD, g3_depth, g3_crossBarsAgo },
     };
 }
 
@@ -313,16 +322,22 @@ export async function findEdge() {
         const resultKey = expiryLabel === '60s' ? 'result_60' : 'result_120';
         const plKey     = expiryLabel === '60s' ? 'profitLoss_60' : 'profitLoss_120';
 
+        function bStats(arr) {
+            const wins = arr.filter(s => s[resultKey] === 'WIN').length;
+            const gp   = arr.reduce((a, s) => s[resultKey] === 'WIN'  ? a + (s[plKey] || 0) : a, 0);
+            const gl   = arr.reduce((a, s) => s[resultKey] === 'LOSS' ? a + Math.abs(s[plKey] || 0) : a, 0);
+            return {
+                trades: arr.length, wins, losses: arr.length - wins,
+                win_rate: arr.length > 0 ? ((wins / arr.length) * 100).toFixed(1) + '%' : 'N/A',
+                net_pnl: parseFloat((gp - gl).toFixed(2)),
+                profit_factor: gl > 0 ? parseFloat((gp / gl).toFixed(2)) : null,
+            };
+        }
+
         // ── Direction breakdown ──
-        const callSigs = validSignals.filter(s => s.direction === 'CALL');
-        const putSigs  = validSignals.filter(s => s.direction === 'PUT');
-        const callWins = callSigs.filter(s => s[resultKey] === 'WIN').length;
-        const putWins  = putSigs.filter(s => s[resultKey] === 'WIN').length;
         const by_direction = {
-            call: { trades: callSigs.length, wins: callWins, losses: callSigs.length - callWins,
-                win_rate: callSigs.length > 0 ? ((callWins / callSigs.length) * 100).toFixed(1) + '%' : 'N/A' },
-            put:  { trades: putSigs.length,  wins: putWins,  losses: putSigs.length  - putWins,
-                win_rate: putSigs.length  > 0 ? ((putWins  / putSigs.length)  * 100).toFixed(1) + '%' : 'N/A' },
+            call: bStats(validSignals.filter(s => s.direction === 'CALL')),
+            put:  bStats(validSignals.filter(s => s.direction === 'PUT')),
         };
 
         // ── STC previous value (Gate 4 zone depth) ──
@@ -339,15 +354,11 @@ export async function findEdge() {
         const by_stc_prev = [
             ...callStcBuckets.map(b => {
                 const bt = validSignals.filter(s => s.direction === 'CALL' && s.stcPrev != null && s.stcPrev >= b.min && s.stcPrev < b.max);
-                const wins = bt.filter(s => s[resultKey] === 'WIN').length;
-                return { direction: 'CALL', stc_prev_range: b.range, trades: bt.length, wins, losses: bt.length - wins,
-                    win_rate: bt.length > 0 ? ((wins / bt.length) * 100).toFixed(1) + '%' : 'N/A' };
+                return { direction: 'CALL', stc_prev_range: b.range, ...bStats(bt) };
             }),
             ...putStcBuckets.map(b => {
                 const bt = validSignals.filter(s => s.direction === 'PUT' && s.stcPrev != null && s.stcPrev >= b.min && s.stcPrev < b.max);
-                const wins = bt.filter(s => s[resultKey] === 'WIN').length;
-                return { direction: 'PUT', stc_prev_range: b.range, trades: bt.length, wins, losses: bt.length - wins,
-                    win_rate: bt.length > 0 ? ((wins / bt.length) * 100).toFixed(1) + '%' : 'N/A' };
+                return { direction: 'PUT', stc_prev_range: b.range, ...bStats(bt) };
             }),
         ].filter(b => b.trades > 0);
 
@@ -363,112 +374,266 @@ export async function findEdge() {
         const by_stc_delta = [
             ...callDeltaBuckets.map(b => {
                 const bt = validSignals.filter(s => s.direction === 'CALL' && s.stcDelta != null && s.stcDelta >= b.min && s.stcDelta < b.max);
-                const wins = bt.filter(s => s[resultKey] === 'WIN').length;
-                return { direction: 'CALL', stc_delta_range: b.range, trades: bt.length, wins, losses: bt.length - wins,
-                    win_rate: bt.length > 0 ? ((wins / bt.length) * 100).toFixed(1) + '%' : 'N/A' };
+                return { direction: 'CALL', stc_delta_range: b.range, ...bStats(bt) };
             }),
             ...putDeltaBuckets.map(b => {
                 const bt = validSignals.filter(s => s.direction === 'PUT' && s.stcDelta != null && s.stcDelta >= b.min && s.stcDelta < b.max);
-                const wins = bt.filter(s => s[resultKey] === 'WIN').length;
-                return { direction: 'PUT', stc_delta_range: b.range, trades: bt.length, wins, losses: bt.length - wins,
-                    win_rate: bt.length > 0 ? ((wins / bt.length) * 100).toFixed(1) + '%' : 'N/A' };
+                return { direction: 'PUT', stc_delta_range: b.range, ...bStats(bt) };
             }),
         ].filter(b => b.trades > 0);
 
         // ── G1 bars ago (how recent was the BB touch) ──
         const by_g1_barsAgo = [1, 2, 3].map(j => {
             const bt = validSignals.filter(s => s.g1_barsAgo === j);
-            const wins = bt.filter(s => s[resultKey] === 'WIN').length;
-            return { g1_bars_ago: j, trades: bt.length, wins, losses: bt.length - wins,
-                win_rate: bt.length > 0 ? ((wins / bt.length) * 100).toFixed(1) + '%' : 'N/A' };
+            return { g1_bars_ago: j, ...bStats(bt) };
         }).filter(b => b.trades > 0);
+
+        // ── G2 stoch cross depth (K at C-2, the pre-cross bar) ──
+        const callCrossDepthBuckets = [
+            { range: '0-5',   min: 0,  max: 5  }, { range: '5-10',  min: 5,  max: 10 },
+            { range: '10-20', min: 10, max: 20 }, { range: '20-30', min: 20, max: 30 },
+        ];
+        const putCrossDepthBuckets = [
+            { range: '95-100', min: 95, max: 101 }, { range: '90-95',  min: 90, max: 95 },
+            { range: '80-90',  min: 80, max: 90  }, { range: '70-80',  min: 70, max: 80 },
+        ];
+        const by_g2_cross_depth = [
+            ...callCrossDepthBuckets.map(b => {
+                const bt = validSignals.filter(s => s.direction === 'CALL' && s.g2_preCrossK != null && s.g2_preCrossK >= b.min && s.g2_preCrossK < b.max);
+                return { direction: 'CALL', k_before_cross: b.range, ...bStats(bt) };
+            }),
+            ...putCrossDepthBuckets.map(b => {
+                const bt = validSignals.filter(s => s.direction === 'PUT' && s.g2_preCrossK != null && s.g2_preCrossK >= b.min && s.g2_preCrossK < b.max);
+                return { direction: 'PUT', k_before_cross: b.range, ...bStats(bt) };
+            }),
+        ].filter(b => b.trades > 0);
+
+        // ── G2 cross bar (K at C-1, the bar where the crossover happened) ──
+        const callCrossBarBuckets = [
+            { range: '0-10',  min: 0,  max: 10 }, { range: '10-20', min: 10, max: 20 },
+            { range: '20-30', min: 20, max: 30 }, { range: '30-50', min: 30, max: 50 },
+        ];
+        const putCrossBarBuckets = [
+            { range: '90-100', min: 90, max: 101 }, { range: '80-90', min: 80, max: 90 },
+            { range: '70-80',  min: 70, max: 80  }, { range: '50-70', min: 50, max: 70 },
+        ];
+        const by_g2_cross_kd = [
+            ...callCrossBarBuckets.map(b => {
+                const bt = validSignals.filter(s => s.direction === 'CALL' && s.g2_crossK != null && s.g2_crossK >= b.min && s.g2_crossK < b.max);
+                return { direction: 'CALL', stage: 'k_at_cross', k_range: b.range, ...bStats(bt) };
+            }),
+            ...putCrossBarBuckets.map(b => {
+                const bt = validSignals.filter(s => s.direction === 'PUT' && s.g2_crossK != null && s.g2_crossK >= b.min && s.g2_crossK < b.max);
+                return { direction: 'PUT', stage: 'k_at_cross', k_range: b.range, ...bStats(bt) };
+            }),
+        ].filter(b => b.trades > 0);
+
+        // ── G3 CCI cross barsAgo (how recent was the CCI cross before signal) ──
+        const g3AgoBuckets = [
+            { range: '1-3 bars',   min: 1,  max: 4  }, { range: '4-6 bars',   min: 4,  max: 7  },
+            { range: '7-10 bars',  min: 7,  max: 11 }, { range: '11-15 bars', min: 11, max: 16 },
+            { range: '16-24 bars', min: 16, max: 25 },
+        ];
+        const by_g3_cross_bars_ago = g3AgoBuckets.map(b => {
+            const bt = validSignals.filter(s => s.g3_crossBarsAgo != null && s.g3_crossBarsAgo >= b.min && s.g3_crossBarsAgo < b.max);
+            return { bars_ago: b.range, ...bStats(bt) };
+        }).filter(b => b.trades > 0);
+
+        // ── CCI current value at signal bar (cci_8_current) ──
+        const callCciBuckets = [
+            { range: 'CCI < 0',          min: -Infinity, max: 0   },
+            { range: 'CCI 0-50',         min: 0,         max: 50  },
+            { range: 'CCI 50-100',       min: 50,        max: 100 },
+            { range: 'CCI 100-200',      min: 100,       max: 200 },
+            { range: 'CCI 200+',         min: 200,       max: Infinity },
+        ];
+        const putCciBuckets = [
+            { range: 'CCI > 0',          min: 0,         max: Infinity  },
+            { range: 'CCI -50 to 0',     min: -50,       max: 0         },
+            { range: 'CCI -100 to -50',  min: -100,      max: -50       },
+            { range: 'CCI -200 to -100', min: -200,      max: -100      },
+            { range: 'CCI < -200',       min: -Infinity, max: -200      },
+        ];
+        const by_cci_current = [
+            ...callCciBuckets.map(b => {
+                const bt = validSignals.filter(s => s.direction === 'CALL' && s.cci_8_current != null && s.cci_8_current >= b.min && s.cci_8_current < b.max);
+                return { direction: 'CALL', cci_at_signal: b.range, ...bStats(bt) };
+            }),
+            ...putCciBuckets.map(b => {
+                const bt = validSignals.filter(s => s.direction === 'PUT' && s.cci_8_current != null && s.cci_8_current >= b.min && s.cci_8_current < b.max);
+                return { direction: 'PUT', cci_at_signal: b.range, ...bStats(bt) };
+            }),
+        ].filter(b => b.trades > 0);
+
+        // ── Stochastic levels: K at pre-cross bar (C-2) and current bar ──
+        const callKBefore = [
+            { range: 'K 0-10', min: 0, max: 10 }, { range: 'K 10-20', min: 10, max: 20 },
+            { range: 'K 20-30', min: 20, max: 30 },
+        ];
+        const putKBefore = [
+            { range: 'K 90-100', min: 90, max: 101 }, { range: 'K 80-90', min: 80, max: 90 },
+            { range: 'K 70-80', min: 70, max: 80 },
+        ];
+        const callKCurrent = [
+            { range: 'K 0-20',  min: 0, max: 20 }, { range: 'K 20-30', min: 20, max: 30 },
+            { range: 'K 30-40', min: 30, max: 40 }, { range: 'K 40-50', min: 40, max: 50 },
+        ];
+        const putKCurrent = [
+            { range: 'K 50-60', min: 50, max: 60 }, { range: 'K 60-70', min: 60, max: 70 },
+            { range: 'K 70-80', min: 70, max: 80 }, { range: 'K 80+',   min: 80, max: 101 },
+        ];
+        const by_stoch_levels = [
+            ...callKBefore.map(b => {
+                const bt = validSignals.filter(s => s.direction === 'CALL' && s.g2_preCrossK != null && s.g2_preCrossK >= b.min && s.g2_preCrossK < b.max);
+                return { stage: 'pre_cross_K', direction: 'CALL', k_range: b.range, ...bStats(bt) };
+            }),
+            ...putKBefore.map(b => {
+                const bt = validSignals.filter(s => s.direction === 'PUT' && s.g2_preCrossK != null && s.g2_preCrossK >= b.min && s.g2_preCrossK < b.max);
+                return { stage: 'pre_cross_K', direction: 'PUT', k_range: b.range, ...bStats(bt) };
+            }),
+            ...callKCurrent.map(b => {
+                const bt = validSignals.filter(s => s.direction === 'CALL' && s.k != null && s.k >= b.min && s.k < b.max);
+                return { stage: 'current_K', direction: 'CALL', k_range: b.range, ...bStats(bt) };
+            }),
+            ...putKCurrent.map(b => {
+                const bt = validSignals.filter(s => s.direction === 'PUT' && s.k != null && s.k >= b.min && s.k < b.max);
+                return { stage: 'current_K', direction: 'PUT', k_range: b.range, ...bStats(bt) };
+            }),
+        ].filter(b => b.trades > 0);
+
+        // ── Coincidence window: how many gates fired at maximum intensity ──
+        function gateScore(s) {
+            let score = 0;
+            if (s.direction === 'CALL') {
+                if (s.stcPrev != null      && s.stcPrev <= 10)              score++;
+                if (s.g1_barsAgo           === 1)                            score++;
+                if (s.g2_preCrossK != null && s.g2_preCrossK <= 10)         score++;
+                if (s.g3_depth != null     && s.g3_depth <= -200)           score++;
+                if (s.g3_crossBarsAgo != null && s.g3_crossBarsAgo <= 3)    score++;
+            } else {
+                if (s.stcPrev != null      && s.stcPrev >= 95)              score++;
+                if (s.g1_barsAgo           === 1)                            score++;
+                if (s.g2_preCrossK != null && s.g2_preCrossK >= 95)         score++;
+                if (s.g3_depth != null     && s.g3_depth >= 200)            score++;
+                if (s.g3_crossBarsAgo != null && s.g3_crossBarsAgo <= 3)    score++;
+            }
+            return score;
+        }
+        const scoreBuckets = {};
+        for (const s of validSignals) {
+            const sc = gateScore(s);
+            if (!scoreBuckets[sc]) scoreBuckets[sc] = [];
+            scoreBuckets[sc].push(s);
+        }
+        const by_coincidence_score = [0,1,2,3,4,5].map(sc => {
+            const arr = scoreBuckets[sc];
+            if (!arr?.length) return null;
+            return { gates_at_max: sc, ...bStats(arr) };
+        }).filter(Boolean);
 
         // ── G3 CCI depth ──
         const callDepthBuckets = [
-            { range: '< -250', min: -Infinity, max: -250 }, { range: '-250 to -200', min: -250, max: -200 },
-            { range: '-200 to -175', min: -200, max: -175 }, { range: '-175 to -150', min: -175, max: -150 },
+            { range: '< -250',       min: -Infinity, max: -250 }, { range: '-250 to -200', min: -250, max: -200 },
+            { range: '-200 to -175', min: -200,      max: -175 }, { range: '-175 to -150', min: -175, max: -150 },
         ];
         const putDepthBuckets = [
-            { range: '> 250', min: 250, max: Infinity }, { range: '200 to 250', min: 200, max: 250 },
-            { range: '175 to 200', min: 175, max: 200 }, { range: '150 to 175', min: 150, max: 175 },
+            { range: '> 250',       min: 250, max: Infinity }, { range: '200 to 250', min: 200, max: 250 },
+            { range: '175 to 200',  min: 175, max: 200     }, { range: '150 to 175', min: 150, max: 175 },
         ];
         const by_g3_depth = [
             ...callDepthBuckets.map(b => {
                 const bt = validSignals.filter(s => s.direction === 'CALL' && s.g3_depth != null && s.g3_depth >= b.min && s.g3_depth < b.max);
-                const wins = bt.filter(s => s[resultKey] === 'WIN').length;
-                return { direction: 'CALL', cci_depth_range: b.range, trades: bt.length, wins, losses: bt.length - wins,
-                    win_rate: bt.length > 0 ? ((wins / bt.length) * 100).toFixed(1) + '%' : 'N/A' };
+                return { direction: 'CALL', cci_depth_range: b.range, ...bStats(bt) };
             }),
             ...putDepthBuckets.map(b => {
                 const bt = validSignals.filter(s => s.direction === 'PUT' && s.g3_depth != null && s.g3_depth >= b.min && s.g3_depth < b.max);
-                const wins = bt.filter(s => s[resultKey] === 'WIN').length;
-                return { direction: 'PUT', cci_depth_range: b.range, trades: bt.length, wins, losses: bt.length - wins,
-                    win_rate: bt.length > 0 ? ((wins / bt.length) * 100).toFixed(1) + '%' : 'N/A' };
+                return { direction: 'PUT', cci_depth_range: b.range, ...bStats(bt) };
             }),
         ].filter(b => b.trades > 0);
 
         // ── BB width at signal bar ──
         const bbBuckets = [
-            { label: 'flat (<2)', min: 0, max: 2 }, { label: 'weak (2-5)', min: 2, max: 5 },
-            { label: 'marginal (5-10)', min: 5, max: 10 }, { label: 'ok (10-20)', min: 10, max: 20 },
-            { label: 'good (20+)', min: 20, max: Infinity },
+            { label: 'flat (<2)',      min: 0,  max: 2        }, { label: 'weak (2-5)',     min: 2,  max: 5  },
+            { label: 'marginal (5-10)', min: 5, max: 10       }, { label: 'ok (10-20)',      min: 10, max: 20 },
+            { label: 'good (20+)',     min: 20, max: Infinity },
         ];
         const by_bb_width = bbBuckets.map(b => {
             const bt = validSignals.filter(s => s.bbBps != null && s.bbBps >= b.min && s.bbBps < b.max);
-            const wins = bt.filter(s => s[resultKey] === 'WIN').length;
-            return { bb_range: b.label, trades: bt.length, wins, losses: bt.length - wins,
-                win_rate: bt.length > 0 ? ((wins / bt.length) * 100).toFixed(1) + '%' : 'N/A' };
+            return { bb_range: b.label, ...bStats(bt) };
         }).filter(b => b.trades > 0);
 
         // ── Hour of day ──
-        const hourMap = {};
+        const hourBuckets = {};
         for (const s of validSignals) {
             const hour = Math.floor((s.signalTs % 86400) / 3600);
-            if (!hourMap[hour]) hourMap[hour] = { trades: 0, wins: 0 };
-            hourMap[hour].trades++;
-            if (s[resultKey] === 'WIN') hourMap[hour].wins++;
+            if (!hourBuckets[hour]) hourBuckets[hour] = [];
+            hourBuckets[hour].push(s);
         }
-        const by_hour = Object.entries(hourMap)
-            .map(([hour, d]) => ({ hour_utc: parseInt(hour), trades: d.trades, wins: d.wins,
-                losses: d.trades - d.wins, win_rate: ((d.wins / d.trades) * 100).toFixed(1) + '%' }))
+        const by_hour = Object.entries(hourBuckets)
+            .map(([hour, arr]) => ({ hour_utc: parseInt(hour), ...bStats(arr) }))
             .sort((a, b) => b.trades - a.trades);
 
         // ── By asset ──
-        const assetMap = {};
+        const assetBuckets = {};
         for (const s of validSignals) {
-            if (!assetMap[s.asset]) assetMap[s.asset] = { trades: 0, wins: 0, total_pl: 0, call_w: 0, call_l: 0, put_w: 0, put_l: 0 };
-            assetMap[s.asset].trades++;
-            if (s[resultKey] === 'WIN') assetMap[s.asset].wins++;
-            assetMap[s.asset].total_pl += (s[plKey] || 0);
-            if (s.direction === 'CALL') { if (s[resultKey] === 'WIN') assetMap[s.asset].call_w++; else assetMap[s.asset].call_l++; }
-            else { if (s[resultKey] === 'WIN') assetMap[s.asset].put_w++; else assetMap[s.asset].put_l++; }
+            if (!assetBuckets[s.asset]) assetBuckets[s.asset] = { all: [], call: [], put: [] };
+            assetBuckets[s.asset].all.push(s);
+            if (s.direction === 'CALL') assetBuckets[s.asset].call.push(s);
+            else assetBuckets[s.asset].put.push(s);
         }
-        const by_asset = Object.entries(assetMap).map(([asset, d]) => {
-            const callTotal = d.call_w + d.call_l, putTotal = d.put_w + d.put_l;
-            const callWR = callTotal > 0 ? (d.call_w / callTotal) * 100 : null;
-            const putWR  = putTotal  > 0 ? (d.put_w  / putTotal)  * 100 : null;
+        const by_asset = Object.entries(assetBuckets).map(([asset, grp]) => {
+            const st     = bStats(grp.all);
+            const callSt = grp.call.length > 0 ? bStats(grp.call) : null;
+            const putSt  = grp.put.length  > 0 ? bStats(grp.put)  : null;
+            const callWR = callSt ? parseFloat(callSt.win_rate) : null;
+            const putWR  = putSt  ? parseFloat(putSt.win_rate)  : null;
             let preferred = null;
             if (callWR !== null && putWR !== null) preferred = callWR >= putWR ? 'CALL' : 'PUT';
             else if (callWR !== null) preferred = 'CALL';
             else if (putWR  !== null) preferred = 'PUT';
-            return { asset, trades: d.trades, wins: d.wins, losses: d.trades - d.wins,
-                win_rate: ((d.wins / d.trades) * 100).toFixed(1) + '%',
-                total_pl: Math.round(d.total_pl * 100) / 100,
-                call: callTotal > 0 ? { w: d.call_w, l: d.call_l, wr: callWR.toFixed(1) + '%' } : null,
-                put:  putTotal  > 0 ? { w: d.put_w,  l: d.put_l,  wr: putWR.toFixed(1)  + '%' } : null,
-                preferred_direction: preferred,
-            };
+            return { asset, ...st, call: callSt, put: putSt, preferred_direction: preferred };
         }).sort((a, b) => parseFloat(b.win_rate) - parseFloat(a.win_rate));
 
+        // ── Best thresholds summary ──
+        function bestBucket(rows, minTrades = 5) {
+            const elig = rows.filter(r => r.trades >= minTrades);
+            if (!elig.length) return null;
+            return elig.reduce((best, b) => parseFloat(b.win_rate) > parseFloat(best.win_rate) ? b : best);
+        }
+        const best_thresholds = [
+            { param: 'stc_prev',          direction: 'CALL', best: bestBucket(by_stc_prev.filter(b => b.direction === 'CALL')) },
+            { param: 'stc_prev',          direction: 'PUT',  best: bestBucket(by_stc_prev.filter(b => b.direction === 'PUT'))  },
+            { param: 'stc_delta',         direction: 'CALL', best: bestBucket(by_stc_delta.filter(b => b.direction === 'CALL')) },
+            { param: 'stc_delta',         direction: 'PUT',  best: bestBucket(by_stc_delta.filter(b => b.direction === 'PUT'))  },
+            { param: 'g1_bars_ago',       direction: 'BOTH', best: bestBucket(by_g1_barsAgo) },
+            { param: 'g2_k_before_cross', direction: 'CALL', best: bestBucket(by_g2_cross_depth.filter(b => b.direction === 'CALL')) },
+            { param: 'g2_k_before_cross', direction: 'PUT',  best: bestBucket(by_g2_cross_depth.filter(b => b.direction === 'PUT'))  },
+            { param: 'g2_k_at_cross',     direction: 'CALL', best: bestBucket(by_g2_cross_kd.filter(b => b.direction === 'CALL')) },
+            { param: 'g2_k_at_cross',     direction: 'PUT',  best: bestBucket(by_g2_cross_kd.filter(b => b.direction === 'PUT'))  },
+            { param: 'g3_depth',          direction: 'CALL', best: bestBucket(by_g3_depth.filter(b => b.direction === 'CALL')) },
+            { param: 'g3_depth',          direction: 'PUT',  best: bestBucket(by_g3_depth.filter(b => b.direction === 'PUT'))  },
+            { param: 'g3_cross_bars_ago', direction: 'BOTH', best: bestBucket(by_g3_cross_bars_ago) },
+            { param: 'coincidence_score', direction: 'BOTH', best: bestBucket(by_coincidence_score) },
+        ].filter(b => b.best !== null);
+
         const totalWins = validSignals.filter(s => s[resultKey] === 'WIN').length;
+        const totalGp   = validSignals.reduce((a, s) => s[resultKey] === 'WIN'  ? a + (s[plKey] || 0) : a, 0);
+        const totalGl   = validSignals.reduce((a, s) => s[resultKey] === 'LOSS' ? a + Math.abs(s[plKey] || 0) : a, 0);
         return {
             expiry: expiryLabel,
             total_signals: validSignals.length,
             wins: totalWins, losses: validSignals.length - totalWins,
             overall_wr: ((totalWins / validSignals.length) * 100).toFixed(1) + '%',
-            total_pl: parseFloat(validSignals.reduce((a, s) => a + (s[plKey] || 0), 0).toFixed(2)),
-            by_direction, by_stc_prev, by_stc_delta, by_g1_barsAgo, by_g3_depth,
+            total_pl: parseFloat((totalGp - totalGl).toFixed(2)),
+            profit_factor: totalGl > 0 ? parseFloat((totalGp / totalGl).toFixed(2)) : null,
+            by_direction,
+            by_stc_prev, by_stc_delta,
+            by_g1_barsAgo,
+            by_g2_cross_depth, by_g2_cross_kd, by_stoch_levels,
+            by_g3_depth, by_g3_cross_bars_ago, by_cci_current,
+            by_coincidence_score,
             by_bb_width, by_hour, by_asset,
+            best_thresholds,
         };
     }
 
