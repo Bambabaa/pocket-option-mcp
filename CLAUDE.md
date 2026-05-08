@@ -95,22 +95,22 @@ pocket-option-mcp/
 - Rising STC (bar0 > barM1) = cycle turning bullish
 - Falling STC (bar0 < barM1) = cycle turning bearish
 
-### CALL — STC Floor Bounce (7 gates) — validated p=0.0005 (***), n=25, WR=84.0% at 120s
+### CALL — STC Floor Bounce (7 gates)
 - g1: schaff_value ≤ 25 (STC at floor)
 - g2: schaff_value > prev_schaff (STC curling upward)
 - g3: RSI < 30 (deeply oversold only)
 - g4: K > D AND K < 50 (stoch bullish cross, not overbought)
 - g5: BB width ≥ 10 bps (not a flat/dead market)
-- g6: bb_expanding = true ← **new, p=0.019 — reversal only valid when volatility is releasing**
-- g7: ma_gap_trend ≠ narrowing ← **new, p=0.007 — trend momentum must be intact**
+- g6: bb_expanding = true ← reversal only valid when volatility is releasing
+- g7: ma_gap_trend ≠ narrowing ← trend momentum must be intact
 
-### PUT — STC Ceiling Rollover (6 gates) — validated p=0.029 (**), n=14, WR=78.6% at 120s
+### PUT — STC Ceiling Rollover (6 gates)
 - g1: schaff_value ≥ 90 (deep overbought only)
 - g2: schaff_value < prev_schaff (STC rolling downward)
 - g3: RSI > 70 (deeply overbought only)
 - g4: K < D AND K > 50 (stoch bearish cross, not oversold)
 - g5: BB width ≥ 10 bps (not a flat/dead market)
-- g6: ma_gap_trend ≠ narrowing ← **new, p=0.007 — bb_expanding not added (shrinks n too much)**
+- g6: ma_gap_trend ≠ narrowing ← bb_expanding not added (shrinks n too much)
 
 ## Tool Reference
 

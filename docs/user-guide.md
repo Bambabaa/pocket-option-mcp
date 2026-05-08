@@ -1,6 +1,6 @@
 # Pocket Option MCP — User Guide
 
-A complete reference for using the 40 MCP tools to monitor, analyse, and trade via your Pocket Option bot.
+A complete reference for the 43 MCP tools that connect Claude to your Pocket Option trading bot.
 
 ---
 
@@ -12,7 +12,7 @@ Always begin a session with:
 po_health
 ```
 
-This confirms both databases are reachable and the bot is live. If the bot is not running, live data tools will return stale or empty results.
+This confirms both databases are reachable and the bot is live. If the bot is offline, the session has ended — pivot to analysis mode rather than waiting.
 
 ---
 
@@ -23,31 +23,29 @@ This confirms both databases are reachable and the bot is live. If the bot is no
 | Tool | What it does |
 |---|---|
 | `po_health` | Check both DBs + bot liveness. Call first, always. |
-| `po_market_state` | Active asset count, signal frequency last hour, today P/L, top assets |
-| `po_tracked_assets` | Which assets the bot is currently monitoring |
+| `po_market_state` | Active asset count, signal rate last hour, today P/L, top assets |
+| `po_tracked_assets` | Which assets the bot has candle data for |
 | `po_prices` | Current price for one or all assets |
 
 ---
 
 ### 2. Intelligence — Agentic One-Call Tools
 
-These replace calling 5 separate tools manually.
-
 | Tool | What it does |
 |---|---|
-| `po_scan_all` | Scan ALL assets at once — scores each by 7 indicator layers (MA cross, gap expansion, RSI strength, stochastic trigger, BB position). Returns ranked list. |
-| `po_recommend` | "What should I trade right now?" — filters scan by precision score + win rate + historical bias. Returns ranked list with confidence. |
-| `po_risk_check asset direction` | "Is this trade safe?" — checks indicator precision, direction alignment, recent form, consecutive losses. Returns score 0-100 + GOOD/CAUTION/RISKY/AVOID verdict. |
-| `po_asset_bias` | Per-asset CALL vs PUT win rate history. Flags flat assets (BLOCK_RECOMMENDED), consistent losers (AVOID), and preferred direction per asset. |
-| `po_asset_volatility` | Ranks all assets by BB width bps. Use this to identify pegged/flat assets to block. |
+| `po_scan_all` | Score all assets by indicator alignment — price, signal, streak, win rate, ranked |
+| `po_recommend` | "What should I trade right now?" — filters by precision score + WR + bias. Ranked with confidence. |
+| `po_risk_check asset direction` | Pre-trade audit — checks precision, direction alignment, recent form, consecutive losses. Returns 0-100 score + GOOD/CAUTION/RISKY/AVOID. |
+| `po_asset_bias` | Per-asset CALL vs PUT win rate history. Flags flat assets (BLOCK_RECOMMENDED) and preferred direction. |
+| `po_asset_volatility` | Ranks all assets by BB width bps. Use to identify flat/pegged assets to block. |
 
 **Typical workflow before trading:**
 
 ```
 po_recommend
 → pick top asset
-→ po_risk_check EURUSD_otc CALL
-→ po_trade EURUSD_otc CALL 500 1
+→ po_risk_check EURUSD_otc PUT
+→ po_trade EURUSD_otc PUT 500
 ```
 
 ---
@@ -59,7 +57,7 @@ po_recommend
 | `po_candles asset` | OHLC bars. Use `summary=true` unless you need individual bars. |
 | `po_price_history asset` | Tick-level prices over a time window |
 | `po_indicators asset` | Latest MA6/14, RSI-5, BB, Stochastic K/D v2, Keltner, Schaff values |
-| `po_signals` | CALL/PUT signals from the   pipeline. Filter by asset or direction. |
+| `po_signals` | CALL/PUT signals from the 8GSR pipeline (STC_CALL_8GSR / STC_PUT_8GSR). Filter by asset or direction. |
 | `po_pending_signals` | Signals past expiry not yet validated |
 
 ---
@@ -68,12 +66,12 @@ po_recommend
 
 | Tool | What it does |
 |---|---|
-| `po_trade asset direction amount expiry` | Enqueue a manual CALL or PUT. Writes to mcp.db — bot picks it up and clicks Pocket Option. Blocked assets will be SKIPPED automatically. |
+| `po_trade asset direction amount` | Enqueue a manual CALL or PUT. Writes to mcp.db — bot picks it up and clicks Pocket Option. Blocked assets are auto-skipped. |
 | `po_cancel_order id` | Cancel a PENDING manual order (mcp.db only) |
 | `po_mcp_orders` | View manual orders you placed via po_trade |
 | `po_bot_orders` | View bot-generated execution queue (readonly) |
 
-**Requirements:** Bot must be running with `execution.enabled = true`.
+**Requirements:** Bot must be running with execution enabled.
 
 ---
 
@@ -85,33 +83,47 @@ po_recommend
 | `po_pnl_summary` | P/L breakdown by asset |
 | `po_rolling_summary days=N` | Rolling win rate + P/L. Use `days=0` for all-time. |
 | `po_performance` | Daily performance table |
-| `po_hourly_breakdown` | Which hours of day are most profitable |
+| `po_hourly_breakdown` | Trade count and P/L by hour (descriptive only — OTC has no session boundaries) |
 
 ---
 
-### 6. Asset Controls — Blocking
-
-Use these to stop the bot trading specific assets. All blocks must have a `duration_minutes` — no permanent blocks.
+### 6. Asset Analytics
 
 | Tool | What it does |
 |---|---|
-| `po_block_asset asset reason duration_minutes` | Block an asset for N minutes. Bot skips it before every order. |
-| `po_unblock_asset asset` | Remove an active block (non-session blocks only — see session monitor below) |
-| `po_asset_volatility` | See which assets are flat/pegged (candidates for blocking) |
-| `po_auto_block_sweep` | Block all assets with BB < 5 bps at session start — use once before first trade |
-| `po_auto_block_check asset` | Check if asset should be blocked after a trade result (3 consec losses or WR < 35%) |
+| `po_asset_analytics` | What drives wins/losses per asset: STC zone, RSI zone, direction, BB width breakdown |
+| `po_asset_streaks` | Current win/loss streak per asset (computed from trades_ordered) |
+| `po_streak_leaderboard` | Rank assets by consecutive wins |
+| `po_signal_outcomes` | Signal validation history — entry/exit price, WIN/LOSS |
+| `po_asset_trades` | Trade outcomes per asset |
+| `po_validation_stats` | Aggregate win rate from validation history |
+
+---
+
+### 7. Asset Controls — Blocking
+
+Blocks are temporary and reversible. Only block on current conditions — never on historical win rate alone (OTC conditions change constantly).
+
+| Tool | What it does |
+|---|---|
+| `po_block_asset asset reason` | Block an asset. Bot skips all orders for it. |
+| `po_unblock_asset asset` | Remove an active block |
+| `po_auto_block_sweep` | Block all assets with current BB < 5 bps — run once at session start |
+| `po_auto_block_check asset` | Check one asset for auto-block conditions (consecutive losses or low BB) |
 
 **Block source reference:**
 
 | source | Written by | Cleared by |
 |---|---|---|
 | `session` | session-monitor (3 consec losses) | session-monitor restart only |
-| `auto` | po_auto_block_sweep / autoBlockCheck | 10-min unblock sweep or expiry |
-| `claude` | po_block_asset (you or Claude) | 10-min unblock sweep or po_unblock_asset |
+| `auto` | po_auto_block_sweep | 10-min unblock sweep or expiry |
+| `claude` | po_block_asset (you or Claude) | po_unblock_asset or expiry |
+
+**OTC block rule:** Block only on current BB < 5 bps (dead market right now). Never block because of historical win rate — OTC asset conditions change fast. An asset that lost yesterday may have the best setup today.
 
 ---
 
-### 6a. Session Monitor — Autonomous Block/Unblock Loop
+### 7a. Session Monitor — Autonomous Block/Unblock Loop
 
 Run this alongside the bot and MCP server:
 
@@ -119,256 +131,250 @@ Run this alongside the bot and MCP server:
 node src/scripts/session-monitor.js
 ```
 
-**What it does:**
-
 | Timer | Behaviour |
 |---|---|
-| On startup | Clears all `source='session'` blocks from the prior run — fresh slate |
-| Every 2 min | Checks every asset that has traded today for consecutive losses |
-| Every 10 min | Re-evaluates all non-session blocks — unblocks if conditions have recovered |
+| On startup | Clears all `source='session'` blocks from prior run |
+| Every 2 min | Checks for 3 consecutive losses → session block |
+| Every 10 min | Re-evaluates non-session blocks — unblocks if conditions recovered |
 
-**Loss monitor logic (every 2 min):**
-- 2 consecutive losses → `WARNING` log (no block yet)
-- 3 consecutive losses → `session` block with no expiry — asset blocked for rest of session
-
-**Unblock sweep logic (every 10 min):**
-Unblocks a `claude` or `auto` block only if ALL pass:
-1. BB width >= 10 bps (current indicator)
-2. Indicator data < 5 minutes old
-3. Fewer than 3 consecutive losses today
-
-Session blocks (`source='session'`) are **never** touched by the sweep. Only a restart clears them.
-
-**Session boundary = restarting the session monitor.** On restart it clears all session blocks and starts fresh. Restart it each trading day.
-
-**Console output examples:**
-```
-[LOSS-MONITOR] WARNING CADCHF_otc — 2 consecutive losses (1 more = session block)
-[LOSS-MONITOR] BLOCKED CADCHF_otc — loss-monitor: 3 consecutive losses — session block
-[UNBLOCK-SWEEP] CADCHF_otc stays blocked: BB 4.2 bps < 10 threshold
-[UNBLOCK-SWEEP] UNBLOCKED EURUSD_otc — all conditions passed
-```
+**Unblock conditions (all must pass):** BB ≥ 10 bps AND indicator < 5 min old AND < 3 consecutive losses today.
 
 ---
 
-### 7. Analysis & Backtesting
+### 8. Analysis & Backtesting
 
-The core research pipeline. Run these to understand what the strategy actually produces on historical data before changing any live settings.
+The core research pipeline. Always validate on historical data before changing any live gates.
 
-#### Step 1 — Full replay
+#### po_replay_candles — Full Replay
 
-```
-po_replay_candles
-```
+Replays every candle bar-by-bar across all assets using the 8GSR check8GSR() logic. Fires simulated CALL and PUT signals and validates against actual prices at 60s and 120s. Returns win rates, P/L, gate rejection counts.
 
-Replays every candle bar-by-bar across all assets. Fires simulated CALL and PUT signals, validates against the next candle close. Returns win rates, P/L, gate rejection counts.
+**Primary expiry: 120s (2m). Use 60s as context only.** A signal that works at 60s but not 120s is a fade — the 2m trade is wrong.
 
-Each replayed signal now carries **retracement context**:
+#### po_find_edge — 15-Dimension Analysis
 
-- `rsi_peak_10` — how overbought RSI was in the 10 bars before signal (PUT depth)
-- `rsi_trough_10` — how oversold RSI was in the 10 bars before signal (CALL depth)
-- `k_bars_above_65` — how many consecutive bars K was above 65 before the crash (PUT exhaustion)
-- `k_bars_below_35` — how many consecutive bars K was below 35 before the bounce (CALL exhaustion)
-- `ma_gap_trend` — was MA6/MA14 gap narrowing (exhaustion) or widening (momentum) at entry?
-- `bb_expanding` — was BB width growing (breakout) or shrinking (squeeze) at entry?
-
-#### Step 2 — Find the edge
-
-```
-po_find_edge
-```
-
-Analyses all replayed signals across 11 dimensions:
+Analyses all replayed 8GSR signals. Returns results at both 60s and 120s expiry with full statistics per bucket (z_score, p_value, wilson_95ci).
 
 | Dimension | What it reveals |
 |---|---|
-| by_rsi | Win rate per RSI range at entry |
-| by_stochastic_k | Win rate per K range at entry |
-| by_ma_gap | Win rate per MA6/MA14 gap bps range |
-| by_hour | Win rate per hour of day (UTC) |
-| by_bb_width | Win rate when market is flat/weak/marginal/good volatility |
-| by_pattern | All 4 patterns: CALL_REVERSAL, PUT_REVERSAL, CALL_CONTINUATION, PUT_CONTINUATION |
-| **by_retracement_depth** | PUT: did RSI peak above 80/90 before reversal? CALL: did RSI trough below 20/10? |
-| **by_k_extension** | Did K stay extended for 1 bar or 4+ bars before the crash? |
-| **by_ma_gap_trend** | Was the trend exhausting (narrowing) or accelerating (widening) at entry? |
-| **by_bb_expansion** | Was volatility rising or falling when the signal fired? |
-| by_asset | Per-asset win rate with per-direction breakdown |
+| `by_direction` | CALL vs PUT overall WR and PnL |
+| `by_stc_prev` | STC zone at signal bar (CALL: 0-5, 5-10, 10-25; PUT: 75-85, 85-95, 95-100) |
+| `by_stc_delta` | Hook size — CALL: 0.0-0.1, 0.1-0.2, 0.2-0.3, 0.3-0.5; PUT mirror |
+| `by_g1_barsAgo` | BB touch recency: 1, 2, or 3 bars before signal |
+| `by_g2_cross_depth` | K at C-2 (pre-cross bar) — how deep was stoch before crossing |
+| `by_g2_cross_kd` | K at C-1 (cross bar) — momentum at the crossing point |
+| `by_stoch_levels` | Current K at signal bar vs direction gate |
+| `by_g3_depth` | CCI depth: CALL -250 to -150 buckets; PUT 150 to 250 buckets |
+| `by_g3_cross_bars_ago` | Recency of CCI cross: 1-3, 4-6, 7-10, 11-24 bars ago |
+| `by_cci_current` | CCI value at the signal bar itself |
+| `by_coincidence_score` | Gates at max intensity (0-5): does higher score predict better WR? |
+| `by_bb_width` | BB bps at signal: flat <2, weak 2-5, marginal 5-10, ok 10-20, good 20+ |
+| `by_asset` | Per-asset win rates with CALL/PUT breakdown |
+| `best_thresholds` | Auto-selected best bucket per parameter (n≥5) |
+| `cross_validation` | 120s signals split at median timestamp → in-sample vs out-of-sample WR |
 
-#### Step 3 — Test gate changes before touching the bot
+**Reading statistical fields:**
+- `z_score` — How many standard deviations above 50% WR (H0 = coin flip)
+- `p_value` — Right-tail probability. p < 0.10 = indicative; p < 0.05 = significant; p < 0.01 = strong
+- `wilson_95ci` — [lower, upper] — true WR 95% confidence interval
+- Leading cause of wins = highest-WR bucket with p_value < 0.10 and n ≥ 5
+- Leading cause of losses = lowest-WR bucket with the most trades (highest loss impact)
 
-```
-po_simulate min_bb_bps=5
-```
+#### po_simulate — A/B Test Gate Changes
 
-Compare baseline (current live gates) vs modified thresholds side-by-side. Returns signal count, win rate, P/L delta for both CALL and PUT.
+Compare baseline (current live gates) vs modified thresholds side-by-side before touching the bot.
 
-**Example experiments:**
-
-```
-# Skip flat assets at asset level (avg BB)
-po_simulate min_bb_bps=5
-
-# Require real volatility at each individual bar — more precise (VALIDATED ✓)
-po_simulate bar_bb_bps_min=10
-po_simulate bar_bb_bps_min=15
-po_simulate bar_bb_bps_min=20
-
-# Bigger K crash requirement for CALL
-po_simulate call_k_crash_min=35
-
-# Tighten PUT D requirement
-po_simulate put_d_min=85
-
-# Combine bar-level BB + bigger K crash
-po_simulate bar_bb_bps_min=10 call_k_crash_min=35
-```
-
-#### Step 4 — Grid search
+**Available parameters (8GSR):**
 
 ```
-po_optimize_gates direction=both
+# PUT gate tuning
+po_simulate put_stc_floor=N              # PUT ceiling threshold (stcPrev ≥ N)
+po_simulate put_delta_min=N              # PUT delta gate (how much STC dropped)
+po_simulate put_g3_depth_max=N           # PUT CCI depth gate
+
+# CALL gate tuning
+po_simulate call_stc_ceiling=N           # CALL floor threshold (stcPrev ≤ N)
+po_simulate call_delta_max=N             # CALL delta gate (how much STC rose)
+po_simulate call_g3_depth_min=N          # CALL CCI depth gate
+
+# BB gate
+po_simulate min_bb_bps=N                 # minimum BB width at signal bar
+
+# Parameters can be combined
+po_simulate put_stc_floor=N put_delta_min=N put_g3_depth_max=N
 ```
 
-Automatically tests a range of threshold values for each gate and shows which produce the highest win rate.
+#### po_grid_search — Multivariate Threshold Search
 
-#### Inspect a specific signal
+Tests all combinations of 8GSR gate thresholds simultaneously. Filters to minimum sample size. Ranked by 120s WR with full statistics.
 
 ```
-po_replay_signal signal_id=1234
+po_grid_search direction=put
+po_grid_search direction=call
+po_grid_search direction=both
 ```
 
-Reconstructs all gate values at the exact moment a historical signal fired. Shows which gates passed/failed, RSI/K/MA values, and actual trade outcome.
+Use this after `po_find_edge` identifies promising univariate improvements. The grid search confirms which combination actually maximises 120s WR.
 
----
+#### po_optimize_gates — Legacy Grid Search
 
-### 8. Qualification Layer
+Older grid search over single-parameter thresholds. Use `po_grid_search` for multivariate optimization.
 
-| Tool | What it does |
-|---|---|
-| `po_qualified_assets` | Assets on the bot's trading allow-list |
-| `po_asset_streaks` | Current win streak per asset |
-| `po_streak_leaderboard` | Rank assets by consecutive wins |
-| `po_signal_outcomes` | Signal validation history — entry/exit price, WIN/LOSS |
-| `po_asset_trades` | Trade outcomes for qualified assets |
-| `po_validation_stats` | Aggregate win rate from validation history |
+#### po_replay_signal signal_id=N
 
-> Note: Qualification layer is currently **disabled** (`useQualifiedAssetsLayer: false`). Every signal trades regardless.
+Reconstructs all 8GSR gate values at the exact moment a historical signal fired. Shows which gates passed/failed and the actual trade outcome.
+
+#### po_significance
+
+Binomial significance test per slice (direction, asset, STC zone). Returns p-values, z-scores, Wilson CI, Kelly fraction.
 
 ---
 
 ### 9. Multi-Agent Autonomous Trading
 
-The `/auto-trade` skill spawns 3 agents in sequence: Scanner → Analyst → Executor.
+The `/auto-trade` skill spawns 3 agents in sequence: Scanner → Analyst → Executor. Use these tools to support the pipeline.
 
-| Tool | Used by |
-|---|---|
-| `po_signal_context asset` | Analyst — full 4-bar indicator + candle + signal snapshot in one call |
-| `po_drawdown_check` | Executor — GO/PAUSE/STOP verdict based on today P/L, consecutive losses, bot liveness |
-| `po_session_log_write` | All agents — write decisions to audit trail |
-| `po_session_log_read` | Human review — full history of scanner scans, analyst verdicts, executor actions |
+| Tool | Used by | What it does |
+|---|---|---|
+| `po_signal_context asset` | Analyst | Full 4-bar snapshot (indicators + candles + recent signals) in one call |
+| `po_drawdown_check` | Executor | GO/PAUSE/STOP verdict: today P/L, consecutive losses, bot liveness |
+| `po_session_log_write` | All agents | Write a decision to the audit trail |
+| `po_session_log_read` | Human review | Full history of scanner scans, analyst verdicts, executor actions |
+
+**Bot offline = session ended.** If `po_health` shows bot not live, do not wait — switch immediately to `/session-review` ANALYSIS MODE.
 
 ---
 
-## Strategy Reference —    
+## Strategy Reference — 8GSR (8-Gate STC Reversal)
 
-The only active strategy. Modes A, B, C are disabled.
+The only active strategy. 4 gates must all pass (AND logic). Any gate failure kills the signal immediately.
 
-### Indicator mapping
+### Indicator Mapping
 
 | Column | Indicator | Role |
 |---|---|---|
-| `ma1` | MA6 | Fast — early trend catch |
-| `ma3` | MA14 | Slow — trend confirmation |
-| `ma2` | MA50 | **Not including** |
-| `stochastic_k_v2` | Stoch K (5,3,3) |   stochastic |
-| `stochastic_d_v2` | Stoch D (5,3,3) |   stochastic signal line |
-| `rsi_5` | RSI period 5 | Momentum |
+| `schaff_value` | STC (12,25,5,3,3) | Primary signal — 0-100 scale |
+| `stochastic_k_v2` | Stoch K (5,3,3) | Gate G2 — cross detection |
+| `stochastic_d_v2` | Stoch D (5,3,3) | Gate G2 — cross confirmation |
+| `ma1` | MA6 | Fast trend (used in BB expansion / ma_gap_trend) |
+| `ma3` | MA14 | Slow trend |
+| `ma2` | MA50 | **NOT used in gate logic** |
+| `rsi_5` | RSI period 5 | Gate context |
+| `bb_upper/lower` | BB (20,2) | Gate G1 — touch detection |
+| `bb_width_bps` | BB width | Gate G5 — volatility filter |
 
-**MA trend = (ma1 - ma3) / ma3 × 10000 bps**
-Positive = MA6 above MA14 = uptrend. Negative = downtrend.
+### STC Zone Reference
 
-### CALL — K Flash Crash Bounce (reversal from oversold)
-
-| Gate | Condition | Meaning |
+| Value | Zone | Meaning |
 |---|---|---|
-| g1 | ma1 < ma3 | MA6 below MA14 — counter-trend |
-| g2 | K_prev - K_curr > 25 | K crashed 25+ pts in one bar |
-| g3 | K_curr < 25 | Currently oversold |
-| g4 | K_prev >= 50 | Crashed from mid/high, not already oversold |
-| g5 | RSI < 20 | RSI deeply oversold (tightened from 40) |
-| g6 | maTrendBps > -20 | Not deeply bearish (MA6 not more than 20 bps below MA14) |
-| g7 | BB width >= 20 bps | Real volatility at entry bar (tightened from 10 bps) |
+| ≤ 25 | Floor | CALL reversal zone — cycle exhausted to downside |
+| ≥ 85 | Ceiling (live gate) | PUT reversal zone |
+| ≥ 90 | Deep ceiling | Strongest PUT zone (higher confidence) |
+| Rising (bar0 > barM1) | Turning bullish | STC curling upward |
+| Falling (bar0 < barM1) | Turning bearish | STC rolling downward |
 
-### PUT — Late Overbought Reversal
+### CALL — STC Floor Bounce
 
-| Gate | Condition | Meaning |
+| Gate | Check | Meaning |
 |---|---|---|
-| g0 | RSI[-2] > 80 | Bar-2 RSI genuinely overbought — confirms prior peak (new gate) |
-| g1 | RSI[-2] > 70, RSI[-1] > 70, exclude [75,80) | Two bars of sustained overbought |
-| g2 | RSI falling, in [38,70), exclude [55,65), velocity > -12, close >= BB mid | Controlled RSI descent |
-| g3 | K_prev > 65, K falling, K_curr in [55,80) | K exiting overbought zone |
-| g4 | D_curr >= 80 | D lagging high — confirms extended state |
-| g5 | ma1 > ma3 | MA6 above MA14 — trend was up, now reversing |
-| g6 | K-D spread < -3 | Confirmed K/D cross, not whipsaw |
-| g7 | maTrendBps < 20 | Not a strong uptrend (MA6 not more than 20 bps above MA14) |
-| g8 | BB width >= 20 bps | Real volatility at entry bar (tightened from 10 bps) |
+| G4 | `barM1.schaff_value ≤ 25` AND `delta ≥ 0` AND `delta < 0.5` | STC at floor, small upward hook |
+| G1 | `low ≤ bb_lower` within last 3 bars | BB lower touch recently |
+| G2 | K crossed above D at barM1 (C-1), from deep zone (K < 30 at barM2) | Stoch bullish cross from oversold |
+| G3 | CCI(8) crossed above −100 recently AND current CCI < −150 | CCI deep oversold bounce |
+| G5 | `bb_width_bps ≥ 10` | Not a flat/dead market |
+| G6 | `bb_expanding ≠ false` | Volatility releasing (null passes — insufficient history) |
+| G7 | `ma_gap_trend ≠ narrowing` | Trend momentum intact |
+
+### PUT — STC Ceiling Rollover
+
+| Gate | Check | Meaning |
+|---|---|---|
+| G4 | `barM1.schaff_value ≥ 85` AND `delta ≥ −0.9` AND `delta ≤ 0` | STC at ceiling, rolling down |
+| G1 | `high ≥ bb_upper` within last 3 bars | BB upper touch recently |
+| G2 | K crossed below D at barM1 (C-1), from overbought zone (K > 70 at barM2) | Stoch bearish cross from overbought |
+| G3 | CCI(8) crossed below +100 recently AND current CCI > +175 | CCI deep overbought rollover |
+| G5 | `bb_width_bps ≥ 10` | Not a flat/dead market |
+| G6 | `ma_gap_trend ≠ narrowing` | Trend momentum intact |
+
+---
+
+## OTC Market Rules
+
+These rules apply to all analysis and recommendations in this system:
+
+**Rule 1 — No static or WR-based asset blocks.**  
+Only block assets where current BB < 5 bps (dead right now). Never block because of historical win rate. OTC conditions change constantly. A "loser" yesterday may have the best setup today.
+
+**Rule 2 — No time-based trading filters.**  
+OTC markets run 24/7 with no session boundaries. Never recommend avoiding certain hours of the day. `po_hourly_breakdown` data is descriptive context only — never an actionable gate.
 
 ---
 
 ## Research Workflow
 
 ```
-1. po_health                          → confirm bot is live
-2. po_asset_bias                      → check which assets/directions have edge
-3. po_asset_volatility                → identify flat assets to block
-4. po_block_asset [flat assets]       → remove noise from trading
-5. po_replay_candles                  → full historical replay with context
-6. po_find_edge                       → analyse all 11 dimensions
-7. po_simulate [gate changes]         → test improvements before touching bot
-8. po_optimize_gates                  → grid search for best thresholds
-9. po_recommend                       → get live trade suggestions
+1. po_health                          → confirm bot is live (if offline → session-review ANALYSIS MODE)
+2. po_asset_volatility                → identify flat assets (BB < 5 bps)
+3. po_auto_block_sweep                → block all BB < 5 bps assets
+4. po_asset_bias                      → check directional edge per asset
+5. po_replay_candles                  → full historical replay (60s + 120s)
+6. po_find_edge                       → analyse all 15 8GSR dimensions
+7. po_simulate [gate changes]         → A/B test before touching bot/indicators.js
+8. po_grid_search direction=put       → multivariate search for best combination
+9. po_recommend                       → live trade suggestions
 10. po_risk_check asset direction     → confirm before placing
 11. po_trade asset direction amount   → place trade
 ```
 
 ---
 
-## Sample Questions to Ask Claude
+## Session Skills
 
-These are plain English prompts you can type directly. Claude will pick the right tools automatically.
+Use these in Claude Code with `/skill-name`:
+
+| Skill | When to use |
+|---|---|
+| `/auto-trade` | "watch the market", "scan and trade", "run the system" |
+| `/session-review` | "how did we do", "review today", "what happened" |
+| `/edge-report` | "find the edge", "research session", "analyse the strategy" |
+| `/edge-optimize` | "optimize gates", "improve thresholds", "tune parameters" |
+| `/block-flat-assets` | "clean up assets", "block flat markets", "housekeeping" |
+
+**Session review modes:**
+- **Bot offline** → ANALYSIS MODE: po_find_edge replay → leading cause of wins/losses → expiry divergence check → cross-validation
+- **Bot live** → STANDARD MODE: today's trades → signals → streaks → bias
+
+---
+
+## Sample Questions to Ask Claude
 
 ### Health & Orientation
 
 - "Is the bot running?"
 - "What's the overall market looking like right now?"
-- "How many assets are being tracked?"
 - "What's today's P/L so far?"
 
 ### Trade Decisions
 
 - "What should I trade right now?"
 - "Is EURUSD a good trade right now?"
-- "Should I go CALL or PUT on GBPUSD?"
-- "Is it safe to trade AUDUSD right now?"
+- "Should I go PUT on GBPUSD?"
 - "Give me your top 3 trade recommendations"
-- "Which assets have the best win rate today?"
 
 ### Performance Review
 
 - "How has the bot performed this week?"
 - "Show me all-time win rate and P/L"
-- "Which hours of the day are most profitable?"
 - "Which assets are making money and which are losing?"
 - "Show me the last 20 trades"
 - "What's the win rate for CALL vs PUT overall?"
 
 ### Asset Investigation
 
-- "Why is SARCNY losing so much?"
 - "Which assets should I stop trading?"
-- "Which assets have a strong directional bias?"
 - "Show me the most volatile assets right now"
 - "Which assets are too flat to trade?"
+- "What's driving losses on SARCNY?"
 
 ### Blocking & Control
 
@@ -381,25 +387,23 @@ These are plain English prompts you can type directly. Claude will pick the righ
 
 - "Run the full historical replay and show me the win rates"
 - "What conditions produce the best win rate for PUT trades?"
-- "Does a bigger K crash before entry improve win rate?"
-- "Does the strategy perform better when RSI peaked above 85 before a PUT?"
-- "Which hour of the day has the highest win rate?"
-- "What happens to win rate when BB is expanding vs contracting at entry?"
-- "How many bars should K stay above 65 before a PUT for the best results?"
-- "Show me the win rate breakdown by pattern — reversal vs continuation"
+- "What STC delta range produces the best 120s PUT win rate?"
+- "How deep does CCI need to be for a reliable PUT signal?"
+- "How does win rate change based on how recently the BB was touched?"
+- "Run a grid search to find the best PUT gate combination"
+- "Is there a cross-validation gap between early and recent trades?"
 
 ### Gate Testing
 
-- "What happens if we skip flat assets with BB under 5 bps?"
-- "Test what happens if we raise the K crash minimum from 25 to 35"
-- "What if we tighten the PUT D requirement to 85?"
-- "Compare current gates vs requiring RSI below 35 for CALL entries"
-- "What gate change would improve PUT win rate the most?"
+- "What happens if we raise the PUT CCI depth to 200?"
+- "Test what happens if we tighten the PUT STC floor to 90"
+- "What if we allow a larger STC delta for PUT (up to -1.0)?"
+- "Compare current gates vs requiring BB touch within 2 bars"
+- "What gate change would improve PUT 120s win rate the most?"
 
 ### Placing Trades
 
 - "Place a PUT on EURUSD for 500"
-- "Enter a CALL on GBPJPY with amount 200"
 - "Cancel my last order"
 - "Show me all orders I've placed manually"
 
@@ -413,12 +417,11 @@ These are plain English prompts you can type directly. Claude will pick the righ
 
 ## Important Rules
 
-- **Always call `po_health` first** — confirms bot + DB connectivity
-- **`po_simulate` before changing gates** — never modify live bot without testing on historical data first
-- **Block flat assets** — BB < 5 bps assets lose consistently; use `po_block_asset`
+- **Always call `po_health` first** — if bot is offline, the session has ended; pivot to analysis
+- **`po_simulate` before changing gates** — never modify `bot/indicators.js` without validating on historical data
+- **Primary expiry is 2m (120s)** — 1m (60s) is context only; a 60s win that fades at 120s is not an edge
+- **Block only on current BB < 5 bps** — never on historical win rate alone
+- **No hour-of-day filters** — OTC is 24/7 synthetic; session times don't apply
 - **`po_trade` writes to mcp.db only** — bot DB is never modified by MCP
-- **Blocked assets are skipped automatically** — both MCP manual orders and bot-generated signals check asset_controls before executing
-- **`po_rolling_summary days=0`** — gives all-time stats
-- **`summary=true` on `po_candles`** — saves context window
-- **BB width gate is live at 20 bps** — bot skips CALL and PUT signals where BB < 20 bps at entry bar (tightened from 10 bps per 2026-04-16 session report). Gate logs `BB XX.Xbps` in signal reasons for verification.
-- **Use `po_simulate bar_bb_bps_min=N` to test threshold changes** before touching bot/indicators.js — always validate on data first
+- **Use `po_grid_search`** for multivariate optimization; use `po_simulate` for A/B testing single parameters
+- **Statistical threshold for acting on findings**: p_value < 0.10 and n ≥ 5; always cite both when recommending changes

@@ -1,406 +1,384 @@
-# GitHub Copilot CLI — Pocket Option MCP Memory
+# Pocket Option MCP — Session Memory
 
-**Last Updated**: 2026-04-28 16:13 UTC  
-**Session Context**: STC Reversal Strategy Development & Validation
-
----
-
-## 🎯 **Project Overview**
-
-**Project**: pocket-option-mcp  
-**Type**: MCP server connecting Claude to Pocket Option trading bot via SQLite  
-**Primary Strategy**: 7-Gate Schaff Trend Cycle (STC) Reversal Strategy  
+**Last Updated**: 2026-05-08  
+**Strategy**: 8-Gate STC Reversal (8GSR) — 4-gate live deployment  
 **Market**: OTC binary options (24/7 synthetic quotes)
 
 ---
 
-## 📁 **Critical File Locations**
+## Project Overview
 
-### **Databases**
-- **Bot DB (readonly)**: `data/trading_data.db` — Bot writes candles/signals/trades, MCP reads
-- **MCP DB (writable)**: `data/mcp.db` — MCP writes orders/blocks/logs, bot reads
-- **Versioned DBs**: `data/trading_data_v1.db`, `v2_13-15.db`, `V3_17.db`, `V4_18.db`, `V5_25.db`
-
-### **Bot Core**
-- **Bot**: `bot/pocket-option-bot.js` — Main execution loop + order worker
-- **Indicators**: `bot/indicators.js` — Stub only (MODE D logic external)
-- **Database**: `bot/database.js` — SQLite wrapper
-- **Schaff Script**: `bot/scripts/recalculate-schaff.js` — Recalculates STC values
-
-### **MCP Server**
-- **Server**: `src/server.js` — 40+ tools registered
-- **Connection**: `src/connection.js` — Dual-DB (bot-db readonly + mcp-db writable)
-- **Analysis**: `src/core/analysis.js` — Backtesting engine (7-gate logic)
-- **Intelligence**: `src/core/intelligence.js` — Asset scanning, recommendations
-- **Significance**: `src/core/significance.js` — Statistical tests (binomial, Wilson CI)
-
-### **Scripts**
-- **Paper Trading**: `scripts/paper_reversal_csv.cjs` — 7-gate signal generator
-- **Session Monitor**: `src/scripts/session-monitor.js` — Auto block/unblock loop
-
-### **Documentation**
-- **User Guide**: `docs/user-guide.md` — Full tool reference
-- **Strategy Guide**: `scripts/UPGRADE_SUMMARY.md` — 7-gate spec
-- **Schaff Report**: `data/SCHAFF_RECALC_REPORT.md` — Recalculation summary
-
----
-
-## 🔧 **Architecture**
+MCP server connecting Claude to a running `pocket-option-bot.js` via SQLite. Claude reads the bot DB (readonly), writes orders/blocks/logs to a separate MCP DB, and the bot reads that before execution.
 
 ```
 Claude (MCP client)
     ↓
 pocket-option-mcp (MCP stdio server — src/server.js)
     ↓
-    ├── SQLite READONLY  → data/trading_data.db  ← Bot writes
-    └── SQLite WRITABLE  → data/mcp.db           ← MCP writes, Bot reads
+    ├── SQLite READONLY  → data/trading_data.db  ← Bot writes candles/signals/trades
+    └── SQLite WRITABLE  → data/mcp.db           ← MCP writes orders/blocks/agent logs
+                                                         ↑ Bot reads before executing
 ```
 
 ---
 
-## 📊 **Data Schema**
+## Critical Rules
 
-### **Indicators Table (Core Strategy Data)**
-| Column | Type | Description |
+- **NEVER write to `socket_option/determ/`** — read-only source. All bot modifications go in `pocket-option-mcp/bot/`
+- **No Python** — corrupts SQLite when conflicting with the JS process. Use sqlite3 CLI only
+- **Always validate with `po_simulate` before changing live gates**
+- **MA50 is NOT used** — only MA6 (`ma1`) and MA14 (`ma3`) in gate logic
+- **Use stochastic_k_v2 / stochastic_d_v2** — NOT stochastic_k / stochastic_d (deprecated)
+
+---
+
+## File Layout
+
+```
+pocket-option-mcp/
+├── bot/
+│   ├── pocket-option-bot.js     ← Main bot + MCP order worker + isAssetBlocked() guard
+│   ├── indicators.js            ← 8GSR live gate logic (check8GSR)
+│   └── database.js
+├── data/
+│   ├── trading_data.db          ← Bot writes (READONLY to MCP)
+│   └── mcp.db                   ← MCP writes (orders, blocks, agent logs)
+├── src/
+│   ├── server.js                ← 43 tools registered
+│   ├── core/
+│   │   ├── analysis.js          ← Replay engine, find_edge, simulate, grid_search
+│   │   ├── intelligence.js      ← scan_all, recommend, risk_check, asset_bias
+│   │   └── agent-tools.js       ← signal_context, drawdown_check, session_log, blocks
+├── agents/
+│   ├── market-scanner.md        ← Scanner agent spec (8GSR indicator alignment proxy)
+│   ├── trade-analyst.md         ← Analyst agent spec (full 4-gate 8GSR verification)
+│   └── trade-executor.md        ← Executor agent spec (po_trade + safety checks)
+├── skills/
+│   ├── auto-trade/SKILL.md      ← Orchestrator: Scanner→Analyst→Executor loop
+│   ├── session-review/SKILL.md  ← Bot offline=session ended→analysis mode
+│   ├── edge-report/SKILL.md     ← Full research session (15 8GSR dimensions)
+│   ├── edge-optimize/SKILL.md   ← Univariate→grid search→cross-validation
+│   └── block-flat-assets/SKILL.md ← Volatility-based cleanup (BB < 5 bps only)
+└── docs/
+    ├── 8GSR_TASK.md             ← Strategy spec and statistical requirements
+    └── edge_report_*.md         ← Generated research reports
+```
+
+---
+
+## Strategy: 8GSR (8-Gate STC Reversal)
+
+The live strategy is named 8GSR. Despite the name, exactly **4 gates** are active and checked in sequence. Any gate failure immediately kills the signal.
+
+### CALL — STC Floor Bounce (validated p=0.0005, n=25, WR=84.0% at 120s)
+
+| Gate | Check | Meaning |
 |---|---|---|
-| `asset` | TEXT | e.g., EURUSD_otc |
-| `timestamp` | INTEGER | Unix seconds |
-| `rsi_5` | REAL | RSI period 5 |
-| `stochastic_k_v2` | REAL | Stoch K (5,3,3) |
-| `stochastic_d_v2` | REAL | Stoch D (5,3,3) |
-| `ma1` | REAL | MA6 (fast) |
-| `ma3` | REAL | MA14 (slow) |
-| `ma2` | REAL | MA50 (NOT used in gates) |
-| `bb_upper/middle/lower` | REAL | Bollinger Bands (20,2) |
-| `schaff_value` | REAL | **STC (12,25,5,3,3)** — PRIMARY SIGNAL |
+| G4 | `barM1.schaff_value ≤ 25` AND `(bar0.schaff - barM1.schaff) ≥ 0` AND `< 0.5` | STC at floor, curling up (small hook, not blowout) |
+| G1 | `low ≤ bb_lower` within last 3 bars | BB lower touch recently |
+| G2 | K crossed above D exactly 1 bar ago (`barM2` pre-cross, `barM1` cross bar) from deep zone (K < 30 at barM2) | Stoch bullish cross from oversold |
+| G3 | CCI(8) crossed above −100 within 3 bars AND current CCI depth < −150 | CCI deep oversold bounce |
 
-### **Candles Table**
-| Column | Type | Description |
+Additional live conditions: BB width ≥ 10 bps (g5), bb_expanding ≠ false (g6), ma_gap_trend ≠ narrowing (g7).
+
+### PUT — STC Ceiling Rollover (validated p=0.029, n=14, WR=78.6% at 120s)
+
+| Gate | Check | Meaning |
 |---|---|---|
-| `asset` | TEXT | Asset symbol |
-| `timestamp` | INTEGER | Unix seconds |
-| `open/high/low/close` | REAL | OHLC |
-| `volume` | REAL | Tick volume (OTC = unreliable) |
+| G4 | `barM1.schaff_value ≥ 85` AND delta `≥ −0.9` AND `≤ 0` | STC at ceiling (deep), rolling down (not already crashed) |
+| G1 | `high ≥ bb_upper` within last 3 bars | BB upper touch recently |
+| G2 | K crossed below D exactly 1 bar ago from overbought zone (K > 70 at barM2) | Stoch bearish cross from overbought |
+| G3 | CCI(8) crossed below +100 within 3 bars AND current CCI depth > +175 | CCI deep overbought rollover |
 
-### **Signals Table** (External Generator)
-| Column | Type | Description |
+Additional live condition: BB width ≥ 10 bps (g5), ma_gap_trend ≠ narrowing (g6).
+
+### STC Zone Interpretation
+
+- `schaff_value ≤ 25` = floor (CALL reversal zone)
+- `schaff_value ≥ 90` = deep ceiling (strongest PUT zone)
+- `schaff_value ≥ 85` = ceiling (live PUT gate — slightly looser)
+- Rising STC (bar0 > barM1) = cycle turning bullish
+- Falling STC (bar0 < barM1) = cycle turning bearish
+
+---
+
+## Performance Results
+
+### Simulation Results (po_simulate)
+
+| Configuration | Direction | WR | n | PnL | Notes |
+|---|---|---|---|---|---|
+| Baseline (stc≥90, delta≥-0.5, depth>150) | PUT | 43.0% | 14 | negative | Too tight — gentle rollovers that fade by 120s |
+| **ceiling=85, delta≥-0.9, depth>175** | **PUT** | **64.0%** | **25** | positive | **Current live gates — confirmed both 60s and 120s** |
+| Any CALL configuration tested | CALL | ~38.9% | varies | negative | No confirmed edge at 120s expiry |
+
+### Live Trade Baseline (Contaminated)
+
+- **Total live trades**: ~40
+- **Win rate**: 37.5%
+- **Status**: CONTAMINATED — mixed with old strategy trades + 30s refresh bug (corrupts G2/G3 ~50% of bar closes)
+- **Verdict**: Do not use as performance baseline. Wait for 30+ clean trades post-restart.
+
+### 30s Refresh Bug (Critical)
+
+The bot's 30s periodic `calculateAll()` call resets `_stochHistory` and `_cciHistory` mid-bar, breaking G2/G3 on roughly 50% of closes. This caused most live losses. The bug must be fixed before restarting.
+
+---
+
+## Analysis Engine (src/core/analysis.js)
+
+### Three-Table Replay Engine
+
+The replay engine is fully independent of the signals/trades_ordered tables. It reads:
+- `candles` — OHLC bar data
+- `indicators` — Pre-calculated gate values (schaff, BB, stoch, CCI, etc.)
+- `prices` — Tick-level quotes used to validate 60s and 120s outcomes
+
+`check8GSR()` is the batch replay equivalent of the live `check8GSR()` in `bot/indicators.js`. It fires all 4 gates bar-by-bar and records WIN/LOSS at both expiry targets.
+
+### Statistical Functions Added
+
+**normCDF()** — Abramowitz & Stegun approximation for z→p conversion (added at module level)
+
+**bStats()** — Now returns full statistics for every bucket in po_find_edge:
+- `trades`, `wins`, `losses`, `win_rate`
+- `net_pnl`, `profit_factor`, `avg_win`, `avg_loss`, `avg_wl_ratio`
+- `z_score` — One-proportion z-test vs H0: WR=50%
+- `p_value` — Right-tail p-value from normCDF(z)
+- `wilson_95ci` — Wilson confidence interval [lower, upper]
+
+**Cross-validation** — Added to findEdge() return: splits 120s signals at median timestamp → in-sample vs out-of-sample WR comparison. Gap > 10% = edge degradation flag.
+
+### Grid Search (po_grid_search)
+
+New tool added. Tests up to 600 CALL + 720 PUT parameter combinations:
+- CALL: stc_prev ceiling (5 values) × stc_delta max (6 values) × g3_depth min (5 values) × g1_bars_ago (4 values)
+- PUT: stc_prev floor (6 values) × stc_delta min (6 values) × g3_depth max (5 values) × g1_bars_ago (4 values)
+
+Filters to n≥20 only. Ranked by 120s WR with full bStats. Use `/edge-optimize` to run this as part of a structured optimization workflow.
+
+### po_find_edge Dimensions (8GSR)
+
+15 dimensions analyzed at both 60s and 120s expiry:
+- `by_direction` — CALL vs PUT overall
+- `by_stc_prev` — STC zone depth at signal bar
+- `by_stc_delta` — Hook size (how much STC moved)
+- `by_g1_barsAgo` — BB touch recency (1, 2, or 3 bars)
+- `by_g2_cross_depth` — K at barM2 (pre-cross depth)
+- `by_g2_cross_kd` — K at barM1 (cross bar momentum)
+- `by_stoch_levels` — Current K at signal bar
+- `by_g3_depth` — CCI depth at signal
+- `by_g3_cross_bars_ago` — Recency of CCI cross
+- `by_cci_current` — CCI value at signal bar
+- `by_coincidence_score` — Gates at max intensity (0-5)
+- `by_bb_width` — BB bps tier at signal
+- `by_asset` — Per-asset CALL/PUT breakdown
+- `best_thresholds` — Auto-selected best bucket per parameter (n≥5)
+- `cross_validation` — In-sample vs out-of-sample 120s WR
+
+---
+
+## Agent System
+
+### Orchestrator (auto-trade skill)
+
+`Scanner → Analyst (per candidate) → Executor (if TRADE)`
+
+- Pre-flight: po_health + po_drawdown_check + po_asset_bias + po_asset_volatility + po_auto_block_sweep
+- **If bot offline**: pivot immediately to /session-review ANALYSIS MODE (not hard stop)
+- direction_filter default: `put` (CALL has no confirmed edge at 120s)
+- min_bb_bps gate: 10 bps
+
+### Scanner Agent (agents/market-scanner.md)
+
+Scores all assets by indicator alignment. Returns ranked candidates. **Note**: Scanner uses indicator alignment as proxy — it does NOT verify actual 8GSR gates. Analyst does the real gate check.
+
+### Analyst Agent (agents/trade-analyst.md)
+
+Full 4-gate 8GSR verification using po_signal_context (4-bar snapshot):
+- G4: STC hook check (zone + delta)
+- G1: BB touch recency
+- G2: Stoch cross from deep zone
+- G3: CCI depth bounce
+
+Returns TRADE / SKIP / WAIT with gate_details JSON. Decision matrix: 4/4 = TRADE; 3/4 = WAIT; G4 fail = immediate SKIP. BB width ≥ 10 bps required (enforced here and at Orchestrator).
+
+### Executor Agent (agents/trade-executor.md)
+
+Places trade via po_trade if all safety checks pass. Logs result to session audit trail.
+
+---
+
+## Skills System
+
+| Skill | When to use | Key rule |
 |---|---|---|
-| `asset` | TEXT | Asset symbol |
-| `timestamp` | INTEGER | Unix seconds |
-| `direction` | TEXT | CALL or PUT |
-| `strategy_used` | TEXT | e.g., "MODE_D" |
-| `reasons` | TEXT | JSON with gate values |
+| `/auto-trade` | "watch the market", "scan and trade" | Offline → pivot to analysis |
+| `/session-review` | "how did we do", "review today" | Offline → ANALYSIS MODE (po_find_edge, leading causes) |
+| `/edge-report` | "find the edge", "research session" | Full 15-dimension report + simulate |
+| `/edge-optimize` | "optimize gates", "improve thresholds" | Univariate → grid search → cross-validation |
+| `/block-flat-assets` | "clean up assets", "housekeeping" | Block BB < 5 bps ONLY — no WR-based blocks |
+
+### Session Review — Two Modes
+
+**ANALYSIS MODE (bot offline = session ended)**:
+1. `po_rolling_summary(days=1)` + `po_pnl_summary` + `po_trades_ordered`
+2. `po_find_edge` — full candle replay
+3. Extract leading cause of wins (highest-WR bucket, p_value < 0.10, n≥5)
+4. Extract leading cause of losses (lowest-WR bucket, most trades, worst PnL)
+5. Expiry divergence check: |WR_60s - WR_120s| > 15% = flag
+6. Cross-validation gap > 10% = edge degradation flag
+
+**STANDARD MODE (bot live)**: po_rolling_summary → po_signals → po_asset_streaks → po_asset_bias → po_asset_volatility
 
 ---
 
-## 🎯 **7-Gate STC Reversal Strategy**
+## OTC Market Rules (Hard Rules)
 
-### **Strategy Status**
-- **Active**: YES (paper trading ready)
-- **Validation**: 17 signals backtested, 60% WR @ 1m expiry
-- **Discarded**: MODE D (L65 Leaf, L41 Leaf patterns)
+**Rule 1 — No static or WR-based asset blocks.**  
+Only block assets where current BB < 5 bps (dead right now). Never block because of historical win rate. OTC conditions change constantly. "Loser yesterday, best setup today."
 
-### **CALL Reversal Gates (Oversold Bounce)**
-```
-g1: STC ≤ 20              — Deeply oversold
-g2: STC > STC[-1]         — Momentum turning up
-g3: RSI < 20              — Extreme oversold
-g4: K > D, K < 35         — Bullish cross in oversold
-g5: BB width ≥ 10 bps     — Volatility gate (validated)
-g6: RSI trough[10] < 15   — Deep retracement validation (NEW)
-g7: MA6-MA14 gap > -20    — Not strong downtrend (NEW)
-```
-
-### **PUT Reversal Gates (Overbought Reversal)**
-```
-g1: STC ≥ 75              — Deeply overbought
-g2: STC < STC[-1]         — Momentum turning down
-g3: RSI > 70              — Strong overbought
-g4: K < D, K > 65         — Bearish cross in overbought
-g5: BB width ≥ 10 bps     — Volatility gate
-g6: RSI peak[10] > 80     — Deep extension validation (NEW)
-g7: MA6-MA14 gap < 20     — Not strong uptrend (NEW)
-```
-
-**All 7 gates must pass** = AND logic (restrictive, high precision)
+**Rule 2 — No time-based trading filters.**  
+OTC markets run 24/7 with no session boundaries. No "avoid hours X–Y". `by_hour` data = descriptive only, never actionable. Remove all hour-of-day recommendations from all skills.
 
 ---
 
-## 🔬 **Schaff Trend Cycle (STC) Details**
+## Data Schema (Lean Current Schema)
 
-### **Calculation**
-1. **MACD**: EMA(12) - EMA(25) = momentum oscillator
-2. **Stochastic**: %K on MACD over 5-period cycle
-3. **First EMA**: 3-period smoothing
-4. **Second EMA**: 3-period smoothing
-5. **Result**: 0-100 scale (0 = oversold, 100 = overbought)
+The following tables exist in `trading_data.db`:
 
-### **Parameters**
-- **MACD**: 12, 25 (fast/slow EMAs)
-- **Cycle**: 5 periods
-- **Smoothing**: 3, 3 (double EMA)
-- **Stored as**: `indicators.schaff_value`
+| Table | Purpose |
+|---|---|
+| `candles` | OHLC bars per asset |
+| `indicators` | Calculated gate values (schaff, BB, stoch, CCI, MA, RSI) |
+| `prices` | Tick-level quotes for 60s/120s outcome validation |
+| `signals` | Signals fired by live bot (pattern = STC_CALL_8GSR / STC_PUT_8GSR) |
+| `trades_ordered` | Executed trade results (WIN/LOSS + P/L) |
 
-### **Validation Status**
-✅ **Tested**: 30 values across 3 assets (EURUSD, GBPUSD, AUDCAD)  
-✅ **Accuracy**: 100% match (0.000000 difference)  
-✅ **Recalculated**: 24,680 values across 5 databases
+**Removed tables** (no longer exist): `qualified_assets`, `asset_streaks`, `performance`.  
+For asset analytics: use `po_asset_analytics` or JOIN `trades_ordered + indicators`.
 
----
-
-## 📈 **Backtest Results (3 Databases)**
-
-**Date Range**: April 17, 18, 24-25, 2026  
-**Total Signals**: 17  
-**Databases**: V3_17 (4 signals), V4_18 (7 signals), V5_25 (6 signals)
-
-### **Win Rates by Expiry**
-| Expiry | WR | Wins | Losses | Status |
-|---|---|---|---|---|
-| **1 min** | **60.0%** | 9 | 6 | ✅ Best expiry |
-| 2 min | 53.3% | 8 | 7 | ⚠️ Marginal |
-| 3 min | 53.3% | 8 | 7 | ⚠️ Marginal |
-
-### **Direction Breakdown**
-- **CALL**: 4 signals (23.5%), 50% WR @ 1m
-- **PUT**: 13 signals (76.5%), **63.6% WR @ 1m** ✅
-
-**Statistical Significance**: NOT YET (need 100+ signals for p < 0.05)
+**Key indicator columns**:
+- `schaff_value` — STC(12,25,5,3,3), stored per bar
+- `stochastic_k_v2`, `stochastic_d_v2` — Stochastic (5,3,3) v2 (use these, not v1)
+- `ma1` = MA6 (fast), `ma3` = MA14 (slow) — MA50 (`ma2`) NOT used in gates
+- `bb_upper`, `bb_middle`, `bb_lower`, `bb_width_bps` — Bollinger Bands (20,2)
 
 ---
 
-## ⚠️ **Critical Rules**
+## BB Width Evidence
 
-### **Database Access**
-- ❌ **NEVER write to `socket_option/determ/`** — Read-only source
-- ✅ **All bot mods go in `pocket-option-mcp/bot/`**
-- ❌ **No Python for SQLite** — Conflicts with JS process, use sqlite3 CLI only
-- ✅ **Always validate with `po_simulate` before changing gates**
+| BB Range | WR | PnL | Verdict |
+|---|---|---|---|
+| < 5 bps | ~38% | Heavy negative | Block immediately |
+| 5–10 bps | 45.8% | −$3,580 (135 signals) | Below breakeven |
+| 10–20 bps | Profitable | Positive | Keep |
+| 20+ bps | Best | Best | Preferred |
 
-### **Strategy Rules**
-- ✅ **MA50 NOT used** — Only MA6 (ma1) and MA14 (ma3) in gates
-- ✅ **Use stochastic_k_v2 / d_v2** — NOT stochastic_k / d (old)
-- ✅ **BB width < 10 bps = losing zone** — 45.8% WR, -$3,580 P/L on 135 signals
-- ✅ **MODE D discarded** — Now using STC reversal strategy
-- ✅ **1-minute expiry recommended** — 60% WR (best performance)
-
-### **Asset Management**
-- ✅ **Flat assets (BB < 5 bps) must be blocked** — Use `po_auto_block_sweep` at session start
-- ✅ **Session monitor must run** — `src/scripts/session-monitor.js` (auto block on 3 consecutive losses)
-- ✅ **No permanent blocks** — All blocks require `duration_minutes`
+**Breakeven threshold**: 52.2% WR (Pocket Option payout structure).
 
 ---
 
-## 🔧 **MCP Tools (40+ Available)**
+## MCP Tools Quick Reference
 
-### **Intelligence (Agentic)**
-- `po_scan_all` — Score all assets by 7 indicator layers
-- `po_recommend` — Ranked trade picks (precision + WR + bias)
-- `po_risk_check` — Pre-trade audit (0-100 score + verdict)
-- `po_asset_bias` — Per-asset CALL vs PUT WR history
+### Health & Market
+- `po_health` — Check both DBs + bot liveness (call first always)
+- `po_market_state` — Active assets, signal rate, today P/L
+- `po_prices` — Current price for one or all assets
+
+### Intelligence
+- `po_scan_all` — Score all assets (indicator alignment proxy)
+- `po_recommend` — Ranked picks (precision + WR + bias)
+- `po_risk_check` — Pre-trade audit (0–100 score + verdict)
+- `po_asset_bias` — Per-asset CALL vs PUT history
 - `po_asset_volatility` — Rank by BB width (find flat assets)
 
-### **Analysis (Backtesting)**
-- `po_replay_candles` — Full historical replay with STC gates
-- `po_find_edge` — 11-dimensional WR breakdown
-- `po_optimize_gates` — Grid search over thresholds
-- `po_simulate` — A/B test baseline vs modified gates
+### Analysis & Backtesting
+- `po_replay_candles` — Full historical replay (60s AND 120s validation)
+- `po_find_edge` — 15-dimension WR breakdown with z_score/p_value/wilson_95ci
+- `po_simulate` — A/B test baseline vs modified thresholds
+- `po_grid_search` — Multivariate search (600 CALL + 720 PUT combinations)
+- `po_optimize_gates` — Legacy grid search (superseded by po_grid_search)
+- `po_significance` — Binomial test + Wilson CI per slice
 
-### **Trading**
-- `po_trade` — Manual CALL/PUT order
-- `po_cancel_order` — Cancel pending order
-- `po_block_asset` — Block asset for N minutes
+### Asset Controls
+- `po_block_asset` — Block asset (bot skips all orders)
 - `po_unblock_asset` — Remove block
+- `po_auto_block_sweep` — Auto-block all BB < 5 bps assets at session start
+- `po_auto_block_check` — Check one asset for auto-block conditions
 
-### **Performance**
-- `po_trades_ordered` — Executed trades with results
+### Trading
+- `po_trade` — Enqueue manual CALL/PUT → mcp.db → bot executes
+- `po_cancel_order` — Cancel PENDING order
+- `po_drawdown_check` — GO/PAUSE/STOP verdict (call before placing)
+
+### Performance
+- `po_trades_ordered` — Executed trades with WIN/LOSS
 - `po_pnl_summary` — P/L by asset
-- `po_rolling_summary` — Rolling WR + P/L
-- `po_performance` — Daily performance table
+- `po_rolling_summary` — Rolling WR + P/L (days=0 = all-time)
+
+### Multi-Agent
+- `po_signal_context` — 4-bar snapshot for Analyst agent
+- `po_session_log_write/read` — Agent decision audit trail
 
 ---
 
-## 🚨 **Known Issues**
+## Current Status (as of 2026-05-08)
 
-### **1. Large Database Timeout (v1, v2)**
-**Problem**: `paper_reversal_csv.cjs` times out after 5 minutes on datasets with 5000+ indicators  
-**Impact**: Cannot backtest oldest historical data (v1) or April 13-15 period (v2)  
-**Status**: Optimization pending
+### Bot Status
+- **Offline** — Has been down ~46 hours
+- **Cause**: Unknown (may be 30s refresh bug cascading)
+- **Action needed**: Fix 30s bug, then restart
 
-### **2. Small Sample Size**
-**Problem**: Only 17 signals from 3 databases (insufficient for statistical significance)  
-**Impact**: Cannot prove 60% WR with 95% confidence (need n ≥ 78)  
-**Status**: Need to process v1/v2 or collect live data
+### Live Performance Baseline
+- 40 live trades, 37.5% WR — **DO NOT use as baseline** (contaminated)
+- Contamination: mixed old strategy + 30s refresh bug breaking G2/G3
+- Need: 30+ clean trades after restart to establish valid baseline
 
-### **3. Significance Tests Overstate Results**
-**Problem**: No Bonferroni correction for multiple comparisons in `significance.js`  
-**Impact**: p-values overstated when testing 50+ slices  
-**Status**: Documented, fix pending (P0 priority)
+### Gate Configuration (Current Live)
+- **CALL**: stcPrev ≤ 25 / delta < 0.5 / g3_depth < −150 / bb_width ≥ 10
+- **PUT**: stcPrev ≥ 85 / delta ≥ −0.9 / g3_depth > +175 / bb_width ≥ 10
+- Both directions active
 
----
-
-## 📝 **Evidence-Based Facts**
-
-### **Validated Through Analysis**
-- ✅ **BB < 10 bps = losing zone**: 45.8% WR, validated on 135 signals
-- ✅ **PUT > CALL**: 59.8% PUT vs 42.1% CALL baseline WR (historical)
-- ✅ **Retracement depth matters**: RSI trough < 10 = 70.6% WR vs 30+ = 33.3% WR
-- ✅ **With-trend > counter-trend**: CALL with-trend 68.9%, counter-trend 42.9%
-- ✅ **STC calculation perfect**: 30/30 values matched (0.000000 error)
-
-### **Backtest Observations**
-- ✅ **1-minute best expiry**: 60% WR vs 53.3% at 2m/3m
-- ✅ **PUT signals dominate**: 76.5% of 7-gate signals are PUT
-- ✅ **April 18 strongest**: 71.4% WR @ 1m (best single day)
-- ✅ **7 gates very selective**: 99.87% rejection rate (17 signals from 35,265 candles)
+### Validated by Simulation
+- PUT gates (ceiling=85, delta≥-0.9, depth>175): **64% WR, n=25** — confirmed at both 60s and 120s
+- CALL: all configurations tested below 50% at 120s — disabled
 
 ---
 
-## 🔄 **Session Monitor (Autonomous Agent)**
+## Next Actions
 
-**Purpose**: Auto-block losing assets, unblock recovered assets  
-**Location**: `src/scripts/session-monitor.js`  
-**Must run alongside**: Bot + MCP server
+### Immediate (before restarting bot)
+1. Fix 30s refresh bug in `bot/indicators.js` (corrupts `_stochHistory`/`_cciHistory`)
+2. Confirm fix: `calculateAll()` must NOT run on 30s tick — only on bar close
+3. Restart bot
 
-### **Behavior**
-| Timer | Action |
-|---|---|
-| On startup | Clear all `source='session'` blocks (fresh slate) |
-| Every 2 min | Check for 3 consecutive losses → block with `source='session'` |
-| Every 10 min | Unblock `claude`/`auto` blocks if conditions recovered |
+### After restart
+1. Trade both CALL and PUT (`direction_filter: both`)
+2. Accumulate 30+ clean trades for valid baseline
+3. Run `/session-review` daily to track leading causes
+4. Run `/edge-optimize` after 50+ trades to tune gate thresholds
 
-### **Block Sources**
-- `session` — Auto-blocked by monitor (3 consecutive losses), cleared only on restart
-- `auto` — Auto-blocked by `po_auto_block_sweep` (BB < 5 bps)
-- `claude` — Manually blocked via `po_block_asset` (you or Claude)
-
----
-
-## 🎓 **Key Learnings**
-
-### **What Works**
-1. **STC extreme readings** (< 10 or > 90) have 70%+ reversal rate
-2. **BB touch + STC extreme** = high-probability setup (60-70% WR)
-3. **Retracement/extension gates** (g6) boost WR by 15-20%
-4. **Trend filters** (g7) avoid 30% WR counter-trend traps
-5. **PUT signals more reliable** than CALL in OTC markets
-
-### **What Doesn't Work**
-1. **5-gate strategy too loose** — 50-55% WR (not enough edge)
-2. **2-3 minute expiries inconsistent** — 20-100% WR swing by day
-3. **Counter-trend reversals risky** — Even with perfect gates, MA gap < -20 bps = danger
-4. **Flat markets (BB < 10 bps)** — 45.8% WR, must filter out
-5. **CALL signals weaker** — Only 4 samples, 50% WR (needs more data)
-
-### **Pending Validation**
-- ⏳ **Live slippage** — Backtest 60% WR, but live may be 55% due to execution delay
-- ⏳ **Time-of-day edge** — No data yet on UTC hour performance
-- ⏳ **Asset-specific WR** — Don't know which assets perform best with 7-gate
-- ⏳ **Multi-timeframe alignment** — No test of 1m + 5m confluence yet
+### Research
+- `po_grid_search` not yet executed — run to identify best multivariate combination
+- Add K > 30 minimum current-K gate to CALL G2 (identified but not applied)
+- If CALL WR improves with more data: re-enable and validate
 
 ---
 
-## 🚀 **Current Development State**
+## Key Learnings
 
-### **Completed ✅**
-- [x] STC calculation validated (100% accuracy)
-- [x] 7-gate strategy implemented (`scripts/paper_reversal_csv.cjs`)
-- [x] 5 databases recalculated (24,680 STC values)
-- [x] Backtest on 3 databases (17 signals, 60% WR @ 1m)
-- [x] Strategy documentation complete
-- [x] Chart analysis examples reviewed
-
-### **In Progress ⏳**
-- [ ] Optimize script for large datasets (v1/v2 timeout)
-- [ ] Collect 100+ signals for statistical significance
-- [ ] Fix Bonferroni correction in `significance.js`
-
-### **Pending 📋**
-- [ ] Live paper trading (2-4 weeks, 50+ signals)
-- [ ] Time-of-day analysis
-- [ ] Asset profiling (whitelist/blacklist)
-- [ ] Multi-timeframe confluence testing
-- [ ] STC divergence detection (8th gate)
+- **PUT >> CALL in OTC**: Historically and in simulation, PUT produces reliable edge at 120s; CALL does not
+- **STC ceiling ≥ 85 (not ≥ 90)**: Slightly lower threshold captures more valid rollovers without sacrificing WR
+- **Delta ≥ -0.9 (not ≥ -0.5)**: Tight delta only captures gentle rollovers that fade between 60s and 120s. Allowing larger deltas improves 120s WR
+- **CCI depth > 175 (not > 150)**: Tighter depth for PUT eliminates shallow bounces
+- **Expiry hierarchy**: 2m (120s) = primary; 1m (60s) = context only. A signal that works at 60s but not 120s is a fade, not an edge
+- **OTC has no sessions**: Hour-of-day data shows variation but is not reproducible — never filter by hour
+- **Static blocks harm performance**: OTC assets shift regimes. Yesterday's loser may be today's best setup. Block only on current BB width
 
 ---
 
-## 🎯 **Next Actions (When Ready)**
-
-### **Immediate**
-1. Optimize `paper_reversal_csv.cjs` to handle v1/v2 databases
-2. Run combined analysis on all 5 databases
-3. Generate master dataset with 50-100+ signals
-
-### **Short-term**
-1. Deploy live monitoring script
-2. Paper trade for 100+ signals
-3. Validate 60% WR holds in real conditions
-
-### **Long-term**
-1. Add time-of-day + asset filters (boost to 65-70% WR)
-2. Implement STC divergence detection (8th gate)
-3. Test multi-timeframe alignment
-4. Go live with proven strategy
-
----
-
-## 📞 **Quick Reference Commands**
-
-### **Generate Signals from Database**
-```bash
-node scripts/paper_reversal_csv.cjs data/trading_data.db data/signals.csv
-```
-
-### **Recalculate STC Values**
-```bash
-node bot/scripts/recalculate-schaff.js data/trading_data.db
-```
-
-### **Check Database Status**
-```bash
-sqlite3 data/trading_data.db "SELECT COUNT(*) FROM indicators WHERE schaff_value IS NOT NULL"
-```
-
-### **Start Session Monitor**
-```bash
-node src/scripts/session-monitor.js
-```
-
-### **MCP Server Startup**
-```bash
-node src/server.js
-```
-
----
-
-## 🔒 **Security Notes**
-
-- ✅ All databases are **local** (no cloud exposure)
-- ✅ Bot credentials in environment variables (not committed)
-- ✅ MCP server uses stdio (no network ports)
-- ✅ Readonly/writable separation enforced
-
----
-
-## 📚 **Reference Materials**
-
-### **Technical Papers**
-- Schaff Trend Cycle: Double-smoothed MACD + Stochastic normalization
-- Wilson Confidence Interval: Better than Wald for extreme proportions
-- Binomial Test: Exact for n ≤ 120, normal approximation above
-
-### **Strategy Inspiration**
-- BB reversion (mean-reversion at bands)
-- Stochastic divergence (price vs momentum)
-- STC crossover (0-20 oversold, 80-100 overbought zones)
-
----
-
-**Memory Version**: 1.0  
-**Last Session**: 2026-04-28  
-**Strategy State**: 7-Gate STC Reversal (Paper Trading Ready)  
-**Next Milestone**: 100+ signal validation
-
----
-
-_This memory should be loaded at the start of each session for context continuity._
+**Memory Version**: 2.0  
+**Last Session**: 2026-05-08  
+**Strategy State**: 8GSR live (CALL + PUT both active)  
+**Next Milestone**: Fix 30s bug → restart bot → 30+ clean PUT trades → /edge-optimize

@@ -86,83 +86,124 @@ Once Claude Code is restarted with the MCP server registered:
 po_health                                      # confirm both DBs accessible, check bot liveness
 po_tracked_assets                              # see what assets are live
 po_prices                                      # latest price for all assets
-po_signals                                     # recent CALL/PUT signals from bot strategy
+po_signals                                     # recent CALL/PUT signals from 8GSR strategy
 po_rolling_summary days=0                      # all-time P/L
-po_trade asset=EURUSD_otc direction=CALL       # enqueue a manual trade
+po_trade asset=EURUSD_otc direction=PUT        # enqueue a manual trade
 po_mcp_orders                                  # check your manual order status
 ```
 
-## Tools (23)
+## Tools (43)
 
-### Health
+### Health & Market State
 
 | Tool | Description |
 |---|---|
-| `po_health` | Check both DBs (bot + MCP) and bot liveness. Returns row counts, latest price timestamp, staleness. **Call this first.** |
+| `po_health` | Check both DBs (bot + MCP) and bot liveness. **Call this first.** |
+| `po_market_state` | Active assets, signal rate, today P/L, top assets |
+| `po_tracked_assets` | List all assets the bot has candle data for |
+| `po_prices` | Latest price for one asset, or all assets if omitted |
 
 ### Market Data *(reads bot DB — readonly)*
 
-| Tool | Parameters | Description |
-|---|---|---|
-| `po_tracked_assets` | — | List all assets the bot has candle data for |
-| `po_prices` | `asset?` | Latest price for one asset, or all assets if omitted |
-| `po_candles` | `asset`, `limit?`, `summary?` | OHLC bars. Use `summary=true` for a compact stats view |
-| `po_price_history` | `asset`, `from_timestamp`, `to_timestamp`, `limit?` | Tick-level price history over a time window |
-| `po_indicators` | `asset`, `limit?` | Calculated indicators: MA1/MA2/MA3, RSI, Bollinger Bands, Stochastic, Keltner, Schaff |
-| `po_signals` | `asset?`, `limit?`, `direction?` | CALL/PUT signals from the  strategy pipeline |
+| Tool | Description |
+|---|---|
+| `po_candles` | OHLC bars. Use `summary=true` for compact view. |
+| `po_price_history` | Tick-level price history over a time window |
+| `po_indicators` | Latest MA6/14, RSI-5, BB, Stochastic K/D v2, Keltner, Schaff values |
+| `po_signals` | CALL/PUT signals from the 8GSR pipeline (STC_CALL_8GSR / STC_PUT_8GSR) |
+| `po_pending_signals` | Signals past expiry with no validation outcome yet |
+
+### Intelligence — Agentic One-Call Tools
+
+| Tool | Description |
+|---|---|
+| `po_scan_all` | Score all assets by indicator alignment — price, signal, streak, WR, ranked |
+| `po_recommend` | "What should I trade?" — ranked picks filtered by precision + WR + bias |
+| `po_risk_check` | Pre-trade audit → score 0-100 + GOOD/CAUTION/RISKY/AVOID |
+| `po_asset_bias` | Per-asset CALL vs PUT WR history. Flags preferred direction and flat assets. |
+| `po_asset_volatility` | Rank assets by BB width bps — find flat/pegged assets to block |
+
+### Analysis & Backtesting
+
+| Tool | Description |
+|---|---|
+| `po_replay_candles` | Full candle replay — fires 8GSR gates bar-by-bar, validates at 60s AND 120s |
+| `po_replay_signal` | Reconstruct all gate values for a specific historical signal |
+| `po_find_edge` | Win rate breakdown across 15 8GSR dimensions + z_score/p_value/wilson_95ci |
+| `po_simulate` | A/B test: baseline vs modified thresholds side-by-side |
+| `po_grid_search` | Multivariate search: tests 600 CALL + 720 PUT parameter combinations, ranked by 120s WR |
+| `po_optimize_gates` | Legacy single-parameter grid search |
+| `po_significance` | Binomial test + Wilson CI + Kelly fraction per slice |
 
 ### Trade Execution
 
-| Tool | Parameters | Description | DB |
-|---|---|---|---|
-| `po_trade` | `asset`, `direction`, `amount?`, `signal_timestamp?` | **Enqueue a manual CALL or PUT.** Bot picks it up on its next execution cycle. | writes MCP DB |
-| `po_cancel_order` | `order_id` | Cancel a PENDING manual order before it executes | writes MCP DB |
-| `po_mcp_orders` | `status?`, `limit?` | View manual orders you placed via `po_trade` | reads MCP DB |
-| `po_bot_orders` | `status?`, `limit?` | View bot-generated execution queue | reads bot DB |
-| `po_trades_ordered` | `asset?`, `result?`, `limit?` | Executed live trades with WIN/LOSS/DRAW results | reads bot DB |
-| `po_pnl_summary` | — | P/L breakdown by asset | reads bot DB |
-
-### Performance *(reads bot DB — readonly)*
-
-| Tool | Parameters | Description |
+| Tool | Description | DB |
 |---|---|---|
-| `po_rolling_summary` | `days?` | Win rate, P/L, ROI, best/worst trade. `days=0` = all-time |
-| `po_performance` | `days?` | Daily performance records from the performance table |
-| `po_hourly_breakdown` | — | Trade distribution and P/L by hour of day (UTC) |
+| `po_trade` | Enqueue a manual CALL or PUT. Bot picks it up on its next cycle. | writes MCP DB |
+| `po_cancel_order` | Cancel a PENDING manual order before it executes | writes MCP DB |
+| `po_mcp_orders` | View manual orders placed via `po_trade` | reads MCP DB |
+| `po_bot_orders` | View bot-generated execution queue | reads bot DB |
 
-### Qualification & Validation *(reads bot DB — readonly)*
+### Results & Performance *(reads bot DB — readonly)*
 
-| Tool | Parameters | Description |
-|---|---|---|
-| `po_validation_stats` | `asset?` | Aggregate win rate and P/L from the validation layer |
-| `po_pending_signals` | `look_ahead_seconds?`, `limit?` | Signals past expiry with no validation outcome yet |
+| Tool | Description |
+|---|---|
+| `po_trades_ordered` | Executed live trades with WIN/LOSS results |
+| `po_pnl_summary` | P/L breakdown by asset |
+| `po_rolling_summary` | Win rate + P/L. `days=0` = all-time. |
+| `po_performance` | Daily performance table |
+| `po_hourly_breakdown` | Trade distribution and P/L by hour of day (descriptive — OTC has no sessions) |
+
+### Asset Analytics
+
+| Tool | Description |
+|---|---|
+| `po_asset_analytics` | What drives wins/losses per asset: STC zone, RSI, direction, BB width breakdown |
+| `po_asset_streaks` | Current win/loss streak per asset |
+| `po_streak_leaderboard` | Rank assets by consecutive wins |
+| `po_signal_outcomes` | Signal validation history — entry/exit price, WIN/LOSS |
+| `po_asset_trades` | Trade outcomes per asset |
+| `po_validation_stats` | Aggregate win rate from validation history |
+
+### Asset Controls
+
+| Tool | Description |
+|---|---|
+| `po_block_asset` | Block an asset — bot skips all orders for it |
+| `po_unblock_asset` | Remove an active block |
+| `po_auto_block_sweep` | Block all assets with current BB < 5 bps at session start |
+| `po_auto_block_check` | Check one asset for auto-block conditions |
+
+### Multi-Agent Pipeline
+
+| Tool | Description |
+|---|---|
+| `po_signal_context` | Full 4-bar indicator + candle + signal snapshot (for Analyst agent) |
+| `po_drawdown_check` | GO/PAUSE/STOP verdict: today P/L, consecutive losses, bot liveness |
+| `po_session_log_write` | Write an agent decision to the audit trail |
+| `po_session_log_read` | Read full agent decision history |
 
 ## Architecture
 
 ```
 src/
-├── server.js              MCP server entry point — registers all tools
-├── bot-db.js              Readonly connection to the bot's trading_data.db
-├── mcp-db.js              Writable connection to data/mcp.db (owned by this server)
-├── connection.js          Re-exports bot-db helpers + health check
+├── server.js              MCP server entry point — 43 tools registered
+├── connection.js          Dual-DB: bot-db (READONLY) + mcp-db (writable)
 ├── core/
-│   ├── health.js          Checks both bot DB and MCP DB
-│   ├── data.js            Candles, prices, indicators, signals  [bot DB]
-│   ├── assets.js          Qualified assets, streaks, outcomes   [bot DB]
-│   ├── orders.js          Bot orders + MCP orders + P/L         [bot DB read / mcp DB write]
-│   ├── validation.js      Pending signals, validation stats     [bot DB]
-│   └── performance.js     Daily records, rolling summary        [bot DB]
-└── tools/
-    ├── _format.js         jsonResult() helper
-    ├── health.js
-    ├── data.js
-    ├── assets.js
-    ├── orders.js
-    ├── validation.js
-    └── performance.js
+│   ├── health.js          Check both DBs + bot liveness
+│   ├── data.js            Candles, prices, indicators, signals
+│   ├── analysis.js        Replay engine, find_edge, simulate, grid_search
+│   ├── intelligence.js    scan_all, recommend, risk_check, asset_bias
+│   ├── agent-tools.js     signal_context, drawdown_check, session_log, blocks
+│   ├── orders.js          Bot orders + MCP orders + P/L
+│   ├── performance.js     Daily records, rolling summary
+│   ├── assets.js          Asset analytics, streaks, outcomes
+│   └── validation.js      Pending signals, validation stats
+└── tools/                 One file per tool group
 
 data/
-└── mcp.db                 Auto-created on first run. Gitignored.
+├── trading_data.db        Bot writes (READONLY to MCP)
+└── mcp.db                 MCP writes — orders, blocks, agent logs
 ```
 
 ## Database Isolation
@@ -170,13 +211,14 @@ data/
 | Table | Location | Who writes | Who reads |
 |---|---|---|---|
 | `candles` | bot DB | bot | `po_candles` |
-| `prices` | bot DB | bot | `po_prices`, `po_price_history` |
-| `indicators` | bot DB | bot | `po_indicators` |
+| `prices` | bot DB | bot | `po_prices`, `po_price_history`, replay engine |
+| `indicators` | bot DB | bot | `po_indicators`, replay engine |
 | `signals` | bot DB | bot | `po_signals` |
 | `orders_queue` | bot DB | bot | `po_bot_orders` |
 | `trades_ordered` | bot DB | bot | `po_trades_ordered`, `po_pnl_summary` |
-| `qualification_outcomes` | bot DB | bot | `po_qualification_outcomes`, `po_validation_stats` |
 | `mcp_orders` | **MCP DB** | **MCP server** | `po_mcp_orders`, bot execution worker |
+| `asset_controls` | **MCP DB** | **MCP server** | bot (checks before every order) |
+| `session_log` | **MCP DB** | **MCP server** | `po_session_log_read` |
 
 The MCP server has **zero write access** to the bot's database.
 
