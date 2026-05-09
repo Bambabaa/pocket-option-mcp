@@ -44,6 +44,10 @@ Analysis & Backtesting (AI research — find the edge):
 - po_find_edge → analyze ALL historical trades: win rate by RSI range, stoch range, MA gap, hour, asset, direction
 - po_optimize_gates → grid search: what RSI/K-crash/D thresholds would produce the best win rate?
 - po_simulate → replay with custom gate thresholds vs baseline — "what if I raised K crash min to 35?" or "skip flat assets with min_bb_bps=5"
+- po_walk_forward → split 120s signals into N time folds, compute per-fold WR — tells you if the edge is consistent across time or just lucky in one period
+- po_score_calibration → map coincidence score (0-5) → actual WR → Kelly multiplier — tells you whether high-score signals trade larger
+- po_loss_attribution → for every 120s LOSS compute each gate's margin-from-threshold — finds the leaky gate letting bad trades through, with margin_gap vs wins
+- po_gate_interaction → 2D WR heatmap for any two dimensions (e.g. stc_prev × g3_depth) — reveals winning combinations that univariate po_find_edge cannot show
 - po_significance → binomial significance test — p-values, z-scores, Wilson CI, Kelly fraction per slice (direction, asset, STC zone, hour)
 
 Reading market data:

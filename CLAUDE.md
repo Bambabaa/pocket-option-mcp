@@ -145,9 +145,14 @@ pocket-option-mcp/
 |---|---|
 | `po_replay_candles` | Full candle replay — fires STC gates, validates at 60s AND 120s via prices table |
 | `po_replay_signal` | Reconstruct all gate values for a specific historical signal |
-| `po_find_edge` | Win rate breakdown across 11 dimensions + dual 60s/120s expiry |
+| `po_find_edge` | Win rate breakdown across 17 dimensions + dual 60s/120s expiry + cross-validation |
 | `po_optimize_gates` | Grid search over STC gate thresholds |
 | `po_simulate` | Baseline vs modified thresholds side-by-side — test before touching bot |
+| `po_grid_search` | Multivariate grid search — tests all parameter combinations, ranked by 120s WR |
+| `po_walk_forward` | Rolling N-fold WR validation — STABLE/MODERATE/UNSTABLE verdict across time |
+| `po_score_calibration` | Maps coincidence score (0-5) → WR → Kelly sizing multiplier |
+| `po_loss_attribution` | Per-gate margin analysis on losses — identifies the leaky gate |
+| `po_gate_interaction` | 2D WR heatmap for any two dimensions — finds winning combinations |
 | `po_significance` | Binomial significance test — p-values, z-scores, Wilson CI, Kelly fraction per slice |
 
 ### Asset Controls

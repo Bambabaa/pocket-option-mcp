@@ -227,7 +227,8 @@ export async function replayCandles(asset = null, params = {}) {
     const putRejections  = { g4_stcHook: 0, g1_bbTouch: 0, g2_stochCross: 0, g3_cciCross: 0 };
 
     for (const [assetName, candles] of Object.entries(byAsset)) {
-        const priceList = pricesByAsset[assetName] || null;
+        const priceList   = pricesByAsset[assetName] || null;
+        const lastSignalT = { CALL: null, PUT: null };
 
         for (let t = 2; t < candles.length; t++) {
             totalCandles++;
@@ -244,7 +245,7 @@ export async function replayCandles(asset = null, params = {}) {
             const bar1    = candles[t + 1];
             const bar2    = candles[t + 2];
 
-            function buildSignal(direction, gateValues, gateFlags) {
+            function buildSignal(direction, gateValues, gateFlags, barsSinceLastSignal, regime) {
                 const e60  = resolveExpiry(direction, bar0.close, tick60,  bar1?.close, bar1?.timestamp, bar0.timestamp, 60);
                 const e120 = resolveExpiry(direction, bar0.close, tick120, bar2?.close, bar2?.timestamp, bar0.timestamp, 120);
                 const bbRange = (bar0.bb_upper != null && bar0.bb_lower != null && (bar0.bb_upper - bar0.bb_lower) > 0)
@@ -258,7 +259,7 @@ export async function replayCandles(asset = null, params = {}) {
                     exitPrice_120: e120.exitPrice, result_120: e120.result, validatedBy_120: e120.validatedBy,
                     profitLoss_60:  e60.result  === 'WIN' ? amount * 0.92 : e60.result  === 'LOSS' ? -amount : 0,
                     profitLoss_120: e120.result === 'WIN' ? amount * 0.92 : e120.result === 'LOSS' ? -amount : 0,
-                    bbPct,
+                    bbPct, barsSinceLastSignal, regime,
                     ...gateValues, ...gateFlags,
                 };
             }
@@ -266,7 +267,29 @@ export async function replayCandles(asset = null, params = {}) {
             for (const dir of ['CALL', 'PUT']) {
                 const result = check8GSR(candles, t, dir, params);
                 if (result.pass) {
-                    signals.push(buildSignal(dir, result.values, result.gates));
+                    // Cooldown: bars elapsed since last same-direction signal on this asset
+                    const barsSince   = lastSignalT[dir] != null ? t - lastSignalT[dir] : null;
+                    lastSignalT[dir]  = t;
+
+                    // Regime: classify market state from MA gap trend + BB expansion
+                    const barM1       = candles[t - 1];
+                    const maGapCurr   = bar0.ma1  && bar0.ma3  && bar0.ma3  > 0 ? (bar0.ma1  - bar0.ma3)  / bar0.ma3  * 10000 : null;
+                    const maGapPrev   = barM1.ma1 && barM1.ma3 && barM1.ma3 > 0 ? (barM1.ma1 - barM1.ma3) / barM1.ma3 * 10000 : null;
+                    let maGapTrend    = null;
+                    if (maGapCurr != null && maGapPrev != null) {
+                        const absCurr = Math.abs(maGapCurr), absPrev = Math.abs(maGapPrev);
+                        maGapTrend    = absCurr > absPrev + 0.5 ? 'widening' : absCurr < absPrev - 0.5 ? 'narrowing' : 'stable';
+                    }
+                    const prevBbBps   = barM1.bb_upper && barM1.bb_lower && barM1.bb_middle && barM1.bb_middle > 0
+                        ? (barM1.bb_upper - barM1.bb_lower) / barM1.bb_middle * 10000 : null;
+                    const bbExpanding = result.values.bbBps != null && prevBbBps != null ? result.values.bbBps > prevBbBps : null;
+                    let regime        = null;
+                    if (maGapTrend != null && bbExpanding != null) {
+                        const tl = maGapTrend === 'widening' ? 'TRENDING' : maGapTrend === 'narrowing' ? 'RANGING' : 'STABLE';
+                        regime   = `${tl}_${bbExpanding ? 'EXPANDING' : 'COMPRESSING'}`;
+                    }
+
+                    signals.push(buildSignal(dir, result.values, result.gates, barsSince, regime));
                 } else {
                     const rejMap = dir === 'CALL' ? callRejections : putRejections;
                     for (const [gn, val] of Object.entries(result.gates)) {
@@ -592,6 +615,32 @@ export async function findEdge() {
             return { bb_range: b.label, ...bStats(bt) };
         }).filter(b => b.trades > 0);
 
+        // ── Bars since last signal (cooldown / clustering analysis) ──
+        const cooldownBuckets = [
+            { label: '1-3 bars',   min: 1,  max: 4           },
+            { label: '4-10 bars',  min: 4,  max: 11          },
+            { label: '11-30 bars', min: 11, max: 31          },
+            { label: '30+ bars',   min: 31, max: Infinity     },
+        ];
+        const by_bars_since_last = [
+            { label: 'first (no prior)', arr: validSignals.filter(s => s.barsSinceLastSignal == null) },
+            ...cooldownBuckets.map(b => ({
+                label: b.label,
+                arr: validSignals.filter(s => s.barsSinceLastSignal != null && s.barsSinceLastSignal >= b.min && s.barsSinceLastSignal < b.max),
+            })),
+        ].map(({ label, arr }) => ({ bars_since_last_signal: label, ...bStats(arr) })).filter(b => b.trades > 0);
+
+        // ── Market regime at signal time (MA gap trend × BB expansion) ──
+        const regimeLabels = [
+            'TRENDING_EXPANDING', 'TRENDING_COMPRESSING',
+            'RANGING_EXPANDING',  'RANGING_COMPRESSING',
+            'STABLE_EXPANDING',   'STABLE_COMPRESSING',
+        ];
+        const by_regime = regimeLabels.map(r => {
+            const arr = validSignals.filter(s => s.regime === r);
+            return { regime: r, ...bStats(arr) };
+        }).filter(b => b.trades > 0);
+
         // ── Hour of day ──
         const hourBuckets = {};
         for (const s of validSignals) {
@@ -662,7 +711,7 @@ export async function findEdge() {
             by_g2_cross_depth, by_g2_cross_kd, by_stoch_levels,
             by_g3_depth, by_g3_cross_bars_ago, by_cci_current,
             by_coincidence_score,
-            by_bb_width, by_hour, by_asset,
+            by_bb_width, by_bars_since_last, by_regime, by_hour, by_asset,
             best_thresholds,
         };
     }
@@ -1028,6 +1077,483 @@ export async function gridSearch(direction = 'both') {
         total_validated_120s: allSigs.length,
         call: { combinations_passing_n20: callResults.length, top_20: callResults.slice(0, 20) },
         put:  { combinations_passing_n20: putResults.length,  top_20: putResults.slice(0, 20) },
+    };
+}
+
+// ─── walkForward() — Rolling window WR validation across N time folds ───────────
+// Sorts 120s validated signals by timestamp, splits into N equal folds,
+// computes WR per fold, and returns a stability verdict.
+
+export async function walkForward(direction = 'both', folds = 5) {
+    const replay = await replayCandles();
+    if (!replay.success) return replay;
+
+    const allSigs = (replay.signals_all || []).filter(s => s.result_120 != null);
+    const filtered = direction === 'both' ? allSigs
+        : allSigs.filter(s => s.direction === direction.toUpperCase());
+
+    if (filtered.length < folds * 5) {
+        return { success: false, error: `Need at least ${folds * 5} validated 120s signals for ${folds} folds. Have: ${filtered.length}` };
+    }
+
+    const sorted   = [...filtered].sort((a, b) => a.signalTs - b.signalTs);
+    const foldSize = Math.floor(sorted.length / folds);
+
+    function bStatsWF(arr) {
+        const n    = arr.length;
+        const wins = arr.filter(s => s.result_120 === 'WIN').length;
+        const gp   = arr.reduce((a, s) => s.result_120 === 'WIN'  ? a + (s.profitLoss_120 || 0) : a, 0);
+        const gl   = arr.reduce((a, s) => s.result_120 === 'LOSS' ? a + Math.abs(s.profitLoss_120 || 0) : a, 0);
+        let z_score = null, p_value = null, wl = null, wu = null;
+        if (n >= 5) {
+            const p_hat = wins / n;
+            z_score = parseFloat(((p_hat - 0.5) / Math.sqrt(0.25 / n)).toFixed(3));
+            p_value = parseFloat((1 - normCDF(z_score)).toFixed(4));
+            const z95 = 1.96, denom = 1 + z95 * z95 / n;
+            const center = (p_hat + z95 * z95 / (2 * n)) / denom;
+            const margin = z95 * Math.sqrt(p_hat * (1 - p_hat) / n + z95 * z95 / (4 * n * n)) / denom;
+            wl = parseFloat(Math.max(0, center - margin).toFixed(3));
+            wu = parseFloat(Math.min(1, center + margin).toFixed(3));
+        }
+        return {
+            trades: n, wins, losses: n - wins,
+            win_rate: n > 0 ? ((wins / n) * 100).toFixed(1) + '%' : 'N/A',
+            net_pnl:  parseFloat((gp - gl).toFixed(2)),
+            z_score, p_value,
+            wilson_95ci: wl != null ? [wl, wu] : null,
+        };
+    }
+
+    const foldResults = [];
+    for (let i = 0; i < folds; i++) {
+        const start   = i * foldSize;
+        const end     = i === folds - 1 ? sorted.length : (i + 1) * foldSize;
+        const foldSigs = sorted.slice(start, end);
+        foldResults.push({
+            fold:      i + 1,
+            date_from: foldSigs[0] ? new Date(foldSigs[0].signalTs * 1000).toISOString().slice(0, 10) : null,
+            date_to:   foldSigs[foldSigs.length - 1] ? new Date(foldSigs[foldSigs.length - 1].signalTs * 1000).toISOString().slice(0, 10) : null,
+            ...bStatsWF(foldSigs),
+        });
+    }
+
+    const overall  = bStatsWF(sorted);
+    const oosSigs  = sorted.slice(foldSize);  // all folds except first (burn-in)
+    const oos      = bStatsWF(oosSigs);
+
+    const wrValues = foldResults.map(f => parseFloat(f.win_rate));
+    const spread   = Math.max(...wrValues) - Math.min(...wrValues);
+    const anyBelowBreakeven = wrValues.some(wr => wr < 52.2);
+
+    let verdict, verdict_note;
+    if (spread <= 15 && !anyBelowBreakeven) {
+        verdict      = 'STABLE';
+        verdict_note = `All folds within ${spread.toFixed(1)}% spread. Edge is consistent across time.`;
+    } else if (spread <= 25 && !anyBelowBreakeven) {
+        verdict      = 'MODERATE';
+        verdict_note = `${spread.toFixed(1)}% spread across folds. Some variance — monitor as more data accumulates.`;
+    } else {
+        verdict      = 'UNSTABLE';
+        verdict_note = `${spread.toFixed(1)}% spread across folds${anyBelowBreakeven ? ' — one or more folds below breakeven (52.2%)' : ''}. Edge may not be consistent.`;
+    }
+
+    return {
+        success: true,
+        direction_filter: direction,
+        total_signals: sorted.length,
+        folds,
+        fold_size: foldSize,
+        per_fold: foldResults,
+        out_of_sample: { note: 'All folds except fold 1 (burn-in)', ...oos },
+        overall,
+        stability: {
+            verdict, verdict_note,
+            wr_spread:    parseFloat(spread.toFixed(1)),
+            min_fold_wr:  Math.min(...wrValues),
+            max_fold_wr:  Math.max(...wrValues),
+        },
+    };
+}
+
+// ─── scoreCalibration() — Map coincidence score → WR → sizing multiplier ────────
+// Computes actual 120s WR per coincidence score (0-5) from replay data.
+// Derives Kelly fraction per score and normalises to a sizing multiplier.
+
+export async function scoreCalibration() {
+    const replay = await replayCandles();
+    if (!replay.success) return replay;
+
+    const allSigs = (replay.signals_all || []).filter(s => s.result_120 != null);
+    if (allSigs.length < 10) return { success: false, error: 'Need at least 10 validated 120s signals' };
+
+    function gateScore(s) {
+        let score = 0;
+        if (s.direction === 'CALL') {
+            if (s.stcPrev != null         && s.stcPrev <= 10)           score++;
+            if (s.g1_barsAgo              === 1)                         score++;
+            if (s.g2_preCrossK != null    && s.g2_preCrossK <= 10)      score++;
+            if (s.g3_depth != null        && s.g3_depth <= -200)        score++;
+            if (s.g3_crossBarsAgo != null && s.g3_crossBarsAgo <= 3)    score++;
+        } else {
+            if (s.stcPrev != null         && s.stcPrev >= 95)           score++;
+            if (s.g1_barsAgo              === 1)                         score++;
+            if (s.g2_preCrossK != null    && s.g2_preCrossK >= 95)      score++;
+            if (s.g3_depth != null        && s.g3_depth >= 200)         score++;
+            if (s.g3_crossBarsAgo != null && s.g3_crossBarsAgo <= 3)    score++;
+        }
+        return score;
+    }
+
+    const PAYOUT = 0.92;
+
+    const rows = [0, 1, 2, 3, 4, 5].map(sc => {
+        const group = allSigs.filter(s => gateScore(s) === sc);
+        const n = group.length;
+        if (n === 0) return { score: sc, trades: 0, wins: 0, losses: 0, win_rate: 'N/A',
+            kelly_fraction: null, recommended_multiplier: null, z_score: null, p_value: null, wilson_95ci: null };
+
+        const wins  = group.filter(s => s.result_120 === 'WIN').length;
+        const p_hat = wins / n;
+        const kelly = parseFloat((p_hat - (1 - p_hat) / PAYOUT).toFixed(3));
+
+        let z_score = null, p_value = null, wl = null, wu = null;
+        if (n >= 5) {
+            z_score = parseFloat(((p_hat - 0.5) / Math.sqrt(0.25 / n)).toFixed(3));
+            p_value = parseFloat((1 - normCDF(z_score)).toFixed(4));
+            const z95 = 1.96, denom = 1 + z95 * z95 / n;
+            const center = (p_hat + z95 * z95 / (2 * n)) / denom;
+            const margin = z95 * Math.sqrt(p_hat * (1 - p_hat) / n + z95 * z95 / (4 * n * n)) / denom;
+            wl = parseFloat(Math.max(0, center - margin).toFixed(3));
+            wu = parseFloat(Math.min(1, center + margin).toFixed(3));
+        }
+        return { score: sc, trades: n, wins, losses: n - wins,
+            win_rate: ((p_hat * 100).toFixed(1)) + '%',
+            kelly_fraction: kelly, z_score, p_value,
+            wilson_95ci: wl != null ? [wl, wu] : null,
+            recommended_multiplier: null };
+    });
+
+    // Normalise kelly fractions to multipliers (relative to median of valid rows)
+    const validRows = rows.filter(r => r.trades >= 5 && r.kelly_fraction != null && r.kelly_fraction > 0);
+    if (validRows.length > 0) {
+        const sorted = [...validRows].sort((a, b) => a.kelly_fraction - b.kelly_fraction);
+        const medianKelly = sorted[Math.floor(sorted.length / 2)].kelly_fraction;
+        for (const r of rows) {
+            if (r.trades < 5 || r.kelly_fraction == null || r.kelly_fraction <= 0) {
+                r.recommended_multiplier = null;
+                r.multiplier_note = 'skip — insufficient data or negative Kelly';
+            } else {
+                r.recommended_multiplier = parseFloat(Math.min(2.0, Math.max(0.25, r.kelly_fraction / medianKelly)).toFixed(2));
+            }
+        }
+    }
+
+    const wrValues = validRows.map(r => parseFloat(r.win_rate));
+    const isDifferentiated = validRows.length >= 2 && (Math.max(...wrValues) - Math.min(...wrValues)) > 10;
+
+    return {
+        success: true,
+        note: 'Score 0-5 = count of gates firing at maximum intensity per signal. Multiplier scales trade amount relative to median Kelly.',
+        total_signals_120s: allSigs.length,
+        by_score: rows,
+        calibration_verdict: isDifferentiated
+            ? 'SCORE IS PREDICTIVE — scale trade amount by recommended_multiplier'
+            : 'SCORE NOT YET DIFFERENTIATED — use uniform sizing (need more data to confirm)',
+        usage: 'amount = base_amount × recommended_multiplier for each signal coincidence_score',
+    };
+}
+
+// ─── lossAttribution() — Which gate was the weakest link on losing trades ────────
+// For every 120s LOSS, computes each gate's margin-from-threshold at signal time.
+// The gate with the smallest average margin = the leaky gate letting bad trades through.
+// Compares margin distribution on wins vs losses to identify where tightening helps.
+
+export async function lossAttribution() {
+    const replay = await replayCandles();
+    if (!replay.success) return replay;
+
+    const allSigs = (replay.signals_all || []).filter(s => s.result_120 != null);
+    const losses  = allSigs.filter(s => s.result_120 === 'LOSS');
+    const wins    = allSigs.filter(s => s.result_120 === 'WIN');
+
+    if (losses.length < 5) return { success: false, error: `Need at least 5 losses. Have: ${losses.length}` };
+
+    const THRESHOLDS = {
+        call: { stc_floor: 25, delta_max: 0.5,  g1_max: 3, g3_depth_min: -150, g3_bars_max: 24 },
+        put:  { stc_ceil:  75, delta_min: -0.5,  g1_max: 3, g3_depth_max:  150, g3_bars_max: 24 },
+    };
+
+    function computeMargins(s) {
+        const isCall = s.direction === 'CALL';
+        const t = isCall ? THRESHOLDS.call : THRESHOLDS.put;
+        const m = {};
+
+        if (isCall) {
+            // G4 STC zone: how far stcPrev sits below the floor (25). Smaller = barely in zone.
+            m.g4_stc_zone = s.stcPrev    != null ? parseFloat((t.stc_floor - s.stcPrev).toFixed(3))                         : null;
+            // G4 delta: how far stcDelta sits below the ceiling (0.5). Smaller = barely under limit.
+            m.g4_delta    = s.stcDelta   != null ? parseFloat((t.delta_max - s.stcDelta).toFixed(3))                        : null;
+            // G3 depth: how much deeper than -150 (excess below threshold).
+            m.g3_depth    = s.g3_depth   != null ? parseFloat((Math.abs(s.g3_depth) - Math.abs(t.g3_depth_min)).toFixed(1)) : null;
+        } else {
+            // G4 STC zone: how far stcPrev sits above the ceiling (75). Smaller = barely over.
+            m.g4_stc_zone = s.stcPrev    != null ? parseFloat((s.stcPrev - t.stc_ceil).toFixed(3))                          : null;
+            // G4 delta: how far stcDelta sits above the floor (-0.5). Smaller = barely above limit.
+            m.g4_delta    = s.stcDelta   != null ? parseFloat((s.stcDelta - t.delta_min).toFixed(3))                        : null;
+            // G3 depth: how much above 150.
+            m.g3_depth    = s.g3_depth   != null ? parseFloat((s.g3_depth - t.g3_depth_max).toFixed(1))                     : null;
+        }
+
+        // G1: bars of freshness buffer (3 - g1_barsAgo). 0 = barely within 3-bar window.
+        m.g1_recency  = s.g1_barsAgo      != null ? (t.g1_max     - s.g1_barsAgo)      : null;
+        // G3 recency: bars before the 24-bar CCI cross cutoff.
+        m.g3_recency  = s.g3_crossBarsAgo != null ? (t.g3_bars_max - s.g3_crossBarsAgo) : null;
+
+        return m;
+    }
+
+    const GATES = ['g4_stc_zone', 'g4_delta', 'g1_recency', 'g3_depth', 'g3_recency'];
+    const gateNames = {
+        g4_stc_zone: 'G4 — STC zone depth',
+        g4_delta:    'G4 — STC delta (hook tightness)',
+        g1_recency:  'G1 — BB touch recency',
+        g3_depth:    'G3 — CCI depth margin',
+        g3_recency:  'G3 — CCI cross recency',
+    };
+
+    const weakCount    = Object.fromEntries(GATES.map(g => [g, 0]));
+    const marginsLoss  = Object.fromEntries(GATES.map(g => [g, []]));
+    const marginsWin   = Object.fromEntries(GATES.map(g => [g, []]));
+
+    for (const s of losses) {
+        const m = computeMargins(s);
+        for (const g of GATES) { if (m[g] != null) marginsLoss[g].push(m[g]); }
+        const valid = GATES.map(g => [g, m[g]]).filter(([, v]) => v != null);
+        if (valid.length > 0) {
+            const weakest = valid.reduce((a, b) => b[1] < a[1] ? b : a);
+            weakCount[weakest[0]]++;
+        }
+    }
+    for (const s of wins) {
+        const m = computeMargins(s);
+        for (const g of GATES) { if (m[g] != null) marginsWin[g].push(m[g]); }
+    }
+
+    function avg(arr) {
+        return arr.length > 0 ? parseFloat((arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(3)) : null;
+    }
+
+    const attribution = GATES.map(g => {
+        const avgLoss = avg(marginsLoss[g]);
+        const avgWin  = avg(marginsWin[g]);
+        const gap     = avgLoss != null && avgWin != null ? parseFloat((avgWin - avgLoss).toFixed(3)) : null;
+        return {
+            gate:              g,
+            gate_name:         gateNames[g],
+            times_weakest:     weakCount[g],
+            pct_of_losses:     losses.length > 0 ? ((weakCount[g] / losses.length) * 100).toFixed(1) + '%' : 'N/A',
+            avg_margin_losses: avgLoss,
+            avg_margin_wins:   avgWin,
+            margin_gap:        gap,
+            action:            gap != null && gap > 0
+                ? `tighten — wins had ${gap.toFixed(2)} more margin on average`
+                : 'monitor — no clear margin differential yet',
+        };
+    }).sort((a, b) => b.times_weakest - a.times_weakest);
+
+    const top = attribution[0];
+
+    return {
+        success: true,
+        total_signals: allSigs.length,
+        total_wins:    wins.length,
+        total_losses:  losses.length,
+        attribution,
+        leakiest_gate: {
+            gate:          top.gate,
+            gate_name:     top.gate_name,
+            times_weakest: top.times_weakest,
+            pct_of_losses: top.pct_of_losses,
+            recommendation: top.margin_gap != null && top.margin_gap > 0
+                ? `Tighten ${top.gate_name} — wins had ${top.margin_gap.toFixed(2)} more margin on average. Run po_simulate to test threshold changes.`
+                : `${top.gate_name} is the most frequent weak link. Collect more data to confirm margin differential.`,
+        },
+        note: 'Margin = distance from gate threshold at signal time. Smaller = signal barely passed. margin_gap = avg_win_margin − avg_loss_margin. Positive gap means wins had more breathing room — tightening that gate would filter more losses than wins.',
+    };
+}
+
+// ─── DIMENSION_BUCKETS — shared bucketers for gateInteraction() ──────────────────
+
+const DIMENSION_BUCKETS = {
+    stc_prev: s => {
+        if (s.stcPrev == null) return null;
+        if (s.direction === 'CALL') {
+            if (s.stcPrev <  5) return 'CALL 0-5';
+            if (s.stcPrev < 10) return 'CALL 5-10';
+            if (s.stcPrev < 15) return 'CALL 10-15';
+            if (s.stcPrev < 20) return 'CALL 15-20';
+            return 'CALL 20-25';
+        } else {
+            if (s.stcPrev >= 95) return 'PUT 95-100';
+            if (s.stcPrev >= 90) return 'PUT 90-95';
+            if (s.stcPrev >= 85) return 'PUT 85-90';
+            if (s.stcPrev >= 80) return 'PUT 80-85';
+            return 'PUT 75-80';
+        }
+    },
+    stc_delta: s => {
+        if (s.stcDelta == null) return null;
+        if (s.direction === 'CALL') {
+            if (s.stcDelta < 0.1) return 'CALL 0-0.1';
+            if (s.stcDelta < 0.2) return 'CALL 0.1-0.2';
+            if (s.stcDelta < 0.3) return 'CALL 0.2-0.3';
+            return 'CALL 0.3-0.5';
+        } else {
+            if (s.stcDelta > -0.1) return 'PUT 0 to -0.1';
+            if (s.stcDelta > -0.2) return 'PUT -0.1 to -0.2';
+            if (s.stcDelta > -0.3) return 'PUT -0.2 to -0.3';
+            return 'PUT -0.3 to -0.9';
+        }
+    },
+    g1_bars_ago: s => s.g1_barsAgo != null ? `${s.g1_barsAgo} bar${s.g1_barsAgo > 1 ? 's' : ''}` : null,
+    g3_depth: s => {
+        if (s.g3_depth == null) return null;
+        if (s.direction === 'CALL') {
+            if (s.g3_depth < -250) return 'CALL < -250';
+            if (s.g3_depth < -200) return 'CALL -250 to -200';
+            if (s.g3_depth < -175) return 'CALL -200 to -175';
+            return 'CALL -175 to -150';
+        } else {
+            if (s.g3_depth > 250) return 'PUT > 250';
+            if (s.g3_depth > 200) return 'PUT 200-250';
+            if (s.g3_depth > 175) return 'PUT 175-200';
+            return 'PUT 150-175';
+        }
+    },
+    g3_cross_bars_ago: s => {
+        if (s.g3_crossBarsAgo == null) return null;
+        if (s.g3_crossBarsAgo <= 3)  return '1-3 bars';
+        if (s.g3_crossBarsAgo <= 6)  return '4-6 bars';
+        if (s.g3_crossBarsAgo <= 10) return '7-10 bars';
+        return '11-24 bars';
+    },
+    bb_width: s => {
+        if (s.bbBps == null) return null;
+        if (s.bbBps < 5)  return 'flat <5';
+        if (s.bbBps < 10) return 'weak 5-10';
+        if (s.bbBps < 20) return 'ok 10-20';
+        return 'good 20+';
+    },
+    coincidence_score: s => {
+        let sc = 0;
+        if (s.direction === 'CALL') {
+            if (s.stcPrev != null         && s.stcPrev <= 10)           sc++;
+            if (s.g1_barsAgo              === 1)                         sc++;
+            if (s.g2_preCrossK != null    && s.g2_preCrossK <= 10)      sc++;
+            if (s.g3_depth != null        && s.g3_depth <= -200)        sc++;
+            if (s.g3_crossBarsAgo != null && s.g3_crossBarsAgo <= 3)    sc++;
+        } else {
+            if (s.stcPrev != null         && s.stcPrev >= 95)           sc++;
+            if (s.g1_barsAgo              === 1)                         sc++;
+            if (s.g2_preCrossK != null    && s.g2_preCrossK >= 95)      sc++;
+            if (s.g3_depth != null        && s.g3_depth >= 200)         sc++;
+            if (s.g3_crossBarsAgo != null && s.g3_crossBarsAgo <= 3)    sc++;
+        }
+        return `score_${sc}`;
+    },
+    regime: s => s.regime || null,
+    bars_since_last_signal: s => {
+        if (s.barsSinceLastSignal == null) return 'first';
+        if (s.barsSinceLastSignal <= 3)  return '1-3 bars';
+        if (s.barsSinceLastSignal <= 10) return '4-10 bars';
+        if (s.barsSinceLastSignal <= 30) return '11-30 bars';
+        return '30+ bars';
+    },
+};
+
+// ─── gateInteraction() — 2D WR heatmap for any two dimensions ────────────────────
+// Returns an N×M grid showing WR at every (bucket_a × bucket_b) intersection.
+// Reveals combinations that po_find_edge univariate analysis cannot show.
+
+export async function gateInteraction(dim_a, dim_b, direction = 'both') {
+    const validDims = Object.keys(DIMENSION_BUCKETS);
+    if (!validDims.includes(dim_a)) return { success: false, error: `Unknown dim_a: "${dim_a}". Valid: ${validDims.join(', ')}` };
+    if (!validDims.includes(dim_b)) return { success: false, error: `Unknown dim_b: "${dim_b}". Valid: ${validDims.join(', ')}` };
+    if (dim_a === dim_b) return { success: false, error: 'dim_a and dim_b must be different dimensions' };
+
+    const replay = await replayCandles();
+    if (!replay.success) return replay;
+
+    const allSigs = (replay.signals_all || []).filter(s => s.result_120 != null);
+    const filtered = direction === 'both' ? allSigs : allSigs.filter(s => s.direction === direction.toUpperCase());
+    if (filtered.length < 10) return { success: false, error: `Need at least 10 validated 120s signals. Have: ${filtered.length}` };
+
+    // Bucket every signal on both dimensions
+    const matrix  = {};
+    const labelsA = new Set(), labelsB = new Set();
+    for (const s of filtered) {
+        const la = DIMENSION_BUCKETS[dim_a](s);
+        const lb = DIMENSION_BUCKETS[dim_b](s);
+        if (la == null || lb == null) continue;
+        labelsA.add(la); labelsB.add(lb);
+        const key = `${la}|||${lb}`;
+        if (!matrix[key]) matrix[key] = [];
+        matrix[key].push(s);
+    }
+
+    const sortedA = [...labelsA].sort();
+    const sortedB = [...labelsB].sort();
+
+    function cellStats(arr) {
+        if (!arr || arr.length === 0) return { trades: 0, win_rate: null };
+        const wins = arr.filter(s => s.result_120 === 'WIN').length;
+        const wr   = (wins / arr.length * 100).toFixed(1) + '%';
+        const gp   = arr.reduce((a, s) => s.result_120 === 'WIN'  ? a + (s.profitLoss_120 || 0) : a, 0);
+        const gl   = arr.reduce((a, s) => s.result_120 === 'LOSS' ? a + Math.abs(s.profitLoss_120 || 0) : a, 0);
+        let z_score = null, p_value = null;
+        if (arr.length >= 5) {
+            const p_hat = wins / arr.length;
+            z_score = parseFloat(((p_hat - 0.5) / Math.sqrt(0.25 / arr.length)).toFixed(3));
+            p_value = parseFloat((1 - normCDF(z_score)).toFixed(4));
+        }
+        return { trades: arr.length, wins, losses: arr.length - wins, win_rate: wr,
+            net_pnl: parseFloat((gp - gl).toFixed(2)), z_score, p_value };
+    }
+
+    const grid = sortedA.map(la => ({
+        [dim_a]: la,
+        cells: sortedB.map(lb => ({ [dim_b]: lb, ...cellStats(matrix[`${la}|||${lb}`]) })),
+    }));
+
+    // Find best cell (n >= 5, highest WR)
+    let bestCell = null, bestWR = -Infinity;
+    for (const [key, arr] of Object.entries(matrix)) {
+        if (arr.length < 5) continue;
+        const wins = arr.filter(s => s.result_120 === 'WIN').length;
+        const wr   = wins / arr.length;
+        if (wr > bestWR) { bestWR = wr; const [la, lb] = key.split('|||'); bestCell = { [dim_a]: la, [dim_b]: lb, ...cellStats(arr) }; }
+    }
+
+    // Worst cell (n >= 5, lowest WR)
+    let worstCell = null, worstWR = Infinity;
+    for (const [key, arr] of Object.entries(matrix)) {
+        if (arr.length < 5) continue;
+        const wins = arr.filter(s => s.result_120 === 'WIN').length;
+        const wr   = wins / arr.length;
+        if (wr < worstWR) { worstWR = wr; const [la, lb] = key.split('|||'); worstCell = { [dim_a]: la, [dim_b]: lb, ...cellStats(arr) }; }
+    }
+
+    return {
+        success: true,
+        dim_a, dim_b,
+        direction_filter: direction,
+        total_signals: filtered.length,
+        labels_a: sortedA,
+        labels_b: sortedB,
+        grid,
+        best_combination:  bestCell,
+        worst_combination: worstCell,
+        note: 'Focus on cells with trades >= 5. Use best_combination to identify which dim_a + dim_b pairing produces the highest 120s WR, then test with po_simulate.',
     };
 }
 

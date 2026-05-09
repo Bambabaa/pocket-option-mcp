@@ -151,7 +151,7 @@ Replays every candle bar-by-bar across all assets using the 8GSR check8GSR() log
 
 **Primary expiry: 120s (2m). Use 60s as context only.** A signal that works at 60s but not 120s is a fade — the 2m trade is wrong.
 
-#### po_find_edge — 15-Dimension Analysis
+#### po_find_edge — 17-Dimension Analysis
 
 Analyses all replayed 8GSR signals. Returns results at both 60s and 120s expiry with full statistics per bucket (z_score, p_value, wilson_95ci).
 
@@ -169,6 +169,8 @@ Analyses all replayed 8GSR signals. Returns results at both 60s and 120s expiry 
 | `by_cci_current` | CCI value at the signal bar itself |
 | `by_coincidence_score` | Gates at max intensity (0-5): does higher score predict better WR? |
 | `by_bb_width` | BB bps at signal: flat <2, weak 2-5, marginal 5-10, ok 10-20, good 20+ |
+| `by_bars_since_last` | Bars since last same-direction signal on same asset — detects if clustered signals underperform |
+| `by_regime` | Market regime at signal time: TRENDING/RANGING/STABLE × EXPANDING/COMPRESSING |
 | `by_asset` | Per-asset win rates with CALL/PUT breakdown |
 | `best_thresholds` | Auto-selected best bucket per parameter (n≥5) |
 | `cross_validation` | 120s signals split at median timestamp → in-sample vs out-of-sample WR |
@@ -215,6 +217,51 @@ po_grid_search direction=both
 ```
 
 Use this after `po_find_edge` identifies promising univariate improvements. The grid search confirms which combination actually maximises 120s WR.
+
+#### po_walk_forward — Rolling Time-Fold Validation
+
+Splits 120s validated signals into N equal time-ordered folds (default 5) and computes WR per fold. Returns `STABLE / MODERATE / UNSTABLE` verdict based on WR spread across folds.
+
+```
+po_walk_forward                    # 5 folds, both directions
+po_walk_forward direction=put folds=7
+```
+
+Use after accumulating 50+ signals. Spread ≤ 15% = STABLE. Any fold below breakeven = UNSTABLE — the edge may not be consistent across time.
+
+#### po_score_calibration — Coincidence Score → Sizing Multiplier
+
+Maps coincidence score (0-5) to actual 120s WR and a Kelly-derived sizing multiplier. Returns `calibration_verdict`: `SCORE IS PREDICTIVE` or `SCORE NOT YET DIFFERENTIATED`.
+
+```
+po_score_calibration
+```
+
+If predictive, use `recommended_multiplier` to scale trade amount in `/auto-trade`: amount = base × multiplier.
+
+#### po_loss_attribution — Gate Leak Finder
+
+For every 120s LOSS, computes each gate's margin-from-threshold at signal time. Ranks gates by how often they were the weakest link and compares average margin on losses vs wins.
+
+```
+po_loss_attribution
+```
+
+`margin_gap > 0` on a gate means wins had more breathing room than losses — tightening that gate would filter more losses than wins. Output includes a direct `po_simulate` recommendation for the leakiest gate.
+
+#### po_gate_interaction — 2D WR Heatmap
+
+Cross any two `po_find_edge` dimensions to find combinations that univariate analysis cannot reveal. Returns an N×M grid with trades + WR + z_score per cell, plus `best_combination` and `worst_combination`.
+
+```
+po_gate_interaction dim_a=stc_prev dim_b=g3_depth direction=put
+po_gate_interaction dim_a=regime dim_b=coincidence_score
+po_gate_interaction dim_a=bars_since_last_signal dim_b=bb_width
+```
+
+Available dimensions: `stc_prev`, `stc_delta`, `g1_bars_ago`, `g3_depth`, `g3_cross_bars_ago`, `bb_width`, `coincidence_score`, `regime`, `bars_since_last_signal`.
+
+Focus on cells with trades ≥ 5. Use `best_combination` to identify which pairing to test with `po_simulate`.
 
 #### po_optimize_gates — Legacy Grid Search
 
@@ -318,9 +365,13 @@ OTC markets run 24/7 with no session boundaries. Never recommend avoiding certai
 3. po_auto_block_sweep                → block all BB < 5 bps assets
 4. po_asset_bias                      → check directional edge per asset
 5. po_replay_candles                  → full historical replay (60s + 120s)
-6. po_find_edge                       → analyse all 15 8GSR dimensions
-7. po_simulate [gate changes]         → A/B test before touching bot/indicators.js
-8. po_grid_search direction=put       → multivariate search for best combination
+6. po_find_edge                       → analyse all 17 8GSR dimensions
+7. po_loss_attribution                → identify the leaky gate on losses
+8. po_gate_interaction dim_a=X dim_b=Y → find the best 2D combination
+9. po_simulate [gate changes]         → A/B test before touching bot/indicators.js
+10. po_grid_search direction=put      → multivariate search for best combination
+10a. po_walk_forward                  → confirm edge is stable across time folds
+10b. po_score_calibration             → check if coincidence score predicts WR
 9. po_recommend                       → live trade suggestions
 10. po_risk_check asset direction     → confirm before placing
 11. po_trade asset direction amount   → place trade
@@ -392,6 +443,12 @@ Use these in Claude Code with `/skill-name`:
 - "How does win rate change based on how recently the BB was touched?"
 - "Run a grid search to find the best PUT gate combination"
 - "Is there a cross-validation gap between early and recent trades?"
+- "Is the edge consistent across time or concentrated in one period?"
+- "Which gate is letting the most losing trades through?"
+- "Does the coincidence score actually predict win rate?"
+- "Show me the WR heatmap for STC zone vs CCI depth"
+- "Which market regime does the strategy perform best in?"
+- "Do signals that follow quickly after another signal underperform?"
 
 ### Gate Testing
 

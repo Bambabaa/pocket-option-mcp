@@ -51,6 +51,20 @@ export function registerAnalysisTools(server) {
   );
 
   server.tool(
+    'po_gate_interaction',
+    'Two-dimensional WR heatmap: cross any two po_find_edge dimensions to find combinations that univariate analysis misses. Returns an N×M grid where each cell shows trades + WR at the intersection of bucket_a and bucket_b. Highlights best_combination (highest WR, n≥5) and worst_combination. Available dimensions: stc_prev, stc_delta, g1_bars_ago, g3_depth, g3_cross_bars_ago, bb_width, coincidence_score, regime, bars_since_last_signal.',
+    {
+      dim_a:     z.enum(['stc_prev','stc_delta','g1_bars_ago','g3_depth','g3_cross_bars_ago','bb_width','coincidence_score','regime','bars_since_last_signal']).describe('First dimension (rows)'),
+      dim_b:     z.enum(['stc_prev','stc_delta','g1_bars_ago','g3_depth','g3_cross_bars_ago','bb_width','coincidence_score','regime','bars_since_last_signal']).describe('Second dimension (columns)'),
+      direction: z.enum(['call','put','both']).optional().default('both').describe('Filter to one direction or both (default both)'),
+    },
+    async ({ dim_a, dim_b, direction }) => {
+      try { return jsonResult(core.gateInteraction(dim_a, dim_b, direction)); }
+      catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    }
+  );
+
+  server.tool(
     'po_grid_search',
     'Multivariate grid search over 8GSR gate thresholds. Captures a loose signal pool (STC ≤30/≥70, delta ±1.0, G3 depth ±100) then post-filters across all combinations of stc_prev × stc_delta × g3_depth × g1_bars_ago. Returns top 20 parameter sets per direction with n≥20 at 120s expiry, ranked by win rate. Each result includes: win rate, net PnL, profit factor, avg win, avg loss, avg W/L ratio, z-score, p-value (one-tailed vs 50%), and Wilson 95% confidence interval.',
     {
@@ -58,6 +72,39 @@ export function registerAnalysisTools(server) {
     },
     async ({ direction }) => {
       try { return jsonResult(core.gridSearch(direction)); }
+      catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    }
+  );
+
+  server.tool(
+    'po_walk_forward',
+    'Walk-forward validation of 8GSR strategy. Splits 120s validated signals into N equal time-ordered folds and computes win rate per fold. Returns per-fold WR, out-of-sample aggregate, and a stability verdict (STABLE/MODERATE/UNSTABLE). A stable edge shows consistent WR across all time windows, not just the overall average.',
+    {
+      direction: z.enum(['call', 'put', 'both']).optional().default('both').describe('Filter to one direction or both (default both)'),
+      folds:     z.coerce.number().int().min(3).max(10).optional().default(5).describe('Number of time folds to split into (default 5, min 3, max 10)'),
+    },
+    async ({ direction, folds }) => {
+      try { return jsonResult(core.walkForward(direction, folds)); }
+      catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    }
+  );
+
+  server.tool(
+    'po_score_calibration',
+    'Maps coincidence score (0-5) to actual 120s win rate and a Kelly-derived trade sizing multiplier. Shows whether high-score signals genuinely outperform low-score signals. If the score is predictive, use recommended_multiplier to scale trade amount per signal — e.g. score=5 gets 1.5× base amount, score=2 gets 0.75×. Returns calibration_verdict: SCORE IS PREDICTIVE or SCORE NOT YET DIFFERENTIATED.',
+    {},
+    async () => {
+      try { return jsonResult(core.scoreCalibration()); }
+      catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    }
+  );
+
+  server.tool(
+    'po_loss_attribution',
+    'For every 120s LOSS, compute each gate\'s margin-from-threshold at signal time. The gate with the smallest average margin is the leaky gate letting bad trades through. Returns attribution ranked by times_weakest (how often each gate was the closest to failing on a loss), avg margin on losses vs wins, and margin_gap (positive = tightening this gate would filter more losses than wins). Ends with a leakiest_gate recommendation and suggested po_simulate command.',
+    {},
+    async () => {
+      try { return jsonResult(core.lossAttribution()); }
       catch (err) { return jsonResult({ success: false, error: err.message }, true); }
     }
   );

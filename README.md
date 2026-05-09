@@ -92,7 +92,7 @@ po_trade asset=EURUSD_otc direction=PUT        # enqueue a manual trade
 po_mcp_orders                                  # check your manual order status
 ```
 
-## Tools (43)
+## Tools (47)
 
 ### Health & Market State
 
@@ -129,9 +129,13 @@ po_mcp_orders                                  # check your manual order status
 |---|---|
 | `po_replay_candles` | Full candle replay — fires 8GSR gates bar-by-bar, validates at 60s AND 120s |
 | `po_replay_signal` | Reconstruct all gate values for a specific historical signal |
-| `po_find_edge` | Win rate breakdown across 15 8GSR dimensions + z_score/p_value/wilson_95ci |
+| `po_find_edge` | Win rate breakdown across 17 dimensions + z_score/p_value/wilson_95ci + cross-validation |
 | `po_simulate` | A/B test: baseline vs modified thresholds side-by-side |
-| `po_grid_search` | Multivariate search: tests 600 CALL + 720 PUT parameter combinations, ranked by 120s WR |
+| `po_grid_search` | Multivariate search: tests all parameter combinations, ranked by 120s WR |
+| `po_walk_forward` | Rolling N-fold WR validation — STABLE/MODERATE/UNSTABLE verdict across time |
+| `po_score_calibration` | Maps coincidence score (0-5) → actual WR → Kelly sizing multiplier |
+| `po_loss_attribution` | Per-gate margin analysis on losses — identifies the leaky gate |
+| `po_gate_interaction` | 2D WR heatmap for any two dimensions — finds winning combinations |
 | `po_optimize_gates` | Legacy single-parameter grid search |
 | `po_significance` | Binomial test + Wilson CI + Kelly fraction per slice |
 
