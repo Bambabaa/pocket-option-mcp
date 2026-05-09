@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pocket Option Dashboard</title>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0e27; color: #e0e0e0; }
+    .controls { padding: 16px; background: #131722; display: flex; gap: 16px; align-items: center; border-bottom: 1px solid #2a2e39; }
+    select, button { padding: 8px 12px; background: #1e222d; color: #e0e0e0; border: 1px solid #2a2e39; border-radius: 4px; cursor: pointer; }
+    .gate-status { display: flex; gap: 8px; margin-left: auto; }
+    .gate { padding: 6px 10px; border-radius: 4px; font-weight: 600; font-size: 11px; }
+    .gate.pass { background: #26a69a; color: white; }
+    .gate.fail { background: #ef5350; color: white; }
+    #chartContainer { height: 50vh; background: #131722; }
+    .indicator-panel { height: 16vh; background: #131722; border-top: 1px solid #2a2e39; position: relative; }
+    .panel-label { position: absolute; top: 8px; left: 12px; font-size: 12px; font-weight: 600; color: #787b86; z-index: 10; }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <label>Asset: <select id="assetSelect"></select></label>
+    <label>Interval: <select id="intervalSelect">
+      <option value="5000">5s</option>
+      <option value="10000" selected>10s</option>
+      <option value="30000">30s</option>
+    </select></label>
+    <button onclick="loadData()">Refresh</button>
+    <div class="gate-status">
+      <div id="g1" class="gate">G1</div>
+      <div id="g2" class="gate">G2</div>
+      <div id="g3" class="gate">G3</div>
+      <div id="g4c" class="gate">G4C</div>
+      <div id="g4p" class="gate">G4P</div>
+    </div>
+  </div>
+
+  <div id="chartContainer"></div>
+  <div class="indicator-panel">
+    <div class="panel-label">STC (Schaff)</div>
+    <canvas id="stcCanvas"></canvas>
+  </div>
+  <div class="indicator-panel">
+    <div class="panel-label">Stochastic K/D</div>
+    <canvas id="stochCanvas"></canvas>
+  </div>
+  <div class="indicator-panel">
+    <div class="panel-label">CCI-8</div>
+    <canvas id="cciCanvas"></canvas>
+  </div>
+
+  <script>
+    let chart, candleSeries, bbUpperSeries, bbMiddleSeries, bbLowerSeries;
+    let intervalId;
+    let fullIndicators = []; // aligned 1:1 with candleSeries bars for scroll sync
+
+    const stcCanvas   = document.getElementById('stcCanvas');
+    const stochCanvas = document.getElementById('stochCanvas');
+    const cciCanvas   = document.getElementById('cciCanvas');
+
+    function resizeCanvas(canvas) {
+      canvas.width  = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+    }
+
+    function initChart() {
+      const container = document.getElementById('chartContainer');
+      chart = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: container.clientHeight,
+        layout: { background: { color: '#131722' }, textColor: '#d1d4dc' },
+        grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
+        timeScale: { timeVisible: true, secondsVisible: false }
+      });
+
+      candleSeries  = chart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
+      bbUpperSeries = chart.addLineSeries({ color: '#2962ff', lineWidth: 1, priceLineVisible: false });
+      bbMiddleSeries= chart.addLineSeries({ color: '#787b86', lineWidth: 1, priceLineVisible: false });
+      bbLowerSeries = chart.addLineSeries({ color: '#2962ff', lineWidth: 1, priceLineVisible: false });
+
+      // Sync canvas panels whenever the candlestick chart scrolls or zooms
+      chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        redrawPanels(range);
+      });
+
+      window.addEventListener('resize', () => {
+        chart.resize(container.clientWidth, container.clientHeight);
+        [stcCanvas, stochCanvas, cciCanvas].forEach(resizeCanvas);
+        redrawPanels(chart.timeScale().getVisibleLogicalRange());
+      });
+
+      [stcCanvas, stochCanvas, cciCanvas].forEach(resizeCanvas);
+    }
+
+    // Slice fullIndicators to only the bars currently visible in the candlestick chart
+    function sliceVisible(range) {
+      if (!range || !fullIndicators.length) return fullIndicators;
+      const from = Math.max(0, Math.floor(range.from));
+      const to   = Math.min(fullIndicators.length - 1, Math.ceil(range.to));
+      return fullIndicators.slice(from, to + 1);
+    }
+
+    function redrawPanels(range) {
+      const visible = sliceVisible(range);
+
+      drawIndicatorPanel(stcCanvas, visible, [{ key: 'schaff_value', color: '#42a5f5' }], [
+        { value: 25, color: '#26a69a', dash: [4, 4], label: '25' },
+        { value: 85, color: '#ef5350', dash: [4, 4], label: '85' }
+      ]);
+
+      drawIndicatorPanel(stochCanvas, visible, [
+        { key: 'stochastic_k_v2', color: '#2196f3' },
+        { key: 'stochastic_d_v2', color: '#ff9800' }
+      ], [
+        { value: 30, color: '#26a69a', dash: [4, 4], label: '30' },
+        { value: 80, color: '#ef5350', dash: [4, 4], label: '80' }
+      ]);
+
+      drawIndicatorPanel(cciCanvas, visible, [{ key: 'cci_8', color: '#ab47bc' }], [
+        { value:  100, color: '#ef5350', dash: [4, 4], label:  '100' },
+        { value: -100, color: '#26a69a', dash: [4, 4], label: '-100' },
+        { value:  175, color: '#ef5350', dash: [2, 2], label:  '175' },
+        { value: -150, color: '#26a69a', dash: [2, 2], label: '-150' }
+      ]);
+    }
+
+    function drawIndicatorPanel(canvas, data, lines, thresholds) {
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height;
+      const pad = { left: 50, right: 20, top: 30, bottom: 20 };
+      const cW = w - pad.left - pad.right;
+      const cH = h - pad.top  - pad.bottom;
+
+      ctx.clearRect(0, 0, w, h);
+      if (!data || data.length === 0) return;
+
+      const allValues = lines.flatMap(l => data.map(d => d[l.key]).filter(v => v != null));
+      const min   = Math.min(...allValues, ...thresholds.map(t => t.value));
+      const max   = Math.max(...allValues, ...thresholds.map(t => t.value));
+      const range = max - min || 1;
+      const xStep = cW / (data.length - 1 || 1);
+      const yScale = val => pad.top + cH - ((val - min) / range) * cH;
+
+      // Threshold lines
+      thresholds.forEach(t => {
+        const y = yScale(t.value);
+        ctx.strokeStyle = t.color;
+        ctx.lineWidth   = 1;
+        ctx.setLineDash(t.dash || []);
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(w - pad.right, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle   = t.color;
+        ctx.font        = '10px sans-serif';
+        ctx.textAlign   = 'right';
+        ctx.fillText(t.label ?? t.value, pad.left - 5, y + 3);
+      });
+
+      // Indicator lines — lift the pen on null gaps instead of bridging them
+      lines.forEach(line => {
+        ctx.strokeStyle = line.color;
+        ctx.lineWidth   = 2;
+        ctx.beginPath();
+        let penDown = false;
+        data.forEach((d, i) => {
+          const val = d[line.key];
+          if (val == null) { penDown = false; return; } // lift pen at gap
+          const x = pad.left + i * xStep;
+          const y = yScale(val);
+          if (!penDown) { ctx.moveTo(x, y); penDown = true; }
+          else          { ctx.lineTo(x, y); }
+        });
+        ctx.stroke();
+      });
+    }
+
+    async function loadAssets() {
+      const assets = await fetch('/api/assets').then(r => r.json());
+      const sel = document.getElementById('assetSelect');
+      sel.innerHTML = assets.map(a => `<option value="${a}">${a}</option>`).join('');
+      if (assets.length > 0) loadData();
+    }
+
+    async function loadData() {
+      const asset = document.getElementById('assetSelect').value;
+      if (!asset) return;
+
+      const [candles, indicators] = await Promise.all([
+        fetch(`/api/candles?asset=${asset}&limit=150`).then(r => r.json()),
+        fetch(`/api/indicators?asset=${asset}&limit=150`).then(r => r.json())
+      ]);
+
+      candleSeries.setData(candles.map(c => ({ time: c.timestamp, open: c.open, high: c.high, low: c.low, close: c.close })));
+
+      const toSeries = (arr, key) => arr.map(i => ({ time: i.timestamp, value: i[key] })).filter(d => d.value != null);
+      bbUpperSeries.setData(toSeries(indicators, 'bb_upper'));
+      bbMiddleSeries.setData(toSeries(indicators, 'bb_middle'));
+      bbLowerSeries.setData(toSeries(indicators, 'bb_lower'));
+
+      // Align indicators 1:1 with candle bars by timestamp so sliceVisible() works correctly
+      const indicatorMap = new Map(indicators.map(i => [i.timestamp, i]));
+      fullIndicators = candles.map(c => indicatorMap.get(c.timestamp) ?? { timestamp: c.timestamp });
+
+      redrawPanels(chart.timeScale().getVisibleLogicalRange());
+      updateGates(indicators);
+    }
+
+    function updateGates(indicators) {
+      if (!indicators.length) return;
+      const l = indicators[indicators.length - 1];
+      const { stochastic_k_v2: k, stochastic_d_v2: d, cci_8, schaff_value, prev_schaff_value, bb_width_bps } = l;
+
+      const set = (id, pass) => document.getElementById(id).className = 'gate ' + (pass ? 'pass' : 'fail');
+      set('g1',  bb_width_bps >= 10);
+      set('g2',  k != null && d != null && Math.abs(k - d) > 0.5);
+      set('g3',  cci_8 != null && Math.abs(cci_8) > 100);
+      set('g4c', prev_schaff_value != null && schaff_value != null && prev_schaff_value <= 25 && (schaff_value - prev_schaff_value) >= 0);
+      set('g4p', prev_schaff_value != null && schaff_value != null && prev_schaff_value >= 85 && (schaff_value - prev_schaff_value) <= 0);
+    }
+
+    document.getElementById('assetSelect').addEventListener('change', loadData);
+    document.getElementById('intervalSelect').addEventListener('change', () => {
+      clearInterval(intervalId);
+      intervalId = setInterval(loadData, parseInt(document.getElementById('intervalSelect').value));
+    });
+
+    initChart();
+    loadAssets();
+    intervalId = setInterval(loadData, 10000);
+  </script>
+</body>
+</html>
