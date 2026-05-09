@@ -17,6 +17,7 @@ class Indicators {
         this._lastSchaffValues = {};
         this._stochHistory = {};  // last 4 [k,d] pairs per asset (cross detection)
         this._cciHistory = {};    // last 25 CCI(8) values per asset (cross + depth detection)
+        this.macdHistory = {};
     }
 
     // ==================== BASIC INDICATORS ====================
@@ -52,48 +53,39 @@ class Indicators {
         return ema;
     }
 
-    // Relative Strength Index (RSI)
+    // Relative Strength Index (RSI) — Wilder's smoothing
     calculateRSI(candles, period = 14) {
         if (!candles || candles.length < period + 1) {
             return null;
         }
 
-        const closes = candles.map(c => c[2]); // Close prices
+        const closes = candles.map(c => c[2]);
         const changes = [];
-
-        // Calculate price changes
         for (let i = 1; i < closes.length; i++) {
             changes.push(closes[i] - closes[i - 1]);
         }
 
-        if (changes.length < period) {
-            return null;
+        if (changes.length < period) return null;
+
+        // Seed: SMA of first `period` gains/losses
+        let avgGain = 0, avgLoss = 0;
+        for (let i = 0; i < period; i++) {
+            if (changes[i] > 0) avgGain += changes[i];
+            else avgLoss += Math.abs(changes[i]);
+        }
+        avgGain /= period;
+        avgLoss /= period;
+
+        // Wilder's smoothing for all subsequent bars
+        for (let i = period; i < changes.length; i++) {
+            const gain = changes[i] > 0 ? changes[i] : 0;
+            const loss = changes[i] < 0 ? Math.abs(changes[i]) : 0;
+            avgGain = (avgGain * (period - 1) + gain) / period;
+            avgLoss = (avgLoss * (period - 1) + loss) / period;
         }
 
-        // Calculate average gain and loss
-        const recentChanges = changes.slice(-period);
-        let avgGain = 0;
-        let avgLoss = 0;
-
-        recentChanges.forEach(change => {
-            if (change > 0) {
-                avgGain += change;
-            } else {
-                avgLoss += Math.abs(change);
-            }
-        });
-
-        avgGain = avgGain / period;
-        avgLoss = avgLoss / period;
-
-        if (avgLoss === 0) {
-            return 100; // All gains, no losses
-        }
-
-        const rs = avgGain / avgLoss;
-        const rsi = 100 - (100 / (1 + rs));
-
-        return rsi;
+        if (avgLoss === 0) return 100;
+        return 100 - (100 / (1 + avgGain / avgLoss));
     }
 
     // ==================== MACD (COMPLETE IMPLEMENTATION) ====================
@@ -304,14 +296,14 @@ class Indicators {
      * Schaff Trend Cycle: cycle = EMA(fast) - EMA(slow), then double-smoothed stochastic of cycle.
      *  (30, 55, 8, 4, 3). Returns { value, signal } (main line = "pink", signal = "blue").
      */
-    calculateSchaffTrendCycle(candles, emaFast = 30, emaSlow = 55, cyclePeriod = 8, smooth1 = 4, smooth2 = 3) {
+    calculateSchaffTrendCycle(candles, emaFast = 10, emaSlow = 20, cyclePeriod = 5, smooth1 = 3, smooth2 = 3) {
         if (!candles || candles.length < emaSlow + cyclePeriod + Math.max(smooth1, smooth2)) {
             return null;
         }
         const closes = candles.map(c => c[2]);
         const n = closes.length;
         const cycleRaw = [];
-        for (let i = emaSlow; i <= n; i++) {
+        for (let i = emaSlow; i < n; i++) {
             const slice = candles.slice(0, i);
             const fast = this.calculateEMA(slice, emaFast);
             const slow = this.calculateEMA(slice, emaSlow);
@@ -593,8 +585,6 @@ class Indicators {
 
     calculateAll(asset, candles, settings = {}) {
         if (!candles || candles.length === 0) return null;
-
-        candles.asset = asset;
 
         const indicators = {
             asset,

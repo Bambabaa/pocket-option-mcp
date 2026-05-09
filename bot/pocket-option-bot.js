@@ -358,6 +358,7 @@ const STATE = {
     PRICES: {},
     AUTHENTICATED: false,
     INDICATORS: {},
+    lastIndicatorUpdate: {},        // per-asset intra-bar refresh timestamps
     // ============================================================================
     // BOT SETTINGS —  STRATEGY ONLY (Katie Tutorials / YouTube videos)
     // ============================================================================
@@ -640,6 +641,10 @@ async function processWebSocketMessage(payload, page) {
 
                     // Backfill indicator rows for every prior candle that has enough lookback.
                     // Keeps the candles ↔ indicators table 1:1 across restarts (warmup floor unavoidable).
+                    // Clear stale cross history before backfill so pre-reconnect entries don't leak into
+                    // cross detection on the first post-reconnect tick.
+                    indicators._stochHistory[data.asset] = [];
+                    indicators._cciHistory[data.asset]   = [];
                     let backfilled = 0;
                     for (let i = minCandles - 1; i < candles.length - 1; i++) {
                         const window = candles.slice(0, i + 1);
@@ -654,6 +659,8 @@ async function processWebSocketMessage(payload, page) {
                             }
                         }
                     }
+                    // Restore _lastSchaffValues to current bar's STC after backfill loop overwrites it
+                    indicators._lastSchaffValues[data.asset] = indicatorData.schaffTrendCycle?.value ?? null;
                     if (backfilled > 0) log(`   ↩️  Backfilled ${backfilled} historical indicator rows for ${data.asset}`, 'cyan');
 
                     // Store signal in database if not NEUTRAL and direction is valid
@@ -954,13 +961,13 @@ async function processWebSocketMessage(payload, page) {
                 }
             }
 
-            // Update indicators periodically (every 30 seconds)
+            // Update indicators periodically (every 30 seconds, tracked per asset)
             if (STATE.CANDLES[asset] && STATE.CANDLES[asset].length >= Indicators.getMinCandlesForKT(STATE.SETTINGS)) {
-                if (!STATE.lastIndicatorUpdate || Date.now() - STATE.lastIndicatorUpdate > 30000) {
+                if (!STATE.lastIndicatorUpdate[asset] || Date.now() - STATE.lastIndicatorUpdate[asset] > 30000) {
                     const indicatorData = indicators.calculateAll(asset, STATE.CANDLES[asset], STATE.SETTINGS);
                     if (indicatorData) {
                         STATE.INDICATORS[asset] = indicatorData;
-                        STATE.lastIndicatorUpdate = Date.now();
+                        STATE.lastIndicatorUpdate[asset] = Date.now();
                     }
                 }
             }
@@ -1117,6 +1124,13 @@ async function main() {
 
         // Ensure mcp.db schema exists (safe no-op if tables already present)
         await initMcpSchema(MCP_DB_PATH).catch(e => console.warn(`[MCP-SCHEMA] ${e.message}`));
+
+        // Recover any orders that were claimed (status='SKIPPED', reason='claimed-for-execution')
+        // but never completed due to a prior crash. Reset them back to PENDING so they can retry.
+        await mcpDbRun(
+            `UPDATE mcp_orders SET status = 'PENDING', status_reason = 'recovered-after-crash', updated_at = strftime('%s','now')
+             WHERE status = 'SKIPPED' AND status_reason = 'claimed-for-execution'`
+        ).catch(e => console.warn(`[MCP-WORKER] Crash recovery sweep failed: ${e.message}`));
 
         let _resultSyncFailureCount = 0;
         // Result sync: poll PO DOM for WIN/LOSS on pending live trades (only when LIVE execution)

@@ -47,7 +47,7 @@ export async function scanAllAssets() {
     const signalCutoff = nowSec - 300; // 5 min
 
     // Parallel fetch: prices, signals, indicators, recent trades
-    const [prices, signals, indicators, recentTrades, streaks, qualified] = await Promise.all([
+    const [prices, signals, indicators, recentTrades] = await Promise.all([
         all(
             `SELECT p.asset, p.price, p.timestamp
              FROM prices p
@@ -424,10 +424,10 @@ export function evaluateModeD(bars) {
     const maTrendBps = ma6 != null && ma14 != null && ma14 > 0
         ? ((ma6 - ma14) / ma14) * 10000 : null;
 
-    // MA gap trend: compare current gap to bar 3 bars ago
-    const barOld = bars[3] || bars[bars.length - 1];
+    // MA gap trend: compare current gap to bar 3 bars ago (requires 4 bars minimum)
+    const barOld = bars.length >= 4 ? bars[3] : null;
     let ma_gap_trend = 'unknown';
-    if (ma6 != null && ma14 != null && barOld?.ma1 != null && barOld?.ma3 != null) {
+    if (barOld && ma6 != null && ma14 != null && barOld?.ma1 != null && barOld?.ma3 != null) {
         const gapNow  = ma6 - ma14;
         const gapPrev = barOld.ma1 - barOld.ma3;
         const deltaBps = ((gapNow - gapPrev) / ma14) * 10000;
@@ -437,10 +437,10 @@ export function evaluateModeD(bars) {
         else ma_gap_trend = 'widening_down';
     }
 
-    // BB expanding: compare current width to bar 5 bars ago
-    const barBbOld = bars[5] || bars[bars.length - 1];
+    // BB expanding: compare current width to bar 5 bars ago (requires 6 bars minimum)
+    const barBbOld = bars.length >= 6 ? bars[5] : null;
     let bb_expanding = null;
-    if (bar0.bb_upper != null && bar0.bb_lower != null && bar0.bb_middle != null &&
+    if (barBbOld && bar0.bb_upper != null && bar0.bb_lower != null && bar0.bb_middle != null &&
         barBbOld?.bb_upper != null && barBbOld?.bb_lower != null && barBbOld?.bb_middle != null) {
         const widthNow  = (bar0.bb_upper  - bar0.bb_lower)  / bar0.bb_middle;
         const widthPrev = (barBbOld.bb_upper - barBbOld.bb_lower) / barBbOld.bb_middle;
@@ -485,7 +485,7 @@ export function evaluateModeD(bars) {
             g3_rsiOversold: rsi != null && rsi < 30,
             g4_stochBull:   k0 != null && d0 != null && k0 > d0 && k0 < 50,
             g5_bbWide:      bbBps != null && bbBps >= 10,
-            g6_bbExpanding: bb_expanding !== false,   // volatility releasing into reversal (p=0.019)
+            g6_bbExpanding: bb_expanding === true,    // volatility releasing into reversal (p=0.019)
             g7_noNarrowGap: ma_gap_trend !== 'narrowing', // trend momentum intact (p=0.007)
         };
         const passed = Object.values(g).filter(Boolean).length;
@@ -649,42 +649,30 @@ export function evaluateModeD(bars) {
         }
     }
 
-    // ── PUT_TREND — DOWN TREND continuation (6 gates) ────────────────────────
+    // ── PUT_TREND — updated to 8GSR STC ceiling rollover gates (mirrors STC_PUT_REVERSAL)
     {
-        const ma6Falling = barM1?.ma1 != null && ma6 != null && ma6 < barM1.ma1;
-        const kFalling2 = kM1 != null && k0 != null && k0 < kM1;
-        const gapNow = ma6 != null && ma14 != null ? Math.abs(ma6 - ma14) : null;
-        const gapOld = bars[3]?.ma1 != null && bars[3]?.ma3 != null
-            ? Math.abs(bars[3].ma1 - bars[3].ma3) : null;
         const g = {
-            g1_ma6AboveMa14: ma6 != null && ma14 != null && ma6 > ma14,
-            g2_ma6Converging: ma6Falling && ma6 != null && ma14 != null && ma6 > ma14,
-            g3_priceBelowMa14: bar0.close != null && ma14 != null && bar0.close < ma14,
-            g4_rsiFallingFrom50: rsiM1 != null && rsiM1 > 50 && rsi != null && rsi < rsiM1 && rsi < 55,
-            g5_kFallingBelow70: k0 != null && k0 < 70 && kFalling2,
-            g6_gapShrinking: gapNow != null && gapOld != null && gapNow < gapOld,
+            g1_stcCeiling:  stcValue != null && stcValue >= 90,
+            g2_stcFalling:  stcValue != null && stcPrev != null && stcValue < stcPrev,
+            g3_rsiOB:       rsi != null && rsi > 70,
+            g4_stochBear:   k0 != null && d0 != null && k0 < d0 && k0 > 50,
+            g5_bbWide:      bbBps != null && bbBps >= 10,
+            g6_noNarrowGap: ma_gap_trend !== 'narrowing',
         };
         const passed = Object.values(g).filter(Boolean).length;
-        const total = Object.keys(g).length;
-        patterns.push({
-            pattern: 'PUT_TREND',
-            direction: 'PUT',
-            type: 'trend',
-            label: 'DOWN TREND Continuation',
-            gates_passed: passed,
-            gates_total: total,
-            gates: g,
-            values: {
-                ma6, ma14, maTrendBps,
-                rsi_0: rsi, rsi_m1: rsiM1,
-                k_0: k0, k_m1: kM1,
-                close: bar0.close, bbBps,
-                gapNow, gapOld,
-            },
-            lookback,
-            strength: strength(passed, total),
-            fires: passed === total,
-        });
+        const total  = Object.keys(g).length;
+        const idx = patterns.findIndex(p => p.pattern === 'PUT_TREND');
+        if (idx !== -1) {
+            patterns[idx] = {
+                ...patterns[idx],
+                gates_passed: passed, gates_total: total, gates: g,
+                values: { stcValue, stcPrev, rsi, k0, d0, bbBps, maTrendBps, ma6, ma14 },
+                strength: strength(passed, total),
+                fires: passed === total,
+            };
+            patterns[idx].verdict_summary    = patternVerdict(patterns[idx]);
+            patterns[idx].lookback_narrative = buildLookbackNarrative(lookback);
+        }
     }
 
     // ── Verdict summaries — one readable sentence per pattern ────────────────
@@ -945,7 +933,7 @@ export async function riskCheck(asset, direction = null) {
                 score -= 20;
             }
             // Gate-specific warnings
-            if (best.gates.g7_bbWide === false || best.gates.g8_bbWide === false) {
+            if (best.gates.g5_bbWide === false) {
                 warnings.push(`BB width ${modeD.bb_bps?.toFixed(1)} bps — below 10 bps gate (flat market)`);
                 score -= 20;
             }

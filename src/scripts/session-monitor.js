@@ -168,7 +168,8 @@ async function runUnblockSweep() {
         reasons.push(`indicator stale (${Math.round((nowSec - ind.timestamp) / 60)}min old)`);
       } else {
         const bbBps = (ind.bb_upper - ind.bb_lower) / ind.bb_middle * 10000;
-        if (bbBps < 10) reasons.push(`BB ${bbBps.toFixed(1)} bps < 10 threshold`);
+        if (!isFinite(bbBps)) reasons.push('BB width calculation invalid (zero/near-zero bb_middle)');
+        else if (bbBps < 10) reasons.push(`BB ${bbBps.toFixed(1)} bps < 10 threshold`);
       }
 
       // Condition 2: < 3 consecutive losses today

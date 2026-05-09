@@ -357,6 +357,9 @@ class TradingDatabase {
     /**
      * Get latest N candles for an asset
      */
+    // NOTE: returns rows newest-first (DESC). Do NOT pipe directly into indicator
+    // calculations — those require chronological (ASC) order. The live bot uses
+    // STATE.CANDLES which is built chronologically via push.
     async getCandles(asset, limit = 100) {
         const sql = `SELECT * FROM candles
                      WHERE asset = ?
@@ -519,9 +522,7 @@ class TradingDatabase {
      */
     async insertIndicators(asset, timestamp, indicators) {
         const keltner = indicators.keltner;
-        const stoch = indicators.stochasticKT;
-        const bb = indicators.bollinger || indicators.bollinger;
-        const rsiKT = indicators.rsiKT_v2 != null ? indicators.rsiKT_v2 : (indicators.rsiKT_v3 != null ? indicators.rsiKT_v3 : indicators.rsiKT);
+        const bb = indicators.bollinger;
         const schaff = indicators.schaffTrendCycle;
 
         const sql = `INSERT OR REPLACE INTO indicators
@@ -545,17 +546,17 @@ class TradingDatabase {
             indicators.ma1 ?? indicators.ma6,   // ma1 // ?? null
             indicators.ma2 ?? indicators.ma50,  // ma2 // ?? null
             indicators.ma3 ?? indicators.ma14,  // ma3 // ?? null
-            rsiKT ?? indicators.rsi,            // rsi (legacy/fallback)
+            indicators.rsi,                     // rsi
             indicators.rsi_5,                   // rsi_5
             indicators.rsi_8,                   // rsi_8
             //   & 3 bands — null when not available
             bb?.upper ?? keltner?.upper,        // bb_upper // ?? null
             bb?.middle ?? keltner?.middle,      // bb_middle // ?? null
             bb?.lower ?? keltner?.lower,        // bb_lower // ?? null
-            //   stochastic (13,3,3) — null when not available
-            stoch?.k ?? null,                      // stochastic_k
-            stoch?.d ?? null,                      // stochastic_d
-            //   stochastic (5,3,3) — flat properties set in indicators.js
+            //   stochastic v1 (13,3,3) — not computed; alias to v2 values so column is never null
+            indicators.stochastic_k ?? null,       // stochastic_k
+            indicators.stochastic_d ?? null,       // stochastic_d
+            //   stochastic v2 (5,3,3) — canonical values used by all live gates
             indicators.stochastic_k ?? null,       // stochastic_k_v2
             indicators.stochastic_d ?? null,       // stochastic_d_v2
             // keltner/schaff — null when not available
@@ -677,15 +678,16 @@ class TradingDatabase {
     }
 
     /**
-     * Get signals with minimum strength
+     * Get signals with minimum number of gate reasons (proxy for strength)
      */
     async getSignalsByStrength(minStrength, limit = 100) {
         const sql = `SELECT * FROM signals
                      WHERE direction != 'NEUTRAL'
+                       AND json_array_length(reasons) >= ?
                      ORDER BY timestamp DESC
                      LIMIT ?`;
 
-        const rows = await this.all(sql, [limit]);
+        const rows = await this.all(sql, [minStrength ?? 0, limit]);
 
         return rows.map(row => ({
             ...row,
@@ -694,7 +696,7 @@ class TradingDatabase {
     }
 
     /**
-     * Get signals generated during strong trends (ADX >= 25)
+     * Get recent non-neutral signals, optionally filtered by asset
      */
     async getStrongTrendSignals(asset = null, limit = 100) {
         let sql;
@@ -770,19 +772,21 @@ class TradingDatabase {
 
             await this.run('BEGIN TRANSACTION');
 
-            // New -only schema: asset, timestamp, direction, reasons, created_at
+            // Preserve all current live columns; drop only deprecated strength/ADX columns
             await this.run(`CREATE TABLE IF NOT EXISTS signals_tmp (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset TEXT NOT NULL,
                 timestamp INTEGER NOT NULL,
                 direction TEXT NOT NULL,
+                strategy_used TEXT,
                 reasons TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                candle_id INTEGER,
                 UNIQUE(asset, timestamp)
             )`);
 
-            await this.run(`INSERT INTO signals_tmp (id, asset, timestamp, direction, reasons, created_at)
-                            SELECT id, asset, timestamp, direction, reasons, created_at FROM signals`);
+            await this.run(`INSERT INTO signals_tmp (id, asset, timestamp, direction, strategy_used, reasons, created_at, candle_id)
+                            SELECT id, asset, timestamp, direction, strategy_used, reasons, created_at, candle_id FROM signals`);
 
             await this.run('DROP TABLE signals');
             await this.run('ALTER TABLE signals_tmp RENAME TO signals');
@@ -998,13 +1002,11 @@ class TradingDatabase {
                 asset: signal.asset,
                 timestamp: signal.timestamp,
                 direction: signal.direction,
-                strength: signal.strength,
+                strategyUsed: signal.strategy_used,
                 entryPrice,
                 exitPrice,
                 priceChange,
-                result,
-                adx: signal.adx_value,
-                inStrongTrend: signal.in_strong_trend
+                result
             });
         }
 

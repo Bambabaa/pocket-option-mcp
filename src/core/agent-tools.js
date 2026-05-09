@@ -201,7 +201,7 @@ export async function drawdownCheck(opts = {}) {
   const botLive = priceAge !== null && priceAge < 30;
 
   // Pending MCP orders (already queued, not yet executed)
-  const pendingOrders = await all(
+  const pendingOrders = await mcpAll(
     "SELECT id, asset, direction FROM mcp_orders WHERE status = 'PENDING'"
   ).catch(() => []);
 
