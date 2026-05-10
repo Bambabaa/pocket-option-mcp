@@ -95,6 +95,46 @@
       min-height: 0;
     }
 
+    .replay-controls {
+      padding: 10px 16px;
+      background: #1a1e29;
+      display: none;
+      gap: 12px;
+      align-items: center;
+      border-bottom: 1px solid #2a2e39;
+      flex-shrink: 0;
+    }
+    .replay-controls.active {
+      display: flex;
+    }
+    .replay-btn {
+      padding: 6px 12px;
+      background: #2a2e39;
+      color: #e0e0e0;
+      border: 1px solid #3c4252;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: bold;
+    }
+    .replay-btn:hover {
+      background: #3c4252;
+    }
+    .replay-btn.play {
+      background: #26a69a;
+      border-color: #26a69a;
+    }
+    .replay-slider-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    input[type=range] {
+      flex: 1;
+      cursor: pointer;
+    }
+
     .panel {
       position: relative;
       display: flex;
@@ -163,6 +203,7 @@
     </label>
     <button onclick="loadData()">Refresh</button>
     <button id="signalToggle" class="toggle on" onclick="toggleSignals()">Signals: ON</button>
+    <button id="replayToggle" class="toggle off" onclick="toggleReplay()">Replay: OFF</button>
     <span id="sigCount" style="font-size:11px;color:#787b86;">0 signals</span>
     <span id="historyWarning" style="color:#ef5350; font-size:11px; display:none;" title="Some older signals are hidden because the candle window is too small">⚠️ Older signals hidden</span>
     <div class="gate-status">
@@ -171,6 +212,27 @@
       <div id="g3" class="gate">G3</div>
       <div id="g4c" class="gate">G4C</div>
       <div id="g4p" class="gate">G4P</div>
+    </div>
+  </div>
+
+  <div class="replay-controls" id="replayBar">
+    <button class="replay-btn" onclick="stepBackward()">⏮ Step Back</button>
+    <button class="replay-btn play" id="playBtn" onclick="togglePlay()">▶ Play</button>
+    <button class="replay-btn" onclick="stepForward()">⏭ Step Fwd</button>
+    
+    <label style="font-size: 13px; color: #787b86; margin-left: 10px;">Speed:
+      <select id="replaySpeed" style="padding: 4px;">
+        <option value="2000">0.5x (2s)</option>
+        <option value="1000" selected>1x (1s)</option>
+        <option value="500">2x (0.5s)</option>
+        <option value="250">4x (0.25s)</option>
+        <option value="100">MAX (0.1s)</option>
+      </select>
+    </label>
+
+    <div class="replay-slider-container">
+      <span style="font-size: 12px; color: #787b86;">Timeline:</span>
+      <input type="range" id="replaySlider" min="1" max="100" value="100" oninput="onSliderScrub()">
     </div>
   </div>
 
@@ -205,6 +267,13 @@
     let isSyncing = false;  // prevents circular sync callbacks
     let signalsVisible = true;
     let cachedMarkers = [];  // stored so toggle doesn't need a re-fetch
+
+    // ── replay mode state ─────────────────────────────────────────────
+    let fullCandles = [], fullIndicators = [], fullSignals = [];
+    let isReplayMode = false;
+    let replayIndex = 0;
+    let isPlaying = false;
+    let replayTimer = null;
 
     // ── shared chart options ──────────────────────────────────────────
     const BASE = {
@@ -372,26 +441,46 @@
 
       const limit = document.getElementById('limitSelect').value;
 
-      const [candles, indicators, signals] = await Promise.all([
+      [fullCandles, fullIndicators, fullSignals] = await Promise.all([
         fetch(`/api/candles?asset=${asset}&limit=${limit}`).then(r => r.json()),
         fetch(`/api/indicators?asset=${asset}&limit=${limit}`).then(r => r.json()),
         fetch(`/api/signals?asset=${asset}`).then(r => r.json())
       ]);
 
-      // Block sync during bulk setData — each setData fires a range-change
-      // event that would shift the other charts' views mid-update
-      isSyncing = true;
+      if (!isReplayMode) {
+        replayIndex = fullCandles.length;
+      }
+      
+      const slider = document.getElementById('replaySlider');
+      slider.max = fullCandles.length;
+      if (!isReplayMode) slider.value = fullCandles.length;
 
-      candleSeries.setData(candles.map(c => ({ time: c.timestamp, open: c.open, high: c.high, low: c.low, close: c.close })));
+      renderFrame(replayIndex);
+      
+      if (!isReplayMode) mainChart.timeScale().fitContent();
+    }
 
-      // Align indicators perfectly with candles by injecting whitespace for missing data
+    function renderFrame(index) {
+      if (!fullCandles || fullCandles.length === 0) return;
+      
+      if (index < 1) index = 1;
+      if (index > fullCandles.length) index = fullCandles.length;
+
+      isSyncing = true; // Block sync during bulk setData
+
+      const currentCandles = fullCandles.slice(0, index);
+      const currentLastTimestamp = currentCandles[currentCandles.length - 1].timestamp;
+      const currentSignals = fullSignals.filter(s => s.timestamp <= currentLastTimestamp);
+
+      candleSeries.setData(currentCandles.map(c => ({ time: c.timestamp, open: c.open, high: c.high, low: c.low, close: c.close })));
+
       const indMap = new Map();
-      indicators.forEach(i => indMap.set(i.timestamp, i));
+      fullIndicators.forEach(i => indMap.set(i.timestamp, i));
 
-      const getAlignedSeries = (key) => candles.map(c => {
+      const getAlignedSeries = (key) => currentCandles.map(c => {
         const ind = indMap.get(c.timestamp);
         if (ind && ind[key] != null) return { time: c.timestamp, value: ind[key] };
-        return { time: c.timestamp }; // Whitespace gaps ensure perfect index alignment
+        return { time: c.timestamp };
       });
 
       bbUpper.setData(getAlignedSeries('bb_upper'));
@@ -403,26 +492,25 @@
       stochDLine.setData(getAlignedSeries('stochastic_d_v2'));
       cciLine.setData(getAlignedSeries('cci_8'));
 
-      cachedMarkers = buildMarkers(signals, candles);
+      cachedMarkers = buildMarkers(currentSignals, currentCandles);
       if (signalsVisible) applyMarkers(cachedMarkers);
       document.getElementById('sigCount').textContent = cachedMarkers.length + ' signal' + (cachedMarkers.length !== 1 ? 's' : '');
 
-      if (candles.length > 0 && signals.length > 0) {
-        const oldestCandle = candles[0].timestamp;
-        const oldestSignal = signals[0].timestamp;
+      if (currentCandles.length > 0 && currentSignals.length > 0) {
+        const oldestCandle = currentCandles[0].timestamp;
+        const oldestSignal = currentSignals[0].timestamp;
         document.getElementById('historyWarning').style.display = (oldestSignal < oldestCandle) ? 'inline' : 'none';
       }
 
-      updateGates(indicators);
+      const latestIndicator = fullIndicators.find(i => i.timestamp === currentLastTimestamp);
+      updateGates(latestIndicator ? [latestIndicator] : []);
 
-      // Re-enable sync then fit all candles into view — the range change
-      // propagates via syncAll to the indicator charts
       isSyncing = false;
-      mainChart.timeScale().fitContent();
+      document.getElementById('replaySlider').value = index;
     }
 
     function updateGates(indicators) {
-      if (!indicators.length) return;
+      if (!indicators || !indicators.length) return;
       const l = indicators[indicators.length - 1];
       const { stochastic_k_v2: k, stochastic_d_v2: d, cci_8, schaff_value, prev_schaff_value, bb_width_bps } = l;
       const set = (id, pass) => document.getElementById(id).className = 'gate ' + (pass ? 'pass' : 'fail');
@@ -431,6 +519,88 @@
       set('g3', cci_8 != null && Math.abs(cci_8) > 100);
       set('g4c', prev_schaff_value != null && schaff_value != null && prev_schaff_value <= 25 && (schaff_value - prev_schaff_value) >= 0);
       set('g4p', prev_schaff_value != null && schaff_value != null && prev_schaff_value >= 85 && (schaff_value - prev_schaff_value) <= 0);
+    }
+
+    // ── replay mode functions ─────────────────────────────────────────
+    function toggleReplay() {
+      isReplayMode = !isReplayMode;
+      const btn = document.getElementById('replayToggle');
+      const bar = document.getElementById('replayBar');
+      
+      if (isReplayMode) {
+        btn.textContent = 'Replay: ON';
+        btn.className = 'toggle on';
+        bar.classList.add('active');
+        
+        clearInterval(intervalId); // Pause live refresh
+        
+        // Jump back 100 candles to give room to play
+        replayIndex = Math.max(1, fullCandles.length - 100);
+        renderFrame(replayIndex);
+        
+        // Force the chart to not auto-scale time axis to fit content, so it looks like it's growing
+        mainChart.timeScale().scrollToPosition(10, true);
+      } else {
+        btn.textContent = 'Replay: OFF';
+        btn.className = 'toggle off';
+        bar.classList.remove('active');
+        
+        if (isPlaying) togglePlay();
+        
+        intervalId = setInterval(loadData, parseInt(document.getElementById('intervalSelect').value));
+        
+        replayIndex = fullCandles.length;
+        renderFrame(replayIndex);
+        mainChart.timeScale().fitContent();
+      }
+    }
+
+    function stepForward() {
+      if (!isReplayMode) return;
+      if (replayIndex < fullCandles.length) {
+        replayIndex++;
+        renderFrame(replayIndex);
+      } else if (isPlaying) {
+        togglePlay(); // Pause at end
+      }
+    }
+
+    function stepBackward() {
+      if (!isReplayMode) return;
+      if (replayIndex > 1) {
+        replayIndex--;
+        renderFrame(replayIndex);
+      }
+    }
+
+    function togglePlay() {
+      isPlaying = !isPlaying;
+      const btn = document.getElementById('playBtn');
+      if (isPlaying) {
+        btn.textContent = '⏸ Pause';
+        btn.classList.remove('play');
+        const speed = parseInt(document.getElementById('replaySpeed').value);
+        replayTimer = setInterval(stepForward, speed);
+      } else {
+        btn.textContent = '▶ Play';
+        btn.classList.add('play');
+        clearInterval(replayTimer);
+      }
+    }
+
+    document.getElementById('replaySpeed').addEventListener('change', () => {
+      if (isPlaying) {
+        clearInterval(replayTimer);
+        const speed = parseInt(document.getElementById('replaySpeed').value);
+        replayTimer = setInterval(stepForward, speed);
+      }
+    });
+
+    function onSliderScrub() {
+      if (!isReplayMode) return;
+      if (isPlaying) togglePlay();
+      replayIndex = parseInt(document.getElementById('replaySlider').value);
+      renderFrame(replayIndex);
     }
 
     // ── controls ──────────────────────────────────────────────────────
