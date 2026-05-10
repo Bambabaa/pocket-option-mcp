@@ -43,7 +43,8 @@
       "mcp__pocket-option__po_bot_orders",
       "mcp__pocket-option__po_pending_signals",
       "mcp__pocket-option__po_trade",
-      "mcp__pocket-option__po_cancel_order"
+      "mcp__pocket-option__po_cancel_order",
+      "Bash(curl *)"
     ]
   }
 }

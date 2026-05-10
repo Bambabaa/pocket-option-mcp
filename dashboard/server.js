@@ -19,7 +19,10 @@ app.use(express.static(__dirname));
 
 app.get('/api/assets', (req, res) => {
   try {
-    const assets = db.prepare('SELECT DISTINCT asset FROM candles ORDER BY asset').all();
+    // Sort by most recent candle so active assets appear first
+    const assets = db.prepare(
+      'SELECT asset, MAX(timestamp) as latest FROM candles GROUP BY asset ORDER BY latest DESC'
+    ).all();
     res.json(assets.map(a => a.asset));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -70,6 +73,30 @@ app.get('/api/indicators', (req, res) => {
       LIMIT ?
     `).all(asset, parseInt(limit));
     res.json(indicators.reverse());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/signals', (req, res) => {
+  const { asset, limit = 150 } = req.query;
+  if (!asset) return res.status(400).json({ error: 'asset required' });
+  try {
+    // Only return signals whose candle falls within the same window as the
+    // last N candles — prevents out-of-range markers snapping to bar 0
+    const rows = db.prepare(`
+      WITH recent AS (
+        SELECT id FROM candles WHERE asset = ?
+        ORDER BY timestamp DESC LIMIT ?
+      )
+      SELECT s.timestamp, s.direction, s.strategy_used,
+             t.result, t.profit_loss
+      FROM signals s
+      JOIN recent ON recent.id = s.candle_id
+      LEFT JOIN trades_ordered t ON t.signal_id = s.id
+      ORDER BY s.timestamp ASC
+    `).all(asset, parseInt(limit));
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

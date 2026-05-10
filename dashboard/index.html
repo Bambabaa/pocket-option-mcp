@@ -25,6 +25,9 @@
     .gate { padding: 4px 10px; border-radius: 4px; font-weight: 600; font-size: 11px; background: #2a2e39; }
     .gate.pass { background: #26a69a; color: white; }
     .gate.fail { background: #ef5350; color: white; }
+    .toggle { padding: 4px 10px; border-radius: 4px; font-weight: 600; font-size: 11px; cursor: pointer; border: 1px solid #2a2e39; }
+    .toggle.on  { background: #1565c0; color: white; border-color: #1565c0; }
+    .toggle.off { background: #2a2e39; color: #787b86; }
 
     .charts-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
@@ -41,7 +44,7 @@
     #cciPanel   { flex: 1; }
 
     /* chart containers fill their panel */
-    .chart-host { width: 100%; height: 100%; }
+    .chart-host { width: 100%; flex: 1; min-height: 0; }
   </style>
 </head>
 <body>
@@ -56,6 +59,8 @@
     </select>
   </label>
   <button onclick="loadData()">Refresh</button>
+  <button id="signalToggle" class="toggle on" onclick="toggleSignals()">Signals: ON</button>
+  <span id="sigCount" style="font-size:11px;color:#787b86;">0 signals</span>
   <div class="gate-status">
     <div id="g1"  class="gate">G1</div>
     <div id="g2"  class="gate">G2</div>
@@ -93,11 +98,12 @@
   let stcLine, stochKLine, stochDLine, cciLine;
 
   let intervalId;
-  let isSyncing = false; // prevents circular sync callbacks
+  let isSyncing = false;  // prevents circular sync callbacks
+  let signalsVisible = true;
+  let cachedMarkers = [];  // stored so toggle doesn't need a re-fetch
 
   // ── shared chart options ──────────────────────────────────────────
   const BASE = {
-    autoSize: true,
     layout: { background: { color: '#131722' }, textColor: '#d1d4dc' },
     grid:   { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
     crosshair: { mode: 1 },
@@ -106,10 +112,21 @@
   };
 
   function newChart(id, showTimeAxis) {
-    return createChart(document.getElementById(id), {
+    const el = document.getElementById(id);
+    return createChart(el, {
       ...BASE,
+      width:  el.clientWidth,
+      height: el.clientHeight,
       timeScale: { ...BASE.timeScale, visible: showTimeAxis }
     });
+  }
+
+  function resizeAll() {
+    [[mainChart, 'mainChart'], [stcChart, 'stcChart'], [stochChart, 'stochChart'], [cciChart, 'cciChart']]
+      .forEach(([chart, id]) => {
+        const el = document.getElementById(id);
+        chart.resize(el.clientWidth, el.clientHeight);
+      });
   }
 
   // Add dashed/dotted threshold price lines to a series
@@ -172,9 +189,45 @@
 
     // Link all time scales — scroll/zoom one, all follow
     syncAll([mainChart, stcChart, stochChart, cciChart]);
+
+    window.addEventListener('resize', resizeAll);
   }
 
   // ── data loading ──────────────────────────────────────────────────
+  // ── signal markers ────────────────────────────────────────────────
+  function buildMarkers(signals) {
+    return signals.map(s => {
+      const isCall = s.direction === 'CALL';
+      let color;
+      if      (s.result === 'WIN')  color = '#26a69a'; // green
+      else if (s.result === 'LOSS') color = '#ef5350'; // red
+      else                          color = '#787b86'; // grey — pending/unresolved
+
+      return {
+        time:     s.timestamp,
+        position: isCall ? 'belowBar' : 'aboveBar',
+        shape:    isCall ? 'arrowUp'  : 'arrowDown',
+        color,
+        size: 1,
+        text: s.result ?? ''
+      };
+    });
+  }
+
+  function applyMarkers(markers) {
+    // lightweight-charts requires markers sorted by time
+    const sorted = [...markers].sort((a, b) => a.time - b.time);
+    candleSeries.setMarkers(sorted);
+  }
+
+  function toggleSignals() {
+    signalsVisible = !signalsVisible;
+    const btn = document.getElementById('signalToggle');
+    btn.textContent = signalsVisible ? 'Signals: ON' : 'Signals: OFF';
+    btn.className   = 'toggle ' + (signalsVisible ? 'on' : 'off');
+    applyMarkers(signalsVisible ? cachedMarkers : []);
+  }
+
   const toSeries = (arr, key) =>
     arr.map(i => ({ time: i.timestamp, value: i[key] })).filter(d => d.value != null);
 
@@ -182,17 +235,32 @@
     const assets = await fetch('/api/assets').then(r => r.json());
     const sel = document.getElementById('assetSelect');
     sel.innerHTML = assets.map(a => `<option value="${a}">${a}</option>`).join('');
-    if (assets.length > 0) loadData();
+    if (!assets.length) return;
+
+    // Pre-select the first asset that has signals in the current window
+    for (const asset of assets) {
+      const sigs = await fetch(`/api/signals?asset=${asset}&limit=150`).then(r => r.json());
+      if (sigs.length > 0) {
+        sel.value = asset;
+        break;
+      }
+    }
+    loadData();
   }
 
   async function loadData() {
     const asset = document.getElementById('assetSelect').value;
     if (!asset) return;
 
-    const [candles, indicators] = await Promise.all([
+    const [candles, indicators, signals] = await Promise.all([
       fetch(`/api/candles?asset=${asset}&limit=150`).then(r => r.json()),
-      fetch(`/api/indicators?asset=${asset}&limit=150`).then(r => r.json())
+      fetch(`/api/indicators?asset=${asset}&limit=150`).then(r => r.json()),
+      fetch(`/api/signals?asset=${asset}&limit=150`).then(r => r.json())
     ]);
+
+    // Block sync during bulk setData — each setData fires a range-change
+    // event that would shift the other charts' views mid-update
+    isSyncing = true;
 
     candleSeries.setData(candles.map(c => ({ time: c.timestamp, open: c.open, high: c.high, low: c.low, close: c.close })));
     bbUpper.setData(toSeries(indicators, 'bb_upper'));
@@ -204,7 +272,16 @@
     stochDLine.setData(toSeries(indicators, 'stochastic_d_v2'));
     cciLine.setData(toSeries(indicators, 'cci_8'));
 
+    cachedMarkers = buildMarkers(signals);
+    if (signalsVisible) applyMarkers(cachedMarkers);
+    document.getElementById('sigCount').textContent = cachedMarkers.length + ' signal' + (cachedMarkers.length !== 1 ? 's' : '');
+
     updateGates(indicators);
+
+    // Re-enable sync then fit all candles into view — the range change
+    // propagates via syncAll to the indicator charts
+    isSyncing = false;
+    mainChart.timeScale().fitContent();
   }
 
   function updateGates(indicators) {
@@ -226,9 +303,13 @@
     intervalId = setInterval(loadData, parseInt(document.getElementById('intervalSelect').value));
   });
 
-  initCharts();
-  loadAssets();
-  intervalId = setInterval(loadData, 10000);
+  // Defer until after the browser has painted the flex layout so
+  // clientWidth/clientHeight return real pixel values, not 0.
+  requestAnimationFrame(() => {
+    initCharts();
+    loadAssets();
+    intervalId = setInterval(loadData, 10000);
+  });
 </script>
 </body>
 </html>
