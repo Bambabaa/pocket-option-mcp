@@ -30,9 +30,9 @@ app.get('/api/assets', (req, res) => {
 });
 
 app.get('/api/candles', (req, res) => {
-  const { asset, limit = 150 } = req.query;
+  const { asset, limit = 1000 } = req.query;
   if (!asset) return res.status(400).json({ error: 'asset required' });
-  
+
   try {
     const candles = db.prepare(`
       SELECT timestamp, open, high, low, close 
@@ -48,9 +48,9 @@ app.get('/api/candles', (req, res) => {
 });
 
 app.get('/api/indicators', (req, res) => {
-  const { asset, limit = 150 } = req.query;
+  const { asset, limit = 1000 } = req.query;
   if (!asset) return res.status(400).json({ error: 'asset required' });
-  
+
   try {
     const indicators = db.prepare(`
       SELECT 
@@ -79,23 +79,18 @@ app.get('/api/indicators', (req, res) => {
 });
 
 app.get('/api/signals', (req, res) => {
-  const { asset, limit = 150 } = req.query;
+  const { asset, limit = 1000 } = req.query;
   if (!asset) return res.status(400).json({ error: 'asset required' });
   try {
-    // Only return signals whose candle falls within the same window as the
-    // last N candles — prevents out-of-range markers snapping to bar 0
+    // Retrieve signals directly joined with trades for the asset
     const rows = db.prepare(`
-      WITH recent AS (
-        SELECT id FROM candles WHERE asset = ?
-        ORDER BY timestamp DESC LIMIT ?
-      )
       SELECT s.timestamp, s.direction, s.strategy_used,
              t.result, t.profit_loss
       FROM signals s
-      JOIN recent ON recent.id = s.candle_id
       LEFT JOIN trades_ordered t ON t.signal_id = s.id
+      WHERE s.asset = ?
       ORDER BY s.timestamp ASC
-    `).all(asset, parseInt(limit));
+    `).all(asset);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });

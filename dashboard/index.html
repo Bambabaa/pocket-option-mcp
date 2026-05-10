@@ -1,315 +1,454 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pocket Option Dashboard</title>
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #0a0e27; color: #e0e0e0;
-      height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+      background: #0a0e27;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
+
     .controls {
-      padding: 10px 16px; background: #131722;
-      display: flex; gap: 16px; align-items: center;
-      border-bottom: 1px solid #2a2e39; flex-shrink: 0;
+      padding: 10px 16px;
+      background: #131722;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      border-bottom: 1px solid #2a2e39;
+      flex-shrink: 0;
     }
-    select, button {
-      padding: 6px 10px; background: #1e222d; color: #e0e0e0;
-      border: 1px solid #2a2e39; border-radius: 4px; cursor: pointer; font-size: 13px;
+
+    select,
+    button {
+      padding: 6px 10px;
+      background: #1e222d;
+      color: #e0e0e0;
+      border: 1px solid #2a2e39;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
     }
-    .gate-status { display: flex; gap: 6px; margin-left: auto; }
-    .gate { padding: 4px 10px; border-radius: 4px; font-weight: 600; font-size: 11px; background: #2a2e39; }
-    .gate.pass { background: #26a69a; color: white; }
-    .gate.fail { background: #ef5350; color: white; }
-    .toggle { padding: 4px 10px; border-radius: 4px; font-weight: 600; font-size: 11px; cursor: pointer; border: 1px solid #2a2e39; }
-    .toggle.on  { background: #1565c0; color: white; border-color: #1565c0; }
-    .toggle.off { background: #2a2e39; color: #787b86; }
 
-    .charts-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .gate-status {
+      display: flex;
+      gap: 6px;
+      margin-left: auto;
+    }
 
-    .panel { position: relative; display: flex; flex-direction: column; border-bottom: 1px solid #2a2e39; }
-    .panel:last-child { border-bottom: none; }
+    .gate {
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 11px;
+      background: #2a2e39;
+    }
+
+    .gate.pass {
+      background: #26a69a;
+      color: white;
+    }
+
+    .gate.fail {
+      background: #ef5350;
+      color: white;
+    }
+
+    .toggle {
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 11px;
+      cursor: pointer;
+      border: 1px solid #2a2e39;
+    }
+
+    .toggle.on {
+      background: #1565c0;
+      color: white;
+      border-color: #1565c0;
+    }
+
+    .toggle.off {
+      background: #2a2e39;
+      color: #787b86;
+    }
+
+    .charts-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .panel {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      border-bottom: 1px solid #2a2e39;
+    }
+
+    .panel:last-child {
+      border-bottom: none;
+    }
+
     .panel-label {
-      position: absolute; top: 6px; left: 8px;
-      font-size: 11px; font-weight: 600; color: #787b86; z-index: 10; pointer-events: none;
+      position: absolute;
+      top: 6px;
+      left: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #787b86;
+      z-index: 10;
+      pointer-events: none;
     }
 
-    #mainPanel  { flex: 3; }
-    #stcPanel   { flex: 1; }
-    #stochPanel { flex: 1; }
-    #cciPanel   { flex: 1; }
+    #mainPanel {
+      flex: 3;
+    }
+
+    #stcPanel {
+      flex: 1;
+    }
+
+    #stochPanel {
+      flex: 1;
+    }
+
+    #cciPanel {
+      flex: 1;
+    }
 
     /* chart containers fill their panel */
-    .chart-host { width: 100%; flex: 1; min-height: 0; }
+    .chart-host {
+      width: 100%;
+      flex: 1;
+      min-height: 0;
+    }
   </style>
 </head>
+
 <body>
 
-<div class="controls">
-  <label>Asset: <select id="assetSelect"></select></label>
-  <label>Interval:
-    <select id="intervalSelect">
-      <option value="5000">5s</option>
-      <option value="10000" selected>10s</option>
-      <option value="30000">30s</option>
-    </select>
-  </label>
-  <button onclick="loadData()">Refresh</button>
-  <button id="signalToggle" class="toggle on" onclick="toggleSignals()">Signals: ON</button>
-  <span id="sigCount" style="font-size:11px;color:#787b86;">0 signals</span>
-  <div class="gate-status">
-    <div id="g1"  class="gate">G1</div>
-    <div id="g2"  class="gate">G2</div>
-    <div id="g3"  class="gate">G3</div>
-    <div id="g4c" class="gate">G4C</div>
-    <div id="g4p" class="gate">G4P</div>
+  <div class="controls">
+    <label>Asset: <select id="assetSelect"></select></label>
+    <label>Interval:
+      <select id="intervalSelect">
+        <option value="5000">5s</option>
+        <option value="10000" selected>10s</option>
+        <option value="30000">30s</option>
+      </select>
+    </label>
+    <label>Max Candles:
+      <select id="limitSelect">
+        <option value="500">500</option>
+        <option value="1000" selected>1000</option>
+        <option value="2000">2000</option>
+        <option value="5000">5000</option>
+      </select>
+    </label>
+    <button onclick="loadData()">Refresh</button>
+    <button id="signalToggle" class="toggle on" onclick="toggleSignals()">Signals: ON</button>
+    <span id="sigCount" style="font-size:11px;color:#787b86;">0 signals</span>
+    <span id="historyWarning" style="color:#ef5350; font-size:11px; display:none;" title="Some older signals are hidden because the candle window is too small">⚠️ Older signals hidden</span>
+    <div class="gate-status">
+      <div id="g1" class="gate">G1</div>
+      <div id="g2" class="gate">G2</div>
+      <div id="g3" class="gate">G3</div>
+      <div id="g4c" class="gate">G4C</div>
+      <div id="g4p" class="gate">G4P</div>
+    </div>
   </div>
-</div>
 
-<div class="charts-wrap">
-  <div class="panel" id="mainPanel">
-    <span class="panel-label">Candles + BB</span>
-    <div class="chart-host" id="mainChart"></div>
+  <div class="charts-wrap">
+    <div class="panel" id="mainPanel">
+      <span class="panel-label">Candles + BB</span>
+      <div class="chart-host" id="mainChart"></div>
+    </div>
+    <div class="panel" id="stcPanel">
+      <span class="panel-label">STC</span>
+      <div class="chart-host" id="stcChart"></div>
+    </div>
+    <div class="panel" id="stochPanel">
+      <span class="panel-label">Stoch K / D</span>
+      <div class="chart-host" id="stochChart"></div>
+    </div>
+    <div class="panel" id="cciPanel">
+      <span class="panel-label">CCI-8</span>
+      <div class="chart-host" id="cciChart"></div>
+    </div>
   </div>
-  <div class="panel" id="stcPanel">
-    <span class="panel-label">STC</span>
-    <div class="chart-host" id="stcChart"></div>
-  </div>
-  <div class="panel" id="stochPanel">
-    <span class="panel-label">Stoch K / D</span>
-    <div class="chart-host" id="stochChart"></div>
-  </div>
-  <div class="panel" id="cciPanel">
-    <span class="panel-label">CCI-8</span>
-    <div class="chart-host" id="cciChart"></div>
-  </div>
-</div>
 
-<script>
-  const { createChart, LineStyle } = LightweightCharts;
+  <script>
+    const { createChart, LineStyle } = LightweightCharts;
 
-  // ── chart + series refs ───────────────────────────────────────────
-  let mainChart, stcChart, stochChart, cciChart;
-  let candleSeries, bbUpper, bbMiddle, bbLower;
-  let stcLine, stochKLine, stochDLine, cciLine;
+    // ── chart + series refs ───────────────────────────────────────────
+    let mainChart, stcChart, stochChart, cciChart;
+    let candleSeries, bbUpper, bbMiddle, bbLower;
+    let stcLine, stochKLine, stochDLine, cciLine;
 
-  let intervalId;
-  let isSyncing = false;  // prevents circular sync callbacks
-  let signalsVisible = true;
-  let cachedMarkers = [];  // stored so toggle doesn't need a re-fetch
+    let intervalId;
+    let isSyncing = false;  // prevents circular sync callbacks
+    let signalsVisible = true;
+    let cachedMarkers = [];  // stored so toggle doesn't need a re-fetch
 
-  // ── shared chart options ──────────────────────────────────────────
-  const BASE = {
-    layout: { background: { color: '#131722' }, textColor: '#d1d4dc' },
-    grid:   { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
-    crosshair: { mode: 1 },
-    rightPriceScale: { borderColor: '#2a2e39' },
-    timeScale: { borderColor: '#2a2e39', timeVisible: true, secondsVisible: false }
-  };
+    // ── shared chart options ──────────────────────────────────────────
+    const BASE = {
+      layout: { background: { color: '#131722' }, textColor: '#d1d4dc' },
+      grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
+      crosshair: { mode: 1 },
+      rightPriceScale: { borderColor: '#2a2e39' },
+      timeScale: { borderColor: '#2a2e39', timeVisible: true, secondsVisible: false }
+    };
 
-  function newChart(id, showTimeAxis) {
-    const el = document.getElementById(id);
-    return createChart(el, {
-      ...BASE,
-      width:  el.clientWidth,
-      height: el.clientHeight,
-      timeScale: { ...BASE.timeScale, visible: showTimeAxis }
-    });
-  }
-
-  function resizeAll() {
-    [[mainChart, 'mainChart'], [stcChart, 'stcChart'], [stochChart, 'stochChart'], [cciChart, 'cciChart']]
-      .forEach(([chart, id]) => {
-        const el = document.getElementById(id);
-        chart.resize(el.clientWidth, el.clientHeight);
+    function newChart(id, showTimeAxis) {
+      const el = document.getElementById(id);
+      return createChart(el, {
+        ...BASE,
+        width: el.clientWidth,
+        height: el.clientHeight,
+        timeScale: { ...BASE.timeScale, visible: showTimeAxis }
       });
-  }
-
-  // Add dashed/dotted threshold price lines to a series
-  function addThresholds(series, defs) {
-    defs.forEach(({ price, color, style = LineStyle.Dashed, title = '' }) =>
-      series.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: false, title })
-    );
-  }
-
-  // Bidirectional time-scale sync — all charts scroll/zoom together
-  function syncAll(charts) {
-    charts.forEach(src => {
-      src.timeScale().subscribeVisibleLogicalRangeChange(range => {
-        if (isSyncing || !range) return;
-        isSyncing = true;
-        charts.forEach(t => { if (t !== src) t.timeScale().setVisibleLogicalRange(range); });
-        isSyncing = false;
-      });
-    });
-  }
-
-  // ── initialise all four charts ────────────────────────────────────
-  function initCharts() {
-    // Candle chart
-    mainChart    = newChart('mainChart', true);
-    candleSeries = mainChart.addCandlestickSeries({
-      upColor: '#26a69a', downColor: '#ef5350',
-      borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
-    });
-    bbUpper  = mainChart.addLineSeries({ color: '#2962ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-    bbMiddle = mainChart.addLineSeries({ color: '#546e7a', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-    bbLower  = mainChart.addLineSeries({ color: '#2962ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-
-    // STC — no time axis (middle panel)
-    stcChart = newChart('stcChart', false);
-    stcLine  = stcChart.addLineSeries({ color: '#42a5f5', lineWidth: 2, priceLineVisible: false });
-    addThresholds(stcLine, [
-      { price: 25, color: '#26a69a', title: '25' },
-      { price: 85, color: '#ef5350', title: '85' }
-    ]);
-
-    // Stochastic — no time axis (middle panel)
-    stochChart = newChart('stochChart', false);
-    stochKLine = stochChart.addLineSeries({ color: '#2196f3', lineWidth: 2, priceLineVisible: false });
-    stochDLine = stochChart.addLineSeries({ color: '#ff9800', lineWidth: 2, priceLineVisible: false });
-    addThresholds(stochKLine, [
-      { price: 30, color: '#26a69a', title: '30' },
-      { price: 80, color: '#ef5350', title: '80' }
-    ]);
-
-    // CCI — show time axis on bottom panel only
-    cciChart = newChart('cciChart', true);
-    cciLine  = cciChart.addLineSeries({ color: '#ab47bc', lineWidth: 2, priceLineVisible: false });
-    addThresholds(cciLine, [
-      { price:  100, color: '#ef5350', title:  '100' },
-      { price: -100, color: '#26a69a', title: '-100' },
-      { price:  175, color: '#ef5350', style: LineStyle.SparseDotted, title:  '175' },
-      { price: -150, color: '#26a69a', style: LineStyle.SparseDotted, title: '-150' }
-    ]);
-
-    // Link all time scales — scroll/zoom one, all follow
-    syncAll([mainChart, stcChart, stochChart, cciChart]);
-
-    window.addEventListener('resize', resizeAll);
-  }
-
-  // ── data loading ──────────────────────────────────────────────────
-  // ── signal markers ────────────────────────────────────────────────
-  function buildMarkers(signals) {
-    return signals.map(s => {
-      const isCall = s.direction === 'CALL';
-      let color;
-      if      (s.result === 'WIN')  color = '#26a69a'; // green
-      else if (s.result === 'LOSS') color = '#ef5350'; // red
-      else                          color = '#787b86'; // grey — pending/unresolved
-
-      return {
-        time:     s.timestamp,
-        position: isCall ? 'belowBar' : 'aboveBar',
-        shape:    isCall ? 'arrowUp'  : 'arrowDown',
-        color,
-        size: 1,
-        text: s.result ?? ''
-      };
-    });
-  }
-
-  function applyMarkers(markers) {
-    // lightweight-charts requires markers sorted by time
-    const sorted = [...markers].sort((a, b) => a.time - b.time);
-    candleSeries.setMarkers(sorted);
-  }
-
-  function toggleSignals() {
-    signalsVisible = !signalsVisible;
-    const btn = document.getElementById('signalToggle');
-    btn.textContent = signalsVisible ? 'Signals: ON' : 'Signals: OFF';
-    btn.className   = 'toggle ' + (signalsVisible ? 'on' : 'off');
-    applyMarkers(signalsVisible ? cachedMarkers : []);
-  }
-
-  const toSeries = (arr, key) =>
-    arr.map(i => ({ time: i.timestamp, value: i[key] })).filter(d => d.value != null);
-
-  async function loadAssets() {
-    const assets = await fetch('/api/assets').then(r => r.json());
-    const sel = document.getElementById('assetSelect');
-    sel.innerHTML = assets.map(a => `<option value="${a}">${a}</option>`).join('');
-    if (!assets.length) return;
-
-    // Pre-select the first asset that has signals in the current window
-    for (const asset of assets) {
-      const sigs = await fetch(`/api/signals?asset=${asset}&limit=150`).then(r => r.json());
-      if (sigs.length > 0) {
-        sel.value = asset;
-        break;
-      }
     }
-    loadData();
-  }
 
-  async function loadData() {
-    const asset = document.getElementById('assetSelect').value;
-    if (!asset) return;
+    function resizeAll() {
+      [[mainChart, 'mainChart'], [stcChart, 'stcChart'], [stochChart, 'stochChart'], [cciChart, 'cciChart']]
+        .forEach(([chart, id]) => {
+          const el = document.getElementById(id);
+          chart.resize(el.clientWidth, el.clientHeight);
+        });
+    }
 
-    const [candles, indicators, signals] = await Promise.all([
-      fetch(`/api/candles?asset=${asset}&limit=150`).then(r => r.json()),
-      fetch(`/api/indicators?asset=${asset}&limit=150`).then(r => r.json()),
-      fetch(`/api/signals?asset=${asset}&limit=150`).then(r => r.json())
-    ]);
+    // Add dashed/dotted threshold price lines to a series
+    function addThresholds(series, defs) {
+      defs.forEach(({ price, color, style = LineStyle.Dashed, title = '' }) =>
+        series.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: false, title })
+      );
+    }
 
-    // Block sync during bulk setData — each setData fires a range-change
-    // event that would shift the other charts' views mid-update
-    isSyncing = true;
+    // Bidirectional time-scale sync — all charts scroll/zoom together
+    function syncAll(charts) {
+      charts.forEach(src => {
+        src.timeScale().subscribeVisibleLogicalRangeChange(range => {
+          if (isSyncing || !range) return;
+          isSyncing = true;
+          charts.forEach(t => { if (t !== src) t.timeScale().setVisibleLogicalRange(range); });
+          isSyncing = false;
+        });
+      });
+    }
 
-    candleSeries.setData(candles.map(c => ({ time: c.timestamp, open: c.open, high: c.high, low: c.low, close: c.close })));
-    bbUpper.setData(toSeries(indicators, 'bb_upper'));
-    bbMiddle.setData(toSeries(indicators, 'bb_middle'));
-    bbLower.setData(toSeries(indicators, 'bb_lower'));
+    // ── initialise all four charts ────────────────────────────────────
+    function initCharts() {
+      // Candle chart
+      mainChart = newChart('mainChart', true);
+      candleSeries = mainChart.addCandlestickSeries({
+        upColor: '#26a69a', downColor: '#ef5350',
+        borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+      });
+      bbUpper = mainChart.addLineSeries({ color: '#2962ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      bbMiddle = mainChart.addLineSeries({ color: '#546e7a', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      bbLower = mainChart.addLineSeries({ color: '#2962ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
 
-    stcLine.setData(toSeries(indicators, 'schaff_value'));
-    stochKLine.setData(toSeries(indicators, 'stochastic_k_v2'));
-    stochDLine.setData(toSeries(indicators, 'stochastic_d_v2'));
-    cciLine.setData(toSeries(indicators, 'cci_8'));
+      // STC — no time axis (middle panel)
+      stcChart = newChart('stcChart', false);
+      stcLine = stcChart.addLineSeries({ color: '#42a5f5', lineWidth: 2, priceLineVisible: false });
+      addThresholds(stcLine, [
+        { price: 25, color: '#26a69a', title: '25' },
+        { price: 85, color: '#ef5350', title: '85' }
+      ]);
 
-    cachedMarkers = buildMarkers(signals);
-    if (signalsVisible) applyMarkers(cachedMarkers);
-    document.getElementById('sigCount').textContent = cachedMarkers.length + ' signal' + (cachedMarkers.length !== 1 ? 's' : '');
+      // Stochastic — no time axis (middle panel)
+      stochChart = newChart('stochChart', false);
+      stochKLine = stochChart.addLineSeries({ color: '#2196f3', lineWidth: 2, priceLineVisible: false });
+      stochDLine = stochChart.addLineSeries({ color: '#ff9800', lineWidth: 2, priceLineVisible: false });
+      addThresholds(stochKLine, [
+        { price: 30, color: '#26a69a', title: '30' },
+        { price: 80, color: '#ef5350', title: '80' }
+      ]);
 
-    updateGates(indicators);
+      // CCI — show time axis on bottom panel only
+      cciChart = newChart('cciChart', true);
+      cciLine = cciChart.addLineSeries({ color: '#ab47bc', lineWidth: 2, priceLineVisible: false });
+      addThresholds(cciLine, [
+        { price: 100, color: '#ef5350', title: '100' },
+        { price: -100, color: '#26a69a', title: '-100' },
+        { price: 175, color: '#ef5350', style: LineStyle.SparseDotted, title: '175' },
+        { price: -150, color: '#26a69a', style: LineStyle.SparseDotted, title: '-150' }
+      ]);
 
-    // Re-enable sync then fit all candles into view — the range change
-    // propagates via syncAll to the indicator charts
-    isSyncing = false;
-    mainChart.timeScale().fitContent();
-  }
+      // Link all time scales — scroll/zoom one, all follow
+      syncAll([mainChart, stcChart, stochChart, cciChart]);
 
-  function updateGates(indicators) {
-    if (!indicators.length) return;
-    const l = indicators[indicators.length - 1];
-    const { stochastic_k_v2: k, stochastic_d_v2: d, cci_8, schaff_value, prev_schaff_value, bb_width_bps } = l;
-    const set = (id, pass) => document.getElementById(id).className = 'gate ' + (pass ? 'pass' : 'fail');
-    set('g1',  bb_width_bps >= 10);
-    set('g2',  k != null && d != null && Math.abs(k - d) > 0.5);
-    set('g3',  cci_8 != null && Math.abs(cci_8) > 100);
-    set('g4c', prev_schaff_value != null && schaff_value != null && prev_schaff_value <= 25 && (schaff_value - prev_schaff_value) >= 0);
-    set('g4p', prev_schaff_value != null && schaff_value != null && prev_schaff_value >= 85 && (schaff_value - prev_schaff_value) <= 0);
-  }
+      window.addEventListener('resize', resizeAll);
+    }
 
-  // ── controls ──────────────────────────────────────────────────────
-  document.getElementById('assetSelect').addEventListener('change', loadData);
-  document.getElementById('intervalSelect').addEventListener('change', () => {
-    clearInterval(intervalId);
-    intervalId = setInterval(loadData, parseInt(document.getElementById('intervalSelect').value));
-  });
+    // ── data loading ──────────────────────────────────────────────────
+    // ── signal markers ────────────────────────────────────────────────
+    function buildMarkers(signals, candles) {
+      if (!candles || candles.length === 0) return [];
 
-  // Defer until after the browser has painted the flex layout so
-  // clientWidth/clientHeight return real pixel values, not 0.
-  requestAnimationFrame(() => {
-    initCharts();
-    loadAssets();
-    intervalId = setInterval(loadData, 10000);
-  });
-</script>
+      return signals.map(s => {
+        // Find closest candle time <= signal time so it snaps to the chart properly
+        let snappedTime = s.timestamp;
+        let closest = candles.find(c => c.timestamp === s.timestamp);
+        if (!closest) {
+          let best = candles[0];
+          for (let i = 0; i < candles.length; i++) {
+            if (candles[i].timestamp <= s.timestamp) {
+              best = candles[i];
+            } else {
+              break;
+            }
+          }
+          snappedTime = best.timestamp;
+        }
+
+        const isCall = s.direction === 'CALL';
+        let color;
+        if (s.result === 'WIN') color = '#26a69a'; // green
+        else if (s.result === 'LOSS') color = '#ef5350'; // red
+        else color = '#787b86'; // grey — pending/unresolved
+
+        return {
+          time: snappedTime,
+          position: isCall ? 'belowBar' : 'aboveBar',
+          shape: isCall ? 'arrowUp' : 'arrowDown',
+          color,
+          size: 1,
+          text: s.result ?? ''
+        };
+      });
+    }
+
+    function applyMarkers(markers) {
+      // lightweight-charts requires markers sorted by time
+      const sorted = [...markers].sort((a, b) => a.time - b.time);
+      candleSeries.setMarkers(sorted);
+    }
+
+    function toggleSignals() {
+      signalsVisible = !signalsVisible;
+      const btn = document.getElementById('signalToggle');
+      btn.textContent = signalsVisible ? 'Signals: ON' : 'Signals: OFF';
+      btn.className = 'toggle ' + (signalsVisible ? 'on' : 'off');
+      applyMarkers(signalsVisible ? cachedMarkers : []);
+    }
+
+    async function loadAssets() {
+      const assets = await fetch('/api/assets').then(r => r.json());
+      const sel = document.getElementById('assetSelect');
+      sel.innerHTML = assets.map(a => `<option value="${a}">${a}</option>`).join('');
+      if (!assets.length) return;
+
+      // Pre-select the first asset that has signals in the current window
+      for (const asset of assets) {
+        const sigs = await fetch(`/api/signals?asset=${asset}&limit=150`).then(r => r.json());
+        if (sigs.length > 0) {
+          sel.value = asset;
+          break;
+        }
+      }
+      loadData();
+    }
+
+    async function loadData() {
+      const asset = document.getElementById('assetSelect').value;
+      if (!asset) return;
+
+      const limit = document.getElementById('limitSelect').value;
+
+      const [candles, indicators, signals] = await Promise.all([
+        fetch(`/api/candles?asset=${asset}&limit=${limit}`).then(r => r.json()),
+        fetch(`/api/indicators?asset=${asset}&limit=${limit}`).then(r => r.json()),
+        fetch(`/api/signals?asset=${asset}`).then(r => r.json())
+      ]);
+
+      // Block sync during bulk setData — each setData fires a range-change
+      // event that would shift the other charts' views mid-update
+      isSyncing = true;
+
+      candleSeries.setData(candles.map(c => ({ time: c.timestamp, open: c.open, high: c.high, low: c.low, close: c.close })));
+
+      // Align indicators perfectly with candles by injecting whitespace for missing data
+      const indMap = new Map();
+      indicators.forEach(i => indMap.set(i.timestamp, i));
+
+      const getAlignedSeries = (key) => candles.map(c => {
+        const ind = indMap.get(c.timestamp);
+        if (ind && ind[key] != null) return { time: c.timestamp, value: ind[key] };
+        return { time: c.timestamp }; // Whitespace gaps ensure perfect index alignment
+      });
+
+      bbUpper.setData(getAlignedSeries('bb_upper'));
+      bbMiddle.setData(getAlignedSeries('bb_middle'));
+      bbLower.setData(getAlignedSeries('bb_lower'));
+
+      stcLine.setData(getAlignedSeries('schaff_value'));
+      stochKLine.setData(getAlignedSeries('stochastic_k_v2'));
+      stochDLine.setData(getAlignedSeries('stochastic_d_v2'));
+      cciLine.setData(getAlignedSeries('cci_8'));
+
+      cachedMarkers = buildMarkers(signals, candles);
+      if (signalsVisible) applyMarkers(cachedMarkers);
+      document.getElementById('sigCount').textContent = cachedMarkers.length + ' signal' + (cachedMarkers.length !== 1 ? 's' : '');
+
+      if (candles.length > 0 && signals.length > 0) {
+        const oldestCandle = candles[0].timestamp;
+        const oldestSignal = signals[0].timestamp;
+        document.getElementById('historyWarning').style.display = (oldestSignal < oldestCandle) ? 'inline' : 'none';
+      }
+
+      updateGates(indicators);
+
+      // Re-enable sync then fit all candles into view — the range change
+      // propagates via syncAll to the indicator charts
+      isSyncing = false;
+      mainChart.timeScale().fitContent();
+    }
+
+    function updateGates(indicators) {
+      if (!indicators.length) return;
+      const l = indicators[indicators.length - 1];
+      const { stochastic_k_v2: k, stochastic_d_v2: d, cci_8, schaff_value, prev_schaff_value, bb_width_bps } = l;
+      const set = (id, pass) => document.getElementById(id).className = 'gate ' + (pass ? 'pass' : 'fail');
+      set('g1', bb_width_bps >= 10);
+      set('g2', k != null && d != null && Math.abs(k - d) > 0.5);
+      set('g3', cci_8 != null && Math.abs(cci_8) > 100);
+      set('g4c', prev_schaff_value != null && schaff_value != null && prev_schaff_value <= 25 && (schaff_value - prev_schaff_value) >= 0);
+      set('g4p', prev_schaff_value != null && schaff_value != null && prev_schaff_value >= 85 && (schaff_value - prev_schaff_value) <= 0);
+    }
+
+    // ── controls ──────────────────────────────────────────────────────
+    document.getElementById('assetSelect').addEventListener('change', loadData);
+    document.getElementById('limitSelect').addEventListener('change', loadData);
+    document.getElementById('intervalSelect').addEventListener('change', () => {
+      clearInterval(intervalId);
+      intervalId = setInterval(loadData, parseInt(document.getElementById('intervalSelect').value));
+    });
+
+    // Defer until after the browser has painted the flex layout so
+    // clientWidth/clientHeight return real pixel values, not 0.
+    requestAnimationFrame(() => {
+      initCharts();
+      loadAssets();
+      // intervalId = setInterval(loadData, 10000);
+    });
+  </script>
 </body>
+
 </html>
