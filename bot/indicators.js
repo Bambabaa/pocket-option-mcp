@@ -583,7 +583,7 @@ class Indicators {
 
     // ==================== CALCULATE ALL INDICATORS ====================
 
-    calculateAll(asset, candles, settings = {}) {
+    calculateAll(asset, candles, settings = {}, pushHistory = true) {
         if (!candles || candles.length === 0) return null;
 
         const indicators = {
@@ -602,10 +602,12 @@ class Indicators {
         indicators.stochastic_d = stoch ? stoch.d : null;
         indicators.stochastic_prevD = stoch ? stoch.prevD : null;
 
-        // 4-bar stoch history for cross-age detection (barsAgo=1 gate)
+        // 4-bar stoch history for cross-age detection — only advance on bar close
         if (!this._stochHistory[asset]) this._stochHistory[asset] = [];
-        this._stochHistory[asset].push({ k: indicators.stochastic_k, d: indicators.stochastic_d });
-        if (this._stochHistory[asset].length > 4) this._stochHistory[asset].shift();
+        if (pushHistory) {
+            this._stochHistory[asset].push({ k: indicators.stochastic_k, d: indicators.stochastic_d });
+            if (this._stochHistory[asset].length > 4) this._stochHistory[asset].shift();
+        }
 
         indicators.bollinger = this.calculateBollingerBands(candles, INDICATOR_CONFIG.bb.period, INDICATOR_CONFIG.bb.stdDev);
         indicators.schaffTrendCycle = this.calculateSchaffTrendCycle(
@@ -614,15 +616,19 @@ class Indicators {
             INDICATOR_CONFIG.schaff.cycle, INDICATOR_CONFIG.schaff.smooth1, INDICATOR_CONFIG.schaff.smooth2
         );
 
-        // Previous STC value — cached per asset to avoid recomputing full history
+        // Previous STC value — only advance on bar close
         indicators.prevSchaffValue = this._lastSchaffValues[asset] ?? null;
-        this._lastSchaffValues[asset] = indicators.schaffTrendCycle ? indicators.schaffTrendCycle.value : null;
+        if (pushHistory) {
+            this._lastSchaffValues[asset] = indicators.schaffTrendCycle ? indicators.schaffTrendCycle.value : null;
+        }
 
-        // CCI(8) + rolling history for cross+depth detection (Gate 3)
+        // CCI(8) + rolling history for cross+depth detection — only advance on bar close
         indicators.cci_8 = this.calculateCCI(candles, 8);
         if (!this._cciHistory[asset]) this._cciHistory[asset] = [];
-        this._cciHistory[asset].push(indicators.cci_8);
-        if (this._cciHistory[asset].length > 25) this._cciHistory[asset].shift();
+        if (pushHistory) {
+            this._cciHistory[asset].push(indicators.cci_8);
+            if (this._cciHistory[asset].length > 25) this._cciHistory[asset].shift();
+        }
 
         // Gate 1 — BB touch precomputation (j=1..3 bars before current bar)
         let _g1Buy = null, _g1Sell = null;
