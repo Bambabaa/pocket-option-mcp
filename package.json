@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node src/server.js",
     "po": "node src/cli/index.js",
-    "bot": "node bot/pocket-option-bot.js"
+    "bot": "node bot/pocket-option-bot.js",
+    "chart": "node dashboard/server.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
