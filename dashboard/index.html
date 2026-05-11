@@ -24,10 +24,10 @@
     }
 
     .controls {
-      padding: 10px 16px;
+      padding: 6px 12px;
       background: #131722;
       display: flex;
-      gap: 16px;
+      gap: 12px;
       align-items: center;
       border-bottom: 1px solid #2a2e39;
       flex-shrink: 0;
@@ -69,10 +69,10 @@
     }
 
     .toggle {
-      padding: 4px 10px;
+      padding: 2px 8px;
       border-radius: 4px;
       font-weight: 600;
-      font-size: 11px;
+      font-size: 10px;
       cursor: pointer;
       border: 1px solid #2a2e39;
     }
@@ -104,9 +104,11 @@
       border-bottom: 1px solid #2a2e39;
       flex-shrink: 0;
     }
+
     .replay-controls.active {
       display: flex;
     }
+
     .replay-btn {
       padding: 6px 12px;
       background: #2a2e39;
@@ -117,94 +119,102 @@
       font-size: 13px;
       font-weight: bold;
     }
+
     .replay-btn:hover {
       background: #3c4252;
     }
+
     .replay-btn.play {
       background: #26a69a;
       border-color: #26a69a;
     }
+
     .replay-slider-container {
       flex: 1;
       display: flex;
       align-items: center;
       gap: 10px;
     }
+
     input[type=range] {
       flex: 1;
       cursor: pointer;
     }
 
     .edge-finder-panel {
-      padding: 12px 20px;
+      padding: 6px 16px;
       background: #1a1e29;
       display: none;
       flex-wrap: wrap;
-      gap: 24px;
+      gap: 16px;
       align-items: flex-start;
       border-bottom: 1px solid #2a2e39;
       flex-shrink: 0;
     }
+
     .edge-finder-panel.active {
       display: flex;
     }
+
     .edge-section {
       display: flex;
       flex-wrap: wrap;
-      gap: 16px;
-      padding-right: 20px;
+      gap: 12px;
+      padding-right: 12px;
       border-right: 1px solid #2a2e39;
       align-items: center;
     }
+
     .edge-section:last-of-type {
       border-right: none;
       padding-right: 0;
     }
-    .edge-section-title {
-      font-size: 9px;
-      color: #2962ff;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      font-weight: 800;
-      width: 100%;
-      margin-bottom: 2px;
-      opacity: 0.8;
-    }
+
     .edge-group {
       display: flex;
       flex-direction: column;
       gap: 2px;
     }
+
     .edge-group label {
       font-size: 10px;
       color: #787b86;
       font-weight: 600;
     }
+
     .edge-group input[type=range] {
-      width: 90px;
+      width: 70px;
       height: 4px;
       cursor: pointer;
     }
+
     .edge-val {
       color: #e0e0e0;
       font-size: 11px;
       margin-left: 4px;
       font-family: monospace;
     }
+
     .scoreboard {
       margin-left: auto;
-      padding: 8px 16px;
+      padding: 6px 12px;
       background: #1e222d;
       border: 1px solid #2a2e39;
       border-radius: 6px;
       font-size: 11px;
       font-weight: 600;
       display: flex;
-      gap: 12px;
+      gap: 8px;
       align-self: center;
     }
-    .score-real { color: #787b86; }
-    .score-sim { color: #ffb74d; }
+
+    .score-real {
+      color: #787b86;
+    }
+
+    .score-sim {
+      color: #ffb74d;
+    }
 
     .panel {
       position: relative;
@@ -277,7 +287,8 @@
     <button id="replayToggle" class="toggle off" onclick="toggleReplay()">Replay: OFF</button>
     <button id="edgeToggle" class="toggle off" onclick="toggleEdgeFinder()">Edge Finder: OFF</button>
     <span id="sigCount" style="font-size:11px;color:#787b86;">0 signals</span>
-    <span id="historyWarning" style="color:#ef5350; font-size:11px; display:none;" title="Some older signals are hidden because the candle window is too small">⚠️ Older signals hidden</span>
+    <span id="historyWarning" style="color:#ef5350; font-size:11px; display:none;"
+      title="Some older signals are hidden because the candle window is too small">⚠️ Older signals hidden</span>
     <div class="gate-status">
       <div id="g1" class="gate">G1</div>
       <div id="g2" class="gate">G2</div>
@@ -291,7 +302,7 @@
     <button class="replay-btn" onclick="stepBackward()">⏮ Step Back</button>
     <button class="replay-btn play" id="playBtn" onclick="togglePlay()">▶ Play</button>
     <button class="replay-btn" onclick="stepForward()">⏭ Step Fwd</button>
-    
+
     <label style="font-size: 13px; color: #787b86; margin-left: 10px;">Speed:
       <select id="replaySpeed" style="padding: 4px;">
         <option value="2000">0.5x (2s)</option>
@@ -310,7 +321,6 @@
 
   <div class="edge-finder-panel" id="edgePanel">
     <div class="edge-section">
-      <div class="edge-section-title">Bollinger</div>
       <div class="edge-group" style="flex-direction:row; align-items:center; gap:8px;">
         <input type="checkbox" id="sim_bb_req" onchange="runSimulation()" checked>
         <label for="sim_bb_req" style="margin:0; font-size:11px; color:#e0e0e0; cursor:pointer;" title="Require candle to pierce/touch the outer Bollinger Bands within the lookback window">BB Pierce</label>
@@ -318,7 +328,6 @@
     </div>
 
     <div class="edge-section">
-      <div class="edge-section-title">Stochastic</div>
       <div class="edge-group">
         <label>Div Gap <span class="edge-val" id="val_stoch">0.5</span></label>
         <input type="range" id="sim_stoch" min="0" max="2" step="0.1" value="0.5" oninput="runSimulation()">
@@ -327,14 +336,13 @@
         <label>O/U Zone <span class="edge-val" id="val_stoch_ou">OFF</span></label>
         <input type="range" id="sim_stoch_ou" min="50" max="100" step="5" value="100" oninput="runSimulation()">
       </div>
-      <div class="edge-group" style="flex-direction:row; align-items:center; gap:8px; align-self:flex-end; padding-bottom:2px;">
+      <div class="edge-group" style="flex-direction:row; align-items:center; gap:8px;">
         <input type="checkbox" id="sim_stoch_escape" onchange="runSimulation()">
         <label for="sim_stoch_escape" style="margin:0; font-size:11px; color:#e0e0e0; cursor:pointer;" title="Require crossover deep in O/U extreme, then confirmation inside the 20-80 Neutral zone">Zone Escape</label>
       </div>
     </div>
 
     <div class="edge-section">
-      <div class="edge-section-title">Momentum & Trend</div>
       <div class="edge-group">
         <label>Min CCI <span class="edge-val" id="val_cci">100</span></label>
         <input type="range" id="sim_cci" min="50" max="200" step="10" value="100" oninput="runSimulation()">
@@ -350,7 +358,6 @@
     </div>
 
     <div class="edge-section">
-      <div class="edge-section-title">Global</div>
       <div class="edge-group">
         <label>Confluence</label>
         <select id="sim_conf" onchange="runSimulation()" style="font-size:11px; padding:2px; background:#1e222d; color:#d1d4dc; border:1px solid #2a2e39;">
@@ -366,8 +373,8 @@
     </div>
 
     <div class="scoreboard">
-      <span class="score-real">HISTORICAL: <span id="count_real">0</span></span>
-      <span class="score-sim">SIMULATED: <span id="count_sim">0</span></span>
+      <span class="score-real">HIST: <span id="count_real">0</span></span>
+      <span class="score-sim">SIM: <span id="count_sim">0</span></span>
     </div>
   </div>
 
@@ -558,7 +565,7 @@
       const btn = document.getElementById('signalToggle');
       btn.textContent = signalsVisible ? 'Signals: ON' : 'Signals: OFF';
       btn.className = 'toggle ' + (signalsVisible ? 'on' : 'off');
-      
+
       if (isEdgeFinderMode) {
         if (signalsVisible) applyMarkers(cachedMarkers);
         else applyMarkers([]);
@@ -599,19 +606,19 @@
       if (!isReplayMode) {
         replayIndex = fullCandles.length;
       }
-      
+
       const slider = document.getElementById('replaySlider');
       slider.max = fullCandles.length;
       if (!isReplayMode) slider.value = fullCandles.length;
 
       renderFrame(replayIndex);
-      
+
       if (!isReplayMode) mainChart.timeScale().fitContent();
     }
 
     function renderFrame(index) {
       if (!fullCandles || fullCandles.length === 0) return;
-      
+
       if (index < 1) index = 1;
       if (index > fullCandles.length) index = fullCandles.length;
 
@@ -679,29 +686,29 @@
       isReplayMode = !isReplayMode;
       const btn = document.getElementById('replayToggle');
       const bar = document.getElementById('replayBar');
-      
+
       if (isReplayMode) {
         btn.textContent = 'Replay: ON';
         btn.className = 'toggle on';
         bar.classList.add('active');
-        
+
         clearInterval(intervalId); // Pause live refresh
-        
+
         // Jump back 100 candles to give room to play
         replayIndex = Math.max(1, fullCandles.length - 100);
         renderFrame(replayIndex);
-        
+
         // Force the chart to not auto-scale time axis to fit content, so it looks like it's growing
         mainChart.timeScale().scrollToPosition(10, true);
       } else {
         btn.textContent = 'Replay: OFF';
         btn.className = 'toggle off';
         bar.classList.remove('active');
-        
+
         if (isPlaying) togglePlay();
-        
+
         intervalId = setInterval(loadData, parseInt(document.getElementById('intervalSelect').value));
-        
+
         replayIndex = fullCandles.length;
         renderFrame(replayIndex);
         mainChart.timeScale().fitContent();
@@ -796,7 +803,7 @@
 
       simulatedSignals = [];
       const currentCandles = fullCandles.slice(0, replayIndex);
-      if(currentCandles.length === 0) return;
+      if (currentCandles.length === 0) return;
       const currentLastTimestamp = currentCandles[currentCandles.length - 1].timestamp;
 
       // Create candle map for fast lookup
@@ -822,70 +829,70 @@
 
         // Sweep backwards up to pLookback candles
         for (let step = 0; step <= pLookback; step++) {
-            if (i - step < 0) break;
-            let pastInd = fullIndicators[i - step];
-            let pastCandle = candleMap.get(pastInd.timestamp);
-            
-            let g1_c = 0, g1_p = 0;
-            if (pBBReq) {
-              if (pastCandle) {
-                if (pastCandle.low <= pastInd.bb_lower) g1_c = 1;
-                if (pastCandle.high >= pastInd.bb_upper) g1_p = 1;
-              }
-            } else {
-              g1_c = 1; g1_p = 1;
+          if (i - step < 0) break;
+          let pastInd = fullIndicators[i - step];
+          let pastCandle = candleMap.get(pastInd.timestamp);
+
+          let g1_c = 0, g1_p = 0;
+          if (pBBReq) {
+            if (pastCandle) {
+              if (pastCandle.low <= pastInd.bb_lower) g1_c = 1;
+              if (pastCandle.high >= pastInd.bb_upper) g1_p = 1;
             }
-            
-            let g2_c = 0, g2_p = 0;
+          } else {
+            g1_c = 1; g1_p = 1;
+          }
 
-            if (pStochEscape) {
-                // Look for cross while deep in the extreme zone
-                if (pastInd.stochastic_k_v2 <= boundOS && pastInd.stochastic_d_v2 <= boundOS) {
-                    if (pastInd.stochastic_k_v2 > pastInd.stochastic_d_v2 && Math.abs(pastInd.stochastic_k_v2 - pastInd.stochastic_d_v2) > pStoch) crossedExtremeCall = true;
-                }
-                if (pastInd.stochastic_k_v2 >= boundOB && pastInd.stochastic_d_v2 >= boundOB) {
-                    if (pastInd.stochastic_k_v2 < pastInd.stochastic_d_v2 && Math.abs(pastInd.stochastic_k_v2 - pastInd.stochastic_d_v2) > pStoch) crossedExtremePut = true;
-                }
-            } else {
-                // Standard Logic: Divergence + Overbought/Oversold zones
-                let stochValidDiv = (pastInd.stochastic_k_v2 != null && pastInd.stochastic_d_v2 != null && Math.abs(pastInd.stochastic_k_v2 - pastInd.stochastic_d_v2) > pStoch);
-                let stochOS = pStochOU === 100 ? true : (pastInd.stochastic_k_v2 <= boundOS); // Oversold for Calls
-                let stochOB = pStochOU === 100 ? true : (pastInd.stochastic_k_v2 >= boundOB); // Overbought for Puts
-                
-                g2_c = (stochValidDiv && stochOS) ? 1 : 0;
-                g2_p = (stochValidDiv && stochOB) ? 1 : 0;
+          let g2_c = 0, g2_p = 0;
+
+          if (pStochEscape) {
+            // Look for cross while deep in the extreme zone
+            if (pastInd.stochastic_k_v2 <= boundOS && pastInd.stochastic_d_v2 <= boundOS) {
+              if (pastInd.stochastic_k_v2 > pastInd.stochastic_d_v2 && Math.abs(pastInd.stochastic_k_v2 - pastInd.stochastic_d_v2) > pStoch) crossedExtremeCall = true;
             }
-
-            let g3_c = (pastInd.cci_8 != null && pastInd.cci_8 < -pCCI) ? 1 : 0;
-            let g3_p = (pastInd.cci_8 != null && pastInd.cci_8 > pCCI) ? 1 : 0;
-            let g4c = (pastInd.prev_schaff_value != null && pastInd.schaff_value != null && pastInd.prev_schaff_value <= pSTCc && (pastInd.schaff_value - pastInd.prev_schaff_value) >= 0) ? 1 : 0;
-            let g4p = (pastInd.prev_schaff_value != null && pastInd.schaff_value != null && pastInd.prev_schaff_value >= pSTCp && (pastInd.schaff_value - pastInd.prev_schaff_value) <= 0) ? 1 : 0;
-
-            if (g1_c) bb_call_pass = 1;
-            if (g1_p) bb_put_pass = 1;
-            if (g3_c) cci_call_pass = 1;
-            if (g3_p) cci_put_pass = 1;
-            if (g4c) stcc_pass = 1;
-            if (g4p) stcp_pass = 1;
-
-            if (!pStochEscape) {
-                if (g2_c) stoch_call_pass = 1;
-                if (g2_p) stoch_put_pass = 1;
+            if (pastInd.stochastic_k_v2 >= boundOB && pastInd.stochastic_d_v2 >= boundOB) {
+              if (pastInd.stochastic_k_v2 < pastInd.stochastic_d_v2 && Math.abs(pastInd.stochastic_k_v2 - pastInd.stochastic_d_v2) > pStoch) crossedExtremePut = true;
             }
+          } else {
+            // Standard Logic: Divergence + Overbought/Oversold zones
+            let stochValidDiv = (pastInd.stochastic_k_v2 != null && pastInd.stochastic_d_v2 != null && Math.abs(pastInd.stochastic_k_v2 - pastInd.stochastic_d_v2) > pStoch);
+            let stochOS = pStochOU === 100 ? true : (pastInd.stochastic_k_v2 <= boundOS); // Oversold for Calls
+            let stochOB = pStochOU === 100 ? true : (pastInd.stochastic_k_v2 >= boundOB); // Overbought for Puts
 
-            if (step === 0) { // Current candle provided a trigger
-               if (g1_c || g2_c || g3_c || g4c) current_any_pass_call = true;
-               if (g1_p || g2_p || g3_p || g4p) current_any_pass_put = true;
-               if (pStochEscape && currentNeutral) {
-                   current_any_pass_call = true;
-                   current_any_pass_put = true;
-               }
+            g2_c = (stochValidDiv && stochOS) ? 1 : 0;
+            g2_p = (stochValidDiv && stochOB) ? 1 : 0;
+          }
+
+          let g3_c = (pastInd.cci_8 != null && pastInd.cci_8 < -pCCI) ? 1 : 0;
+          let g3_p = (pastInd.cci_8 != null && pastInd.cci_8 > pCCI) ? 1 : 0;
+          let g4c = (pastInd.prev_schaff_value != null && pastInd.schaff_value != null && pastInd.prev_schaff_value <= pSTCc && (pastInd.schaff_value - pastInd.prev_schaff_value) >= 0) ? 1 : 0;
+          let g4p = (pastInd.prev_schaff_value != null && pastInd.schaff_value != null && pastInd.prev_schaff_value >= pSTCp && (pastInd.schaff_value - pastInd.prev_schaff_value) <= 0) ? 1 : 0;
+
+          if (g1_c) bb_call_pass = 1;
+          if (g1_p) bb_put_pass = 1;
+          if (g3_c) cci_call_pass = 1;
+          if (g3_p) cci_put_pass = 1;
+          if (g4c) stcc_pass = 1;
+          if (g4p) stcp_pass = 1;
+
+          if (!pStochEscape) {
+            if (g2_c) stoch_call_pass = 1;
+            if (g2_p) stoch_put_pass = 1;
+          }
+
+          if (step === 0) { // Current candle provided a trigger
+            if (g1_c || g2_c || g3_c || g4c) current_any_pass_call = true;
+            if (g1_p || g2_p || g3_p || g4p) current_any_pass_put = true;
+            if (pStochEscape && currentNeutral) {
+              current_any_pass_call = true;
+              current_any_pass_put = true;
             }
+          }
         }
 
         if (pStochEscape) {
-            stoch_call_pass = (currentNeutral && crossedExtremeCall) ? 1 : 0;
-            stoch_put_pass = (currentNeutral && crossedExtremePut) ? 1 : 0;
+          stoch_call_pass = (currentNeutral && crossedExtremeCall) ? 1 : 0;
+          stoch_put_pass = (currentNeutral && crossedExtremePut) ? 1 : 0;
         }
 
         let callConf = bb_call_pass + stoch_call_pass + cci_call_pass + stcc_pass;
