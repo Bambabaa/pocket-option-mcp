@@ -135,6 +135,48 @@
       cursor: pointer;
     }
 
+    .edge-finder-panel {
+      padding: 10px 16px;
+      background: #1a1e29;
+      display: none;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: center;
+      border-bottom: 1px solid #2a2e39;
+      flex-shrink: 0;
+    }
+    .edge-finder-panel.active {
+      display: flex;
+    }
+    .edge-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .edge-group label {
+      font-size: 11px;
+      color: #787b86;
+      font-weight: 600;
+    }
+    .edge-group input[type=range] {
+      width: 100px;
+    }
+    .edge-val {
+      color: #e0e0e0;
+      font-size: 12px;
+      margin-left: 6px;
+    }
+    .scoreboard {
+      margin-left: auto;
+      padding: 6px 12px;
+      background: #2a2e39;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+    .score-real { color: #787b86; }
+    .score-sim { color: #ffb74d; }
+
     .panel {
       position: relative;
       display: flex;
@@ -204,6 +246,7 @@
     <button onclick="loadData()">Refresh</button>
     <button id="signalToggle" class="toggle on" onclick="toggleSignals()">Signals: ON</button>
     <button id="replayToggle" class="toggle off" onclick="toggleReplay()">Replay: OFF</button>
+    <button id="edgeToggle" class="toggle off" onclick="toggleEdgeFinder()">Edge Finder: OFF</button>
     <span id="sigCount" style="font-size:11px;color:#787b86;">0 signals</span>
     <span id="historyWarning" style="color:#ef5350; font-size:11px; display:none;" title="Some older signals are hidden because the candle window is too small">⚠️ Older signals hidden</span>
     <div class="gate-status">
@@ -233,6 +276,49 @@
     <div class="replay-slider-container">
       <span style="font-size: 12px; color: #787b86;">Timeline:</span>
       <input type="range" id="replaySlider" min="1" max="100" value="100" oninput="onSliderScrub()">
+    </div>
+  </div>
+
+  <div class="edge-finder-panel" id="edgePanel">
+    <div class="edge-group">
+      <label>Min BB Width <span class="edge-val" id="val_bb">10</span></label>
+      <input type="range" id="sim_bb" min="0" max="30" step="1" value="10" oninput="runSimulation()">
+    </div>
+    <div class="edge-group">
+      <label>Stoch Div <span class="edge-val" id="val_stoch">0.5</span></label>
+      <input type="range" id="sim_stoch" min="0" max="2" step="0.1" value="0.5" oninput="runSimulation()">
+    </div>
+    <div class="edge-group">
+      <label>Stoch O/U <span class="edge-val" id="val_stoch_ou">OFF</span></label>
+      <input type="range" id="sim_stoch_ou" min="50" max="100" step="5" value="100" oninput="runSimulation()">
+    </div>
+    <div class="edge-group">
+      <label>Min CCI <span class="edge-val" id="val_cci">100</span></label>
+      <input type="range" id="sim_cci" min="50" max="200" step="10" value="100" oninput="runSimulation()">
+    </div>
+    <div class="edge-group">
+      <label>STC Call <span class="edge-val" id="val_stcc">25</span></label>
+      <input type="range" id="sim_stcc" min="0" max="50" step="1" value="25" oninput="runSimulation()">
+    </div>
+    <div class="edge-group">
+      <label>STC Put <span class="edge-val" id="val_stcp">85</span></label>
+      <input type="range" id="sim_stcp" min="50" max="100" step="1" value="85" oninput="runSimulation()">
+    </div>
+    <div class="edge-group">
+      <label>Min Confluence</label>
+      <select id="sim_conf" onchange="runSimulation()">
+        <option value="5" selected>5 / 5 Gates</option>
+        <option value="4">4 / 5 Gates</option>
+        <option value="3">3 / 5 Gates</option>
+      </select>
+    </div>
+    <div class="edge-group">
+      <label>Lookback Tol. <span class="edge-val" id="val_lookback">0</span></label>
+      <input type="range" id="sim_lookback" min="0" max="10" step="1" value="0" oninput="runSimulation()">
+    </div>
+    <div class="scoreboard">
+      <span class="score-real">Real: <span id="count_real">0</span></span> | 
+      <span class="score-sim">Simulated: <span id="count_sim">0</span></span>
     </div>
   </div>
 
@@ -274,6 +360,10 @@
     let replayIndex = 0;
     let isPlaying = false;
     let replayTimer = null;
+
+    // ── edge finder state ─────────────────────────────────────────────
+    let isEdgeFinderMode = false;
+    let simulatedSignals = [];
 
     // ── shared chart options ──────────────────────────────────────────
     const BASE = {
@@ -368,7 +458,7 @@
 
     // ── data loading ──────────────────────────────────────────────────
     // ── signal markers ────────────────────────────────────────────────
-    function buildMarkers(signals, candles) {
+    function buildMarkers(signals, candles, isSimulated = false) {
       if (!candles || candles.length === 0) return [];
 
       return signals.map(s => {
@@ -389,9 +479,13 @@
 
         const isCall = s.direction === 'CALL';
         let color;
-        if (s.result === 'WIN') color = '#26a69a'; // green
-        else if (s.result === 'LOSS') color = '#ef5350'; // red
-        else color = '#787b86'; // grey — pending/unresolved
+        if (isSimulated) {
+          color = '#ffb74d'; // Orange/Yellow for sim
+        } else {
+          if (s.result === 'WIN') color = '#26a69a'; // green
+          else if (s.result === 'LOSS') color = '#ef5350'; // red
+          else color = '#787b86'; // grey — pending/unresolved
+        }
 
         return {
           time: snappedTime,
@@ -415,7 +509,13 @@
       const btn = document.getElementById('signalToggle');
       btn.textContent = signalsVisible ? 'Signals: ON' : 'Signals: OFF';
       btn.className = 'toggle ' + (signalsVisible ? 'on' : 'off');
-      applyMarkers(signalsVisible ? cachedMarkers : []);
+      
+      if (isEdgeFinderMode) {
+        if (signalsVisible) applyMarkers(cachedMarkers);
+        else applyMarkers([]);
+      } else {
+        applyMarkers(signalsVisible ? cachedMarkers : []);
+      }
     }
 
     async function loadAssets() {
@@ -492,9 +592,13 @@
       stochDLine.setData(getAlignedSeries('stochastic_d_v2'));
       cciLine.setData(getAlignedSeries('cci_8'));
 
-      cachedMarkers = buildMarkers(currentSignals, currentCandles);
-      if (signalsVisible) applyMarkers(cachedMarkers);
-      document.getElementById('sigCount').textContent = cachedMarkers.length + ' signal' + (cachedMarkers.length !== 1 ? 's' : '');
+      if (isEdgeFinderMode) {
+        runSimulation();
+      } else {
+        cachedMarkers = buildMarkers(currentSignals, currentCandles);
+        if (signalsVisible) applyMarkers(cachedMarkers);
+        document.getElementById('sigCount').textContent = cachedMarkers.length + ' signal' + (cachedMarkers.length !== 1 ? 's' : '');
+      }
 
       if (currentCandles.length > 0 && currentSignals.length > 0) {
         const oldestCandle = currentCandles[0].timestamp;
@@ -601,6 +705,118 @@
       if (isPlaying) togglePlay();
       replayIndex = parseInt(document.getElementById('replaySlider').value);
       renderFrame(replayIndex);
+    }
+
+    // ── edge finder functions ─────────────────────────────────────────
+    function toggleEdgeFinder() {
+      isEdgeFinderMode = !isEdgeFinderMode;
+      const btn = document.getElementById('edgeToggle');
+      const panel = document.getElementById('edgePanel');
+      if (isEdgeFinderMode) {
+        btn.textContent = 'Edge Finder: ON';
+        btn.className = 'toggle on';
+        panel.classList.add('active');
+        runSimulation();
+      } else {
+        btn.textContent = 'Edge Finder: OFF';
+        btn.className = 'toggle off';
+        panel.classList.remove('active');
+        renderFrame(replayIndex); // restores original signals
+      }
+    }
+
+    function runSimulation() {
+      if (!isEdgeFinderMode) return;
+
+      const pBB = parseFloat(document.getElementById('sim_bb').value);
+      const pStoch = parseFloat(document.getElementById('sim_stoch').value);
+      const pStochOU = parseInt(document.getElementById('sim_stoch_ou').value);
+      const pCCI = parseFloat(document.getElementById('sim_cci').value);
+      const pSTCc = parseFloat(document.getElementById('sim_stcc').value);
+      const pSTCp = parseFloat(document.getElementById('sim_stcp').value);
+      const pConf = parseInt(document.getElementById('sim_conf').value);
+      const pLookback = parseInt(document.getElementById('sim_lookback').value);
+
+      document.getElementById('val_bb').textContent = pBB;
+      document.getElementById('val_stoch').textContent = pStoch;
+      document.getElementById('val_stoch_ou').textContent = (pStochOU === 100) ? 'OFF' : (pStochOU + '/' + (100 - pStochOU));
+      document.getElementById('val_cci').textContent = pCCI;
+      document.getElementById('val_stcc').textContent = pSTCc;
+      document.getElementById('val_stcp').textContent = pSTCp;
+      document.getElementById('val_lookback').textContent = pLookback;
+
+      simulatedSignals = [];
+      const currentCandles = fullCandles.slice(0, replayIndex);
+      if(currentCandles.length === 0) return;
+      const currentLastTimestamp = currentCandles[currentCandles.length - 1].timestamp;
+
+      let lastFireIndex = -100; // Cooldown tracker to prevent clustered duplicates
+
+      // Simulate strategy logic up to replayIndex
+      for (let i = 0; i < fullIndicators.length; i++) {
+        const ind = fullIndicators[i];
+        if (ind.timestamp > currentLastTimestamp) break;
+
+        let bb_pass = 0, stoch_call_pass = 0, stoch_put_pass = 0, cci_call_pass = 0, cci_put_pass = 0, stcc_pass = 0, stcp_pass = 0;
+        let current_any_pass_call = false;
+        let current_any_pass_put = false;
+
+        // Sweep backwards up to pLookback candles
+        for (let step = 0; step <= pLookback; step++) {
+            if (i - step < 0) break;
+            let pastInd = fullIndicators[i - step];
+            
+            let g1 = (pastInd.bb_width_bps != null && pastInd.bb_width_bps >= pBB) ? 1 : 0;
+            
+            // Stochastic Logic: Divergence + Overbought/Oversold zones
+            let stochValidDiv = (pastInd.stochastic_k_v2 != null && pastInd.stochastic_d_v2 != null && Math.abs(pastInd.stochastic_k_v2 - pastInd.stochastic_d_v2) > pStoch);
+            let stochOS = pStochOU === 100 ? true : (pastInd.stochastic_k_v2 <= (100 - pStochOU)); // Oversold for Calls
+            let stochOB = pStochOU === 100 ? true : (pastInd.stochastic_k_v2 >= pStochOU); // Overbought for Puts
+            
+            let g2_c = (stochValidDiv && stochOS) ? 1 : 0;
+            let g2_p = (stochValidDiv && stochOB) ? 1 : 0;
+
+            let g3_c = (pastInd.cci_8 != null && pastInd.cci_8 < -pCCI) ? 1 : 0;
+            let g3_p = (pastInd.cci_8 != null && pastInd.cci_8 > pCCI) ? 1 : 0;
+            let g4c = (pastInd.prev_schaff_value != null && pastInd.schaff_value != null && pastInd.prev_schaff_value <= pSTCc && (pastInd.schaff_value - pastInd.prev_schaff_value) >= 0) ? 1 : 0;
+            let g4p = (pastInd.prev_schaff_value != null && pastInd.schaff_value != null && pastInd.prev_schaff_value >= pSTCp && (pastInd.schaff_value - pastInd.prev_schaff_value) <= 0) ? 1 : 0;
+
+            if (g1) bb_pass = 1;
+            if (g2_c) stoch_call_pass = 1;
+            if (g2_p) stoch_put_pass = 1;
+            if (g3_c) cci_call_pass = 1;
+            if (g3_p) cci_put_pass = 1;
+            if (g4c) stcc_pass = 1;
+            if (g4p) stcp_pass = 1;
+
+            if (step === 0) { // Current candle provided a trigger
+               if (g1 || g2_c || g3_c || g4c) current_any_pass_call = true;
+               if (g1 || g2_p || g3_p || g4p) current_any_pass_put = true;
+            }
+        }
+
+        let callConf = bb_pass + stoch_call_pass + cci_call_pass + stcc_pass;
+        let putConf = bb_pass + stoch_put_pass + cci_put_pass + stcp_pass;
+
+        // Prevent duplicate signals firing repeatedly if conditions stay met
+        let inCooldown = (i - lastFireIndex) <= pLookback;
+
+        if (callConf >= pConf && current_any_pass_call && !inCooldown) {
+          simulatedSignals.push({ timestamp: ind.timestamp, direction: 'CALL', result: 'SIM' });
+          lastFireIndex = i;
+        } else if (putConf >= pConf && current_any_pass_put && !inCooldown) {
+          simulatedSignals.push({ timestamp: ind.timestamp, direction: 'PUT', result: 'SIM' });
+          lastFireIndex = i;
+        }
+      }
+
+      cachedMarkers = buildMarkers(simulatedSignals, currentCandles, true);
+      if (signalsVisible) applyMarkers(cachedMarkers);
+
+      const currentSignals = fullSignals.filter(s => s.timestamp <= currentLastTimestamp);
+      document.getElementById('count_real').textContent = currentSignals.length;
+      document.getElementById('count_sim').textContent = simulatedSignals.length;
+      document.getElementById('sigCount').textContent = 'Viewing ' + simulatedSignals.length + ' simulated signals';
     }
 
     // ── controls ──────────────────────────────────────────────────────
