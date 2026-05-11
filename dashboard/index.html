@@ -63,7 +63,7 @@
       color: white;
     }
 
-    .gate.fail {
+    .gate.put {
       background: #ef5350;
       color: white;
     }
@@ -270,6 +270,7 @@
     <label>Asset: <select id="assetSelect"></select></label>
     <label>Interval:
       <select id="intervalSelect">
+        <option value="0">Off</option>
         <option value="5000">5s</option>
         <option value="10000" selected>10s</option>
         <option value="30000">30s</option>
@@ -324,7 +325,8 @@
     <div class="edge-section">
       <div class="edge-group" style="flex-direction:row; align-items:center; gap:8px;">
         <input type="checkbox" id="sim_bb_req" onchange="runSimulation()" checked>
-        <label for="sim_bb_req" style="margin:0; font-size:11px; color:#e0e0e0; cursor:pointer;" title="Require candle to pierce/touch the outer Bollinger Bands within the lookback window">BB Pierce</label>
+        <label for="sim_bb_req" style="margin:0; font-size:11px; color:#e0e0e0; cursor:pointer;"
+          title="Require candle to pierce/touch the outer Bollinger Bands within the lookback window">BB Pierce</label>
       </div>
     </div>
 
@@ -339,7 +341,9 @@
       </div>
       <div class="edge-group" style="flex-direction:row; align-items:center; gap:8px;">
         <input type="checkbox" id="sim_stoch_escape" onchange="runSimulation()">
-        <label for="sim_stoch_escape" style="margin:0; font-size:11px; color:#e0e0e0; cursor:pointer;" title="Require crossover deep in O/U extreme, then confirmation inside the 20-80 Neutral zone">Zone Escape</label>
+        <label for="sim_stoch_escape" style="margin:0; font-size:11px; color:#e0e0e0; cursor:pointer;"
+          title="Require crossover deep in O/U extreme, then confirmation inside the 20-80 Neutral zone">Zone
+          Escape</label>
       </div>
     </div>
 
@@ -361,10 +365,12 @@
     <div class="edge-section">
       <div class="edge-group">
         <label>Confluence</label>
-        <select id="sim_conf" onchange="runSimulation()" style="font-size:11px; padding:2px; background:#1e222d; color:#d1d4dc; border:1px solid #2a2e39;">
-          <option value="5" selected>5 Gates</option>
-          <option value="4">4 Gates</option>
+        <select id="sim_conf" onchange="runSimulation()"
+          style="font-size:11px; padding:2px; background:#1e222d; color:#d1d4dc; border:1px solid #2a2e39;">
+          <option value="4" selected>4 Gates (all)</option>
           <option value="3">3 Gates</option>
+          <option value="2">2 Gates</option>
+          <option value="1">1 Gate</option>
         </select>
       </div>
       <div class="edge-group">
@@ -663,23 +669,84 @@
         document.getElementById('historyWarning').style.display = (oldestSignal < oldestCandle) ? 'inline' : 'none';
       }
 
-      const latestIndicator = fullIndicators.find(i => i.timestamp === currentLastTimestamp);
-      updateGates(latestIndicator ? [latestIndicator] : []);
+      const gateCandles = currentCandles.slice(-25);
+      const gateBars = gateCandles.map(c => ({ can: c, ind: indMap.get(c.timestamp) || null }));
+      updateGates(gateBars);
 
       isSyncing = false;
       document.getElementById('replaySlider').value = index;
     }
 
-    function updateGates(indicators) {
-      if (!indicators || !indicators.length) return;
-      const l = indicators[indicators.length - 1];
-      const { stochastic_k_v2: k, stochastic_d_v2: d, cci_8, schaff_value, prev_schaff_value, bb_width_bps } = l;
-      const set = (id, pass) => document.getElementById(id).className = 'gate ' + (pass ? 'pass' : 'fail');
-      set('g1', bb_width_bps >= 10);
-      set('g2', k != null && d != null && Math.abs(k - d) > 0.5);
-      set('g3', cci_8 != null && Math.abs(cci_8) > 100);
-      set('g4c', prev_schaff_value != null && schaff_value != null && prev_schaff_value <= 25 && (schaff_value - prev_schaff_value) >= 0);
-      set('g4p', prev_schaff_value != null && schaff_value != null && prev_schaff_value >= 85 && (schaff_value - prev_schaff_value) <= 0);
+    function updateGates(gateBars) {
+      // call=teal (pass), put=red (put), neither=dark grey (gate)
+      const setGate = (id, callPass, putPass) => {
+        const el = document.getElementById(id);
+        el.className = callPass ? 'gate pass' : putPass ? 'gate put' : 'gate';
+      };
+
+      if (!gateBars || !gateBars.length) {
+        ['g1', 'g2', 'g3', 'g4c', 'g4p'].forEach(id => document.getElementById(id).className = 'gate');
+        return;
+      }
+
+      const last = gateBars[gateBars.length - 1].ind;
+      if (!last) return;
+
+      // G4: STC hook at current bar with delta bounds (matches live bot exactly)
+      const stcDelta = (last.schaff_value != null && last.prev_schaff_value != null)
+        ? (last.schaff_value - last.prev_schaff_value) : null;
+      const g4c = stcDelta != null && last.prev_schaff_value <= 25 && stcDelta >= 0 && stcDelta < 0.5;
+      const g4p = stcDelta != null && last.prev_schaff_value >= 85 && stcDelta <= 0 && stcDelta >= -0.9;
+      setGate('g4c', g4c, false);
+      setGate('g4p', false, g4p);
+
+      // G1: candle pierced BB band within last 3 bars AND bb_width_bps >= 10
+      let g1c = false, g1p = false;
+      for (let i = Math.max(0, gateBars.length - 3); i < gateBars.length; i++) {
+        const { can, ind } = gateBars[i];
+        if (!ind || !can || ind.bb_width_bps == null || ind.bb_width_bps < 10) continue;
+        if (can.low <= ind.bb_lower) g1c = true;
+        if (can.high >= ind.bb_upper) g1p = true;
+      }
+      setGate('g1', g1c, g1p);
+
+      // G2: stoch cross from extreme zone
+      // Real bot: cross at C-1, zone check at pre-cross bar C-2, confirm at current bar C
+      let g2c = false, g2p = false;
+      if (gateBars.length >= 3) {
+        const c2 = gateBars[gateBars.length - 3].ind;
+        const c1 = gateBars[gateBars.length - 2].ind;
+        const c0 = gateBars[gateBars.length - 1].ind;
+        if (c2 && c1 && c0 && c2.stochastic_k_v2 != null && c1.stochastic_k_v2 != null && c0.stochastic_k_v2 != null) {
+          const diff = Math.abs(c0.stochastic_k_v2 - c0.stochastic_d_v2);
+          // CALL: cross up at C-1, K/D both < 30 at C-2, K < 50 and spreading at C
+          if (c2.stochastic_k_v2 <= c2.stochastic_d_v2 && c1.stochastic_k_v2 > c1.stochastic_d_v2
+            && c2.stochastic_k_v2 < 30 && c2.stochastic_d_v2 < 30
+            && c0.stochastic_k_v2 < 50 && diff > 0.5) g2c = true;
+          // PUT: cross down at C-1, K/D both > 80 at C-2, K > 50 and spreading at C
+          if (c2.stochastic_k_v2 >= c2.stochastic_d_v2 && c1.stochastic_k_v2 < c1.stochastic_d_v2
+            && c2.stochastic_k_v2 > 80 && c2.stochastic_d_v2 > 80
+            && c0.stochastic_k_v2 > 50 && diff > 0.5) g2p = true;
+        }
+      }
+      setGate('g2', g2c, g2p);
+
+      // G3: CCI crossed ±100 with depth < -150 (CALL) or > 175 (PUT) in 10 bars before cross
+      let g3c = false, g3p = false;
+      const cciVals = gateBars.map(b => b.ind ? b.ind.cci_8 : null);
+      for (let x = 1; x < cciVals.length; x++) {
+        const prev = cciVals[x - 1], curr = cciVals[x];
+        if (prev == null || curr == null) continue;
+        if (!g3c && prev < -100 && curr >= -100) {
+          const slice = cciVals.slice(Math.max(0, x - 10), x).filter(v => v != null);
+          if (slice.length && Math.min(...slice) < -150) g3c = true;
+        }
+        if (!g3p && prev > 100 && curr <= 100) {
+          const slice = cciVals.slice(Math.max(0, x - 10), x).filter(v => v != null);
+          if (slice.length && Math.max(...slice) > 175) g3p = true;
+        }
+      }
+      setGate('g3', g3c, g3p);
     }
 
     // ── replay mode functions ─────────────────────────────────────────
@@ -708,7 +775,7 @@
 
         if (isPlaying) togglePlay();
 
-        intervalId = setInterval(loadData, parseInt(document.getElementById('intervalSelect').value));
+        startInterval();
 
         replayIndex = fullCandles.length;
         renderFrame(replayIndex);
@@ -809,87 +876,70 @@
       if (currentCandles.length === 0) return;
       const currentLastTimestamp = currentCandles[currentCandles.length - 1].timestamp;
 
-      // Create candle map for fast lookup
       const candleMap = new Map();
       fullCandles.forEach(c => candleMap.set(c.timestamp, c));
 
-      let lastFireIndex = -100; // Cooldown tracker to prevent clustered duplicates
+      let lastFireIndex = -100;
 
-      // Simulate strategy logic up to replayIndex
+      const boundOB = pStochOU === 100 ? 80 : pStochOU;
+      const boundOS = pStochOU === 100 ? 20 : (100 - pStochOU);
+
       for (let i = 0; i < fullIndicators.length; i++) {
         const ind = fullIndicators[i];
         if (ind.timestamp > currentLastTimestamp) break;
 
-        let bb_call_pass = 0, bb_put_pass = 0, stoch_call_pass = 0, stoch_put_pass = 0, cci_call_pass = 0, cci_put_pass = 0, stcc_pass = 0, stcp_pass = 0;
-        let current_any_pass_call = false;
-        let current_any_pass_put = false;
+        // ── STC: evaluated at current bar only (trigger gate, not a window gate) ──
+        const stcDelta = (ind.schaff_value != null && ind.prev_schaff_value != null)
+          ? ind.schaff_value - ind.prev_schaff_value : null;
+        const stcc_pass = (stcDelta != null && ind.prev_schaff_value <= pSTCc && stcDelta >= 0) ? 1 : 0;
+        const stcp_pass = (stcDelta != null && ind.prev_schaff_value >= pSTCp && stcDelta <= 0) ? 1 : 0;
 
-        let boundOB = pStochOU === 100 ? 80 : pStochOU;
-        let boundOS = pStochOU === 100 ? 20 : (100 - pStochOU);
+        // ── BB, Stoch, CCI: all sweep the same pLookback window ──
+        let bb_call_pass = 0, bb_put_pass = 0;
+        let stoch_call_pass = 0, stoch_put_pass = 0;
+        let cci_call_pass = 0, cci_put_pass = 0;
+
         let currentNeutral = (ind.stochastic_k_v2 > boundOS && ind.stochastic_k_v2 < boundOB);
-        let crossedExtremeCall = false;
-        let crossedExtremePut = false;
+        let crossedExtremeCall = false, crossedExtremePut = false;
 
-        // Sweep backwards up to pLookback candles
         for (let step = 0; step <= pLookback; step++) {
           if (i - step < 0) break;
-          let pastInd = fullIndicators[i - step];
-          let pastCandle = candleMap.get(pastInd.timestamp);
+          const pi = fullIndicators[i - step];
+          const pc = candleMap.get(pi.timestamp);
 
-          let g1_c = 0, g1_p = 0;
-          if (pBBReq) {
-            if (pastCandle) {
-              if (pastCandle.low <= pastInd.bb_lower) g1_c = 1;
-              if (pastCandle.high >= pastInd.bb_upper) g1_p = 1;
+          // G1 — BB pierce within window
+          if (!bb_call_pass || !bb_put_pass) {
+            if (pBBReq) {
+              if (pc) {
+                if (pc.low <= pi.bb_lower) bb_call_pass = 1;
+                if (pc.high >= pi.bb_upper) bb_put_pass = 1;
+              }
+            } else {
+              bb_call_pass = 1; bb_put_pass = 1;
             }
-          } else {
-            g1_c = 1; g1_p = 1;
           }
 
-          let g2_c = 0, g2_p = 0;
-
+          // G2 — Stoch divergence within window
           if (pStochEscape) {
-            // Look for cross while deep in the extreme zone
-            if (pastInd.stochastic_k_v2 <= boundOS && pastInd.stochastic_d_v2 <= boundOS) {
-              if (pastInd.stochastic_k_v2 > pastInd.stochastic_d_v2 && Math.abs(pastInd.stochastic_k_v2 - pastInd.stochastic_d_v2) > pStoch) crossedExtremeCall = true;
-            }
-            if (pastInd.stochastic_k_v2 >= boundOB && pastInd.stochastic_d_v2 >= boundOB) {
-              if (pastInd.stochastic_k_v2 < pastInd.stochastic_d_v2 && Math.abs(pastInd.stochastic_k_v2 - pastInd.stochastic_d_v2) > pStoch) crossedExtremePut = true;
-            }
+            if (pi.stochastic_k_v2 <= boundOS && pi.stochastic_d_v2 <= boundOS &&
+              pi.stochastic_k_v2 > pi.stochastic_d_v2 &&
+              Math.abs(pi.stochastic_k_v2 - pi.stochastic_d_v2) > pStoch) crossedExtremeCall = true;
+            if (pi.stochastic_k_v2 >= boundOB && pi.stochastic_d_v2 >= boundOB &&
+              pi.stochastic_k_v2 < pi.stochastic_d_v2 &&
+              Math.abs(pi.stochastic_k_v2 - pi.stochastic_d_v2) > pStoch) crossedExtremePut = true;
           } else {
-            // Standard Logic: Divergence + Overbought/Oversold zones
-            let stochValidDiv = (pastInd.stochastic_k_v2 != null && pastInd.stochastic_d_v2 != null && Math.abs(pastInd.stochastic_k_v2 - pastInd.stochastic_d_v2) > pStoch);
-            let stochOS = pStochOU === 100 ? true : (pastInd.stochastic_k_v2 <= boundOS); // Oversold for Calls
-            let stochOB = pStochOU === 100 ? true : (pastInd.stochastic_k_v2 >= boundOB); // Overbought for Puts
-
-            g2_c = (stochValidDiv && stochOS) ? 1 : 0;
-            g2_p = (stochValidDiv && stochOB) ? 1 : 0;
+            const div = pi.stochastic_k_v2 != null && pi.stochastic_d_v2 != null &&
+              Math.abs(pi.stochastic_k_v2 - pi.stochastic_d_v2) > pStoch;
+            const os = pStochOU === 100 ? true : (pi.stochastic_k_v2 <= boundOS);
+            const ob = pStochOU === 100 ? true : (pi.stochastic_k_v2 >= boundOB);
+            if (div && os) stoch_call_pass = 1;
+            if (div && ob) stoch_put_pass = 1;
           }
 
-          let g3_c = (pastInd.cci_8 != null && pastInd.cci_8 < -pCCI) ? 1 : 0;
-          let g3_p = (pastInd.cci_8 != null && pastInd.cci_8 > pCCI) ? 1 : 0;
-          let g4c = (pastInd.prev_schaff_value != null && pastInd.schaff_value != null && pastInd.prev_schaff_value <= pSTCc && (pastInd.schaff_value - pastInd.prev_schaff_value) >= 0) ? 1 : 0;
-          let g4p = (pastInd.prev_schaff_value != null && pastInd.schaff_value != null && pastInd.prev_schaff_value >= pSTCp && (pastInd.schaff_value - pastInd.prev_schaff_value) <= 0) ? 1 : 0;
-
-          if (g1_c) bb_call_pass = 1;
-          if (g1_p) bb_put_pass = 1;
-          if (g3_c) cci_call_pass = 1;
-          if (g3_p) cci_put_pass = 1;
-          if (g4c) stcc_pass = 1;
-          if (g4p) stcp_pass = 1;
-
-          if (!pStochEscape) {
-            if (g2_c) stoch_call_pass = 1;
-            if (g2_p) stoch_put_pass = 1;
-          }
-
-          if (step === 0) { // Current candle provided a trigger
-            if (g1_c || g2_c || g3_c || g4c) current_any_pass_call = true;
-            if (g1_p || g2_p || g3_p || g4p) current_any_pass_put = true;
-            if (pStochEscape && currentNeutral) {
-              current_any_pass_call = true;
-              current_any_pass_put = true;
-            }
+          // G3 — CCI depth within window
+          if (pi.cci_8 != null) {
+            if (pi.cci_8 < -pCCI) cci_call_pass = 1;
+            if (pi.cci_8 > pCCI) cci_put_pass = 1;
           }
         }
 
@@ -898,16 +948,17 @@
           stoch_put_pass = (currentNeutral && crossedExtremePut) ? 1 : 0;
         }
 
-        let callConf = bb_call_pass + stoch_call_pass + cci_call_pass + stcc_pass;
-        let putConf = bb_put_pass + stoch_put_pass + cci_put_pass + stcp_pass;
+        // Confluence: BB + Stoch + CCI (window) + STC (current bar) = max 4
+        const callConf = bb_call_pass + stoch_call_pass + cci_call_pass + stcc_pass;
+        const putConf = bb_put_pass + stoch_put_pass + cci_put_pass + stcp_pass;
 
-        // Prevent duplicate signals firing repeatedly if conditions stay met
-        let inCooldown = (i - lastFireIndex) <= pLookback;
+        // Cooldown: suppress re-firing within pLookback bars of last signal
+        const inCooldown = (i - lastFireIndex) <= pLookback;
 
-        if (callConf >= pConf && current_any_pass_call && !inCooldown) {
+        if (callConf >= pConf && !inCooldown) {
           simulatedSignals.push({ timestamp: ind.timestamp, direction: 'CALL', result: 'SIM' });
           lastFireIndex = i;
-        } else if (putConf >= pConf && current_any_pass_put && !inCooldown) {
+        } else if (putConf >= pConf && !inCooldown) {
           simulatedSignals.push({ timestamp: ind.timestamp, direction: 'PUT', result: 'SIM' });
           lastFireIndex = i;
         }
@@ -925,17 +976,20 @@
     // ── controls ──────────────────────────────────────────────────────
     document.getElementById('assetSelect').addEventListener('change', loadData);
     document.getElementById('limitSelect').addEventListener('change', loadData);
-    document.getElementById('intervalSelect').addEventListener('change', () => {
+    function startInterval() {
       clearInterval(intervalId);
-      intervalId = setInterval(loadData, parseInt(document.getElementById('intervalSelect').value));
-    });
+      const ms = parseInt(document.getElementById('intervalSelect').value);
+      if (ms > 0) intervalId = setInterval(loadData, ms);
+    }
+
+    document.getElementById('intervalSelect').addEventListener('change', startInterval);
 
     // Defer until after the browser has painted the flex layout so
     // clientWidth/clientHeight return real pixel values, not 0.
     requestAnimationFrame(() => {
       initCharts();
       loadAssets();
-      // intervalId = setInterval(loadData, 10000);
+      startInterval();
     });
   </script>
 </body>
