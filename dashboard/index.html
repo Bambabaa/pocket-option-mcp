@@ -221,6 +221,7 @@
       display: flex;
       flex-direction: column;
       border-bottom: 1px solid #2a2e39;
+      min-height: 0;
     }
 
     .panel:last-child {
@@ -713,6 +714,7 @@
         renderFrame(replayIndex);
         mainChart.timeScale().fitContent();
       }
+      setTimeout(resizeAll, 0);
     }
 
     function stepForward() {
@@ -779,6 +781,7 @@
         panel.classList.remove('active');
         renderFrame(replayIndex); // restores original signals
       }
+      setTimeout(resizeAll, 0);
     }
 
     function runSimulation() {
