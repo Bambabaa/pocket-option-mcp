@@ -382,7 +382,9 @@
     <div class="scoreboard">
       <span class="score-real">HIST: <span id="count_real">0</span></span>
       <span class="score-sim">SIM: <span id="count_sim">0</span></span>
-      <button onclick="exportSimConfig()" title="Export current simulator settings as JSON" style="font-size:10px;padding:2px 7px;background:#1e222d;color:#787b86;border:1px solid #2a2e39;border-radius:3px;cursor:pointer;margin-left:8px;">⬇ JSON</button>
+      <button onclick="exportSimConfig()" title="Export current simulator settings as JSON"
+        style="font-size:10px;padding:2px 7px;background:#1e222d;color:#787b86;border:1px solid #2a2e39;border-radius:3px;cursor:pointer;margin-left:8px;">⬇
+        JSON</button>
     </div>
   </div>
 
@@ -980,15 +982,15 @@
     function exportSimConfig() {
       const pStochOU = parseInt(document.getElementById('sim_stoch_ou').value);
       const config = {
-        bb_pierce:   document.getElementById('sim_bb_req').checked,
-        div_gap:     parseFloat(document.getElementById('sim_stoch').value),
-        ou_zone:     pStochOU === 100 ? 'OFF' : pStochOU,
+        bb_pierce: document.getElementById('sim_bb_req').checked,
+        div_gap: parseFloat(document.getElementById('sim_stoch').value),
+        ou_zone: pStochOU === 100 ? 'OFF' : pStochOU,
         zone_escape: document.getElementById('sim_stoch_escape').checked,
-        cci_min:     parseFloat(document.getElementById('sim_cci').value),
-        stc_call:    parseFloat(document.getElementById('sim_stcc').value),
-        stc_put:     parseFloat(document.getElementById('sim_stcp').value),
-        confluence:  parseInt(document.getElementById('sim_conf').value),
-        lookback:    parseInt(document.getElementById('sim_lookback').value)
+        cci_min: parseFloat(document.getElementById('sim_cci').value),
+        stc_call: parseFloat(document.getElementById('sim_stcc').value),
+        stc_put: parseFloat(document.getElementById('sim_stcp').value),
+        confluence: parseInt(document.getElementById('sim_conf').value),
+        lookback: parseInt(document.getElementById('sim_lookback').value)
       };
       const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
