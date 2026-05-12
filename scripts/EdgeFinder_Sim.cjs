@@ -36,11 +36,9 @@ const AMOUNT  = 500;
 const PAYOUT  = 0.92;
 const EXPIRIES = [1, 2, 3]; // minutes
 
-// Resolve asset filter: CLI > config meta > all
+// Resolve asset filter: CLI arg only — meta.asset is informational, not a filter
 const metaAsset   = cfg._meta?.asset ?? null;
-const assetFilter = assetArg
-  ? assetArg                          // CLI wins
-  : metaAsset ?? null;                // config meta, or null = all
+const assetFilter = (assetArg && assetArg !== 'all') ? assetArg : null; // null = all assets
 
 console.log('─── Edge Finder Simulation ───────────────────────────────');
 console.log(`Config : ${configPath}`);
@@ -75,13 +73,11 @@ const rows = db.prepare(`
     i.stochastic_k_v2, i.stochastic_d_v2,
     i.bb_upper, i.bb_middle, i.bb_lower,
     i.schaff_value,
+    LAG(i.schaff_value, 1) OVER (PARTITION BY i.asset ORDER BY i.timestamp) AS prev_schaff_value,
     i.cci_8
   FROM indicators i
   JOIN candles c ON c.asset = i.asset AND c.timestamp = i.timestamp
-  WHERE i.stochastic_k_v2 IS NOT NULL
-    AND i.bb_upper         IS NOT NULL
-    AND i.schaff_value     IS NOT NULL
-    AND i.cci_8            IS NOT NULL
+  WHERE 1=1
     ${assetWhere}
   ORDER BY i.asset, i.timestamp ASC
 `).all();
@@ -145,9 +141,10 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
 
     const r      = assetRows[idx];
     const stc    = r.schaff_value;
-    const stcPrev = assetRows[idx - 1].schaff_value;
+    const stcPrev = r.prev_schaff_value;
     const k      = r.stochastic_k_v2;
     const d      = r.stochastic_d_v2;
+    // Null rows count toward cooldown (matches dashboard behaviour) but skip gate evaluation
     if (stc == null || stcPrev == null || k == null || d == null) continue;
 
     const stcDelta = stc - stcPrev;
@@ -170,9 +167,10 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
       let g1_pass = G1_BB_PIERCE ? 0 : 1; // if BB not required, always pass
       let g2_pass = 0, g3_pass = 0;
 
-      // Zone escape tracking (resolved after loop)
+      // Zone escape + CCI cross tracking (resolved after loop)
       const currentNeutral = k > BOUND_OS && k < BOUND_OB;
       let sawExtCall = false, sawExtPut = false;
+      let crossedCCI_call = false, crossedCCI_put = false;
 
       for (let step = 0; step <= LOOKBACK; step++) {
         if (idx - step < 0) break;
@@ -188,24 +186,29 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
 
         // G2 — Stoch
         if (pk != null && pd != null) {
+          const gap = Math.abs(pk - pd);
           if (ZONE_ESCAPE) {
-            // Track if K and D were both deep in the extreme zone within window
-            if (pk <= BOUND_OS && pd <= BOUND_OS) sawExtCall = true;
-            if (pk >= BOUND_OB && pd >= BOUND_OB) sawExtPut  = true;
+            // Require K crossed D inside the extreme zone with minimum gap (matches dashboard)
+            if (pk <= BOUND_OS && pd <= BOUND_OS && pk > pd && gap > STOCH_GAP) sawExtCall = true;
+            if (pk >= BOUND_OB && pd >= BOUND_OB && pk < pd && gap > STOCH_GAP) sawExtPut  = true;
           } else {
-            // Require K in zone, K > D (CALL) or K < D (PUT), gap > min
-            const gap = Math.abs(pk - pd);
             if (direction === 'CALL' && pk <= BOUND_OS && pk > pd && gap > STOCH_GAP) g2_pass = 1;
             if (direction === 'PUT'  && pk >= BOUND_OB && pk < pd && gap > STOCH_GAP) g2_pass = 1;
           }
         }
 
-        // G3 — CCI depth within window (fire at extreme, not after cross)
-        if (!g3_pass && pi.cci_8 != null) {
-          if (direction === 'CALL' && pi.cci_8 < -CCI_THRESH) g3_pass = 1;
-          if (direction === 'PUT'  && pi.cci_8 >  CCI_THRESH) g3_pass = 1;
+        // G3 — CCI cross of ±CCI_THRESH within window (matches dashboard runSimulation)
+        if (pi.cci_8 != null && idx - step - 1 >= 0) {
+          const pi_prev = assetRows[idx - step - 1];
+          if (pi_prev && pi_prev.cci_8 != null) {
+            if (pi_prev.cci_8 < -CCI_THRESH && pi.cci_8 >= -CCI_THRESH) crossedCCI_call = true;
+            if (pi_prev.cci_8 > CCI_THRESH  && pi.cci_8 <= CCI_THRESH)  crossedCCI_put  = true;
+          }
         }
       }
+
+      g3_pass = (direction === 'CALL' && crossedCCI_call) ? 1 :
+                (direction === 'PUT'  && crossedCCI_put)  ? 1 : 0;
 
       // Resolve zone escape: extreme seen in window + current K back in neutral zone
       if (ZONE_ESCAPE) {
