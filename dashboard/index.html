@@ -908,6 +908,7 @@
 
         let currentNeutral = (ind.stochastic_k_v2 > boundOS && ind.stochastic_k_v2 < boundOB);
         let crossedExtremeCall = false, crossedExtremePut = false;
+        let crossedCCI_call = false, crossedCCI_put = false;
 
         for (let step = 0; step <= pLookback; step++) {
           if (i - step < 0) break;
@@ -943,12 +944,18 @@
             if (div && ob) stoch_put_pass = 1;
           }
 
-          // G3 — CCI depth within window
-          if (pi.cci_8 != null) {
-            if (pi.cci_8 < -pCCI) cci_call_pass = 1;
-            if (pi.cci_8 > pCCI) cci_put_pass = 1;
+          // G3 — CCI cross of ±pCCI within window
+          if (pi.cci_8 != null && i - step - 1 >= 0) {
+            const pi_prev = fullIndicators[i - step - 1];
+            if (pi_prev && pi_prev.cci_8 != null) {
+              if (pi_prev.cci_8 < -pCCI && pi.cci_8 >= -pCCI) crossedCCI_call = true;
+              if (pi_prev.cci_8 > pCCI  && pi.cci_8 <= pCCI)  crossedCCI_put  = true;
+            }
           }
         }
+
+        cci_call_pass = crossedCCI_call ? 1 : 0;
+        cci_put_pass  = crossedCCI_put  ? 1 : 0;
 
         if (pStochEscape) {
           stoch_call_pass = (currentNeutral && crossedExtremeCall) ? 1 : 0;
@@ -984,22 +991,31 @@
     document.getElementById('assetSelect').addEventListener('change', loadData);
     document.getElementById('limitSelect').addEventListener('change', loadData);
     function exportSimConfig() {
+      const asset = document.getElementById('assetSelect').value || 'unknown';
       const pStochOU = parseInt(document.getElementById('sim_stoch_ou').value);
+      const totalBars = fullCandles.length;
       const config = {
-        bb_pierce: document.getElementById('sim_bb_req').checked,
-        div_gap: parseFloat(document.getElementById('sim_stoch').value),
-        ou_zone: pStochOU === 100 ? 'OFF' : pStochOU,
-        zone_escape: document.getElementById('sim_stoch_escape').checked,
-        cci_min: parseFloat(document.getElementById('sim_cci').value),
-        stc_call: parseFloat(document.getElementById('sim_stcc').value),
-        stc_put: parseFloat(document.getElementById('sim_stcp').value),
-        confluence: parseInt(document.getElementById('sim_conf').value),
-        lookback: parseInt(document.getElementById('sim_lookback').value)
+        _meta: {
+          asset,
+          exported_at: new Date().toISOString(),
+          replay_bar: replayIndex,
+          total_bars: totalBars
+        },
+        g1_bb_pierce_required: document.getElementById('sim_bb_req').checked,
+        g2_stoch_kd_gap_min: parseFloat(document.getElementById('sim_stoch').value),
+        g2_stoch_ou_zone_pct: pStochOU === 100 ? 'OFF' : pStochOU,
+        g2_stoch_zone_escape_mode: document.getElementById('sim_stoch_escape').checked,
+        g3_cci_cross_threshold: parseFloat(document.getElementById('sim_cci').value),
+        g4_stc_call_ceiling: parseFloat(document.getElementById('sim_stcc').value),
+        g4_stc_put_floor: parseFloat(document.getElementById('sim_stcp').value),
+        g4_stc_delta_direction_only: true,
+        min_confluence_gates: parseInt(document.getElementById('sim_conf').value),
+        lookback_bars: parseInt(document.getElementById('sim_lookback').value)
       };
       const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'sim_config.json';
+      a.download = `sim_config_${asset}_${new Date().toISOString().slice(0,10)}.json`;
       a.click();
       URL.revokeObjectURL(a.href);
     }
