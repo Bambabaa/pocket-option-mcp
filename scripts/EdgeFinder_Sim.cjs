@@ -1,6 +1,8 @@
 // Edge Finder Simulation — driven by exported sim_config JSON
 // Mirrors the dashboard Edge Finder confluence logic exactly
-// Usage: node scripts/EdgeFinder_Sim.cjs [simConfigJson] [dbPath] [outCsv]
+// Usage: node scripts/EdgeFinder_Sim.cjs [simConfigJson] [dbPath] [outCsv] [asset]
+//   asset: exact asset name (e.g. AEDCNY_otc) or partial match (e.g. AEDCNY) — default: all assets
+//   If omitted, uses _meta.asset from config if present, otherwise runs all assets.
 
 'use strict';
 const fs       = require('fs');
@@ -9,6 +11,8 @@ const Database = require('better-sqlite3');
 const configPath = process.argv[2] || 'dashboard/sch/sim_config_AEDCNY_otc_2026-05-12.json';
 const dbPath     = process.argv[3] || 'data/trading_data.db';
 const outPath    = process.argv[4] || 'data/edgefinder_signals.csv';
+// Asset filter: CLI arg > config _meta.asset > 'all'
+const assetArg   = process.argv[5] || null;
 
 // ─── Load & validate config ───────────────────────────────────────────────────
 const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -32,9 +36,15 @@ const AMOUNT  = 500;
 const PAYOUT  = 0.92;
 const EXPIRIES = [1, 2, 3]; // minutes
 
+// Resolve asset filter: CLI > config meta > all
+const metaAsset   = cfg._meta?.asset ?? null;
+const assetFilter = assetArg
+  ? assetArg                          // CLI wins
+  : metaAsset ?? null;                // config meta, or null = all
+
 console.log('─── Edge Finder Simulation ───────────────────────────────');
 console.log(`Config : ${configPath}`);
-console.log(`Asset  : ${cfg._meta?.asset ?? 'all'}`);
+console.log(`Asset  : ${assetFilter ?? 'all'}`);
 console.log(`Exported: ${cfg._meta?.exported_at ?? 'unknown'}`);
 console.log(`Settings:`);
 console.log(`  g1_bb_pierce_required  : ${G1_BB_PIERCE}`);
@@ -52,6 +62,12 @@ console.log('──────────────────────�
 // ─── Load candles + indicators ────────────────────────────────────────────────
 const db = new Database(dbPath, { readonly: true });
 
+// Asset filter: exact match if contains '_otc', otherwise LIKE 'ARG%_otc'
+const assetWhere = assetFilter
+  ? (assetFilter.includes('_') ? `AND i.asset = '${assetFilter}'`
+                                : `AND i.asset LIKE '${assetFilter.toUpperCase()}%'`)
+  : '';
+
 const rows = db.prepare(`
   SELECT
     i.asset, i.timestamp,
@@ -66,6 +82,7 @@ const rows = db.prepare(`
     AND i.bb_upper         IS NOT NULL
     AND i.schaff_value     IS NOT NULL
     AND i.cci_8            IS NOT NULL
+    ${assetWhere}
   ORDER BY i.asset, i.timestamp ASC
 `).all();
 
@@ -154,6 +171,7 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
       let g2_pass = 0, g3_pass = 0;
 
       // Zone escape tracking (resolved after loop)
+      const currentNeutral = k > BOUND_OS && k < BOUND_OB;
       let sawExtCall = false, sawExtPut = false;
 
       for (let step = 0; step <= LOOKBACK; step++) {
@@ -191,8 +209,8 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
 
       // Resolve zone escape: extreme seen in window + current K back in neutral zone
       if (ZONE_ESCAPE) {
-        g2_pass = (direction === 'CALL' && sawExtCall && k > BOUND_OS) ? 1 :
-                  (direction === 'PUT'  && sawExtPut  && k < BOUND_OB) ? 1 : 0;
+        g2_pass = (sawExtCall && currentNeutral && direction === 'CALL') ? 1 :
+                  (sawExtPut  && currentNeutral && direction === 'PUT')  ? 1 : 0;
       }
 
       // ── Confluence check ──────────────────────────────────────────────────
