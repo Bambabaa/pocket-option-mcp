@@ -6,6 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pocket Option Dashboard</title>
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
   <style>
     * {
       margin: 0;
@@ -285,6 +287,8 @@
       </select>
     </label>
     <button onclick="loadData()">Refresh</button>
+    <button id="screenshotBtn" onclick="takeScreenshot()" title="Capture dashboard as image">📷 Screenshot</button>
+
     <button id="signalToggle" class="toggle on" onclick="toggleSignals()">Signals: ON</button>
     <button id="replayToggle" class="toggle off" onclick="toggleReplay()">Replay: OFF</button>
     <button id="edgeToggle" class="toggle off" onclick="toggleEdgeFinder()">Edge Finder: OFF</button>
@@ -999,6 +1003,46 @@
       a.click();
       URL.revokeObjectURL(a.href);
     }
+    
+    async function takeScreenshot() {
+      const btn = document.getElementById('screenshotBtn');
+      const originalText = btn.textContent;
+      btn.textContent = '⌛ Capturing...';
+      btn.disabled = true;
+
+      try {
+        // Capture the entire dashboard wrapper
+        const canvas = await html2canvas(document.body, {
+          backgroundColor: '#0a0e27', // Match body background
+          scale: 2, // Higher resolution
+          logging: false,
+          useCORS: true,
+          // Help html2canvas find the charts which are often in nested divs
+          onclone: (clonedDoc) => {
+            clonedDoc.getElementById('screenshotBtn').style.display = 'none';
+          }
+        });
+
+        // Generate filename with timestamp
+        const asset = document.getElementById('assetSelect').value || 'dashboard';
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
+        const time = new Date().toLocaleTimeString().replace(/[:. ]/g, '-');
+        const filename = `screenshot-${asset}-${timestamp}-${time}.png`;
+
+        // Download the image
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      } catch (err) {
+        console.error('Screenshot failed:', err);
+        alert('Failed to capture screenshot. Check console for details.');
+      } finally {
+        btn.textContent = originalText;
+        btn.disabled = false;
+      }
+    }
+
 
     function startInterval() {
       clearInterval(intervalId);
