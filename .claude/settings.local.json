@@ -46,5 +46,9 @@
       "mcp__pocket-option__po_cancel_order",
       "Bash(curl *)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "pocket-option"
+  ],
+  "enableAllProjectMcpServers": true
 }
