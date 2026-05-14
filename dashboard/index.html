@@ -366,6 +366,28 @@
       </div>
     </div>
 
+    <!-- ── G4 Advanced: Goldilocks Zone + Velocity ─────────────────────── -->
+    <div class="edge-section" title="G4 Advanced Filters: Goldilocks Zone forces the STC to sit in a precise reversal band; Velocity requires a minimum momentum jump.">
+      <div class="edge-group">
+        <label style="color:#ffb74d; font-size:10px; font-weight:700;">🔶 G4 ADV</label>
+      </div>
+      <div class="edge-group">
+        <label>GL Floor <span class="edge-val" id="val_gl_floor">OFF</span></label>
+        <input type="range" id="sim_gl_floor" min="0" max="20" step="1" value="0" oninput="runSimulation()"
+          title="Goldilocks Floor: CALL STC must be ABOVE this. 0 = OFF.">
+      </div>
+      <div class="edge-group">
+        <label>GL Ceil <span class="edge-val" id="val_gl_ceil">OFF</span></label>
+        <input type="range" id="sim_gl_ceil" min="0" max="50" step="1" value="50" oninput="runSimulation()"
+          title="Goldilocks Ceiling: CALL STC must be BELOW this (mirrors for PUTs). 50 = OFF.">
+      </div>
+      <div class="edge-group">
+        <label>Velocity <span class="edge-val" id="val_velocity">OFF</span></label>
+        <input type="range" id="sim_velocity" min="0" max="5" step="0.5" value="0" oninput="runSimulation()"
+          title="Min STC |Delta|: Filters out slow Death-Grind twitches. 0 = OFF.">
+      </div>
+    </div>
+
     <div class="edge-section">
       <div class="edge-group">
         <label>Confluence</label>
@@ -861,22 +883,32 @@
     function runSimulation() {
       if (!isEdgeFinderMode) return;
 
-      const pBBReq = document.getElementById('sim_bb_req').checked;
-      const pStoch = parseFloat(document.getElementById('sim_stoch').value);
-      const pStochOU = parseInt(document.getElementById('sim_stoch_ou').value);
+      const pBBReq       = document.getElementById('sim_bb_req').checked;
+      const pStoch       = parseFloat(document.getElementById('sim_stoch').value);
+      const pStochOU     = parseInt(document.getElementById('sim_stoch_ou').value);
       const pStochEscape = document.getElementById('sim_stoch_escape').checked;
-      const pCCI = parseFloat(document.getElementById('sim_cci').value);
-      const pSTCc = parseFloat(document.getElementById('sim_stcc').value);
-      const pSTCp = parseFloat(document.getElementById('sim_stcp').value);
-      const pConf = parseInt(document.getElementById('sim_conf').value);
-      const pLookback = parseInt(document.getElementById('sim_lookback').value);
+      const pCCI         = parseFloat(document.getElementById('sim_cci').value);
+      const pSTCc        = parseFloat(document.getElementById('sim_stcc').value);
+      const pSTCp        = parseFloat(document.getElementById('sim_stcp').value);
+      const pConf        = parseInt(document.getElementById('sim_conf').value);
+      const pLookback    = parseInt(document.getElementById('sim_lookback').value);
 
-      document.getElementById('val_stoch').textContent = pStoch;
-      document.getElementById('val_stoch_ou').textContent = (pStochOU === 100) ? 'OFF' : (pStochOU + '/' + (100 - pStochOU));
-      document.getElementById('val_cci').textContent = pCCI;
-      document.getElementById('val_stcc').textContent = pSTCc;
-      document.getElementById('val_stcp').textContent = pSTCp;
-      document.getElementById('val_lookback').textContent = pLookback;
+      // ── G4 Advanced: Goldilocks + Velocity ────────────────────────────
+      const pGLFloor    = parseInt(document.getElementById('sim_gl_floor').value);   // 0 = OFF
+      const pGLCeil     = parseInt(document.getElementById('sim_gl_ceil').value);    // 50 = OFF
+      const pVelocity   = parseFloat(document.getElementById('sim_velocity').value); // 0 = OFF
+      const glActive    = pGLFloor > 0 || pGLCeil < 50; // either slider moved
+
+      // Update display labels
+      document.getElementById('val_stoch').textContent     = pStoch;
+      document.getElementById('val_stoch_ou').textContent  = (pStochOU === 100) ? 'OFF' : (pStochOU + '/' + (100 - pStochOU));
+      document.getElementById('val_cci').textContent       = pCCI;
+      document.getElementById('val_stcc').textContent      = pSTCc;
+      document.getElementById('val_stcp').textContent      = pSTCp;
+      document.getElementById('val_lookback').textContent  = pLookback;
+      document.getElementById('val_gl_floor').textContent  = pGLFloor === 0  ? 'OFF' : pGLFloor;
+      document.getElementById('val_gl_ceil').textContent   = pGLCeil  === 50 ? 'OFF' : pGLCeil;
+      document.getElementById('val_velocity').textContent  = pVelocity === 0 ? 'OFF' : pVelocity;
 
       simulatedSignals = [];
       const currentCandles = fullCandles.slice(0, replayIndex);
@@ -895,11 +927,35 @@
         const ind = fullIndicators[i];
         if (ind.timestamp > currentLastTimestamp) break;
 
-        // ── STC: evaluated at current bar only (trigger gate, not a window gate) ──
+        // ── STC: evaluated at current bar only (G4 trigger gate) ─────────
         const stcDelta = (ind.schaff_value != null && ind.prev_schaff_value != null)
           ? ind.schaff_value - ind.prev_schaff_value : null;
-        const stcc_pass = (stcDelta != null && ind.prev_schaff_value <= pSTCc && stcDelta >= 0) ? 1 : 0;
-        const stcp_pass = (stcDelta != null && ind.prev_schaff_value >= pSTCp && stcDelta <= 0) ? 1 : 0;
+
+        // Base ceiling pass (original logic)
+        let stcc_pass = (stcDelta != null && ind.prev_schaff_value <= pSTCc && stcDelta >= 0) ? 1 : 0;
+        let stcp_pass = (stcDelta != null && ind.prev_schaff_value >= pSTCp && stcDelta <= 0) ? 1 : 0;
+
+        // ── Goldilocks Zone (if active): current STC must sit in [floor, ceil] ──
+        // CALL: ind.schaff_value (current) must be >= floor AND <= ceil
+        // PUT:  ind.schaff_value must be >= (100-ceil) AND <= (100-floor)
+        if (stcc_pass && glActive) {
+          const curStc = ind.schaff_value;
+          if (curStc < pGLFloor || curStc > pGLCeil) stcc_pass = 0;
+        }
+        if (stcp_pass && glActive) {
+          const curStc = ind.schaff_value;
+          const putFloor = 100 - pGLCeil;
+          const putCeil  = 100 - pGLFloor;
+          if (curStc < putFloor || curStc > putCeil) stcp_pass = 0;
+        }
+
+        // ── Velocity Filter (if active): |stcDelta| must meet minimum ────
+        if (stcc_pass && pVelocity > 0) {
+          if (stcDelta === null || stcDelta < pVelocity) stcc_pass = 0;
+        }
+        if (stcp_pass && pVelocity > 0) {
+          if (stcDelta === null || stcDelta > -pVelocity) stcp_pass = 0;
+        }
 
         // ── BB, Stoch, CCI: all sweep the same pLookback window ──
         let bb_call_pass = 0, bb_put_pass = 0;
