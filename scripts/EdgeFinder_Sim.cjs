@@ -91,8 +91,12 @@ const rows = db.prepare(`
 
 // ─── Tick prices for exit lookup ──────────────────────────────────────────────
 const pricesByAsset = {};
+const priceWhere = assetFilter
+  ? (assetFilter.includes('_') ? `WHERE asset = '${assetFilter}'`
+                                : `WHERE asset LIKE '${assetFilter.toUpperCase()}%'`)
+  : '';
 for (const p of db.prepare(
-  'SELECT asset, timestamp, price FROM prices ORDER BY asset, timestamp ASC'
+  `SELECT asset, timestamp, price FROM prices ${priceWhere} ORDER BY asset, timestamp ASC`
 ).all()) {
   if (!pricesByAsset[p.asset]) pricesByAsset[p.asset] = [];
   pricesByAsset[p.asset].push(p);
