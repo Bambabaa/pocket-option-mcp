@@ -721,11 +721,13 @@
       const last = gateBars[gateBars.length - 1].ind;
       if (!last) return;
 
-      // G4: STC hook at current bar with delta bounds (matches live bot exactly)
+      // G4: STC hook — matches simulator direction-only logic, reads live slider values
       const stcDelta = (last.schaff_value != null && last.prev_schaff_value != null)
         ? (last.schaff_value - last.prev_schaff_value) : null;
-      const g4c = stcDelta != null && last.prev_schaff_value <= 25 && stcDelta >= 0 && stcDelta < 0.5;
-      const g4p = stcDelta != null && last.prev_schaff_value >= 85 && stcDelta <= 0 && stcDelta >= -0.9;
+      const pSTCc = parseFloat(document.getElementById('sim_stcc').value);
+      const pSTCp = parseFloat(document.getElementById('sim_stcp').value);
+      const g4c = stcDelta != null && last.prev_schaff_value <= pSTCc && stcDelta >= 0;
+      const g4p = stcDelta != null && last.prev_schaff_value >= pSTCp && stcDelta <= 0;
       setGate('g4c', g4c, false);
       setGate('g4p', false, g4p);
 
@@ -1065,6 +1067,9 @@
         g4_stc_call_ceiling: parseFloat(document.getElementById('sim_stcc').value),
         g4_stc_put_floor: parseFloat(document.getElementById('sim_stcp').value),
         g4_stc_delta_direction_only: true,
+        g4_goldilocks_floor: parseInt(document.getElementById('sim_gl_floor').value),
+        g4_goldilocks_ceil: parseInt(document.getElementById('sim_gl_ceil').value),
+        g4_velocity_min: parseFloat(document.getElementById('sim_velocity').value),
         min_confluence_gates: parseInt(document.getElementById('sim_conf').value),
         lookback_bars: parseInt(document.getElementById('sim_lookback').value)
       };

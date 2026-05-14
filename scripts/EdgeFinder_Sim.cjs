@@ -25,6 +25,10 @@ const CCI_THRESH     = cfg.g3_cci_cross_threshold;        // e.g. 100
 const STC_CALL_CEIL  = cfg.g4_stc_call_ceiling;           // e.g. 25
 const STC_PUT_FLOOR  = cfg.g4_stc_put_floor;              // e.g. 85
 const DELTA_DIR_ONLY = cfg.g4_stc_delta_direction_only;   // true = no magnitude cap
+const GL_FLOOR       = cfg.g4_goldilocks_floor ?? 0;      // 0 = OFF
+const GL_CEIL        = cfg.g4_goldilocks_ceil  ?? 50;     // 50 = OFF
+const GL_ACTIVE      = GL_FLOOR > 0 || GL_CEIL < 50;
+const VELOCITY       = cfg.g4_velocity_min ?? 0;          // 0 = OFF
 const MIN_CONF       = cfg.min_confluence_gates;          // e.g. 4
 const LOOKBACK       = cfg.lookback_bars;                 // e.g. 2
 
@@ -53,6 +57,9 @@ console.log(`  g3_cci_cross_threshold : ±${CCI_THRESH}`);
 console.log(`  g4_stc_call_ceiling    : ${STC_CALL_CEIL}`);
 console.log(`  g4_stc_put_floor       : ${STC_PUT_FLOOR}`);
 console.log(`  g4_stc_delta_dir_only  : ${DELTA_DIR_ONLY}`);
+console.log(`  g4_goldilocks_floor    : ${GL_FLOOR === 0  ? 'OFF' : GL_FLOOR}`);
+console.log(`  g4_goldilocks_ceil     : ${GL_CEIL  === 50 ? 'OFF' : GL_CEIL}`);
+console.log(`  g4_velocity_min        : ${VELOCITY  === 0  ? 'OFF' : VELOCITY}`);
 console.log(`  min_confluence_gates   : ${MIN_CONF}`);
 console.log(`  lookback_bars          : ${LOOKBACK}`);
 console.log('──────────────────────────────────────────────────────────');
@@ -154,13 +161,15 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
       // ── G4: STC — current bar only (trigger gate) ─────────────────────────
       let g4_pass = 0;
       if (direction === 'CALL') {
-        const ok = stcPrev <= STC_CALL_CEIL && stcDelta >= 0 &&
-                   (DELTA_DIR_ONLY || stcDelta < 0.5);
-        if (ok) g4_pass = 1;
+        const base = stcPrev <= STC_CALL_CEIL;
+        const vel  = stcDelta >= (VELOCITY > 0 ? VELOCITY : 0);
+        const gl   = !GL_ACTIVE || (stc >= GL_FLOOR && stc <= GL_CEIL);
+        if (base && vel && gl) g4_pass = 1;
       } else {
-        const ok = stcPrev >= STC_PUT_FLOOR && stcDelta <= 0 &&
-                   (DELTA_DIR_ONLY || stcDelta > -0.9);
-        if (ok) g4_pass = 1;
+        const base = stcPrev >= STC_PUT_FLOOR;
+        const vel  = stcDelta <= (VELOCITY > 0 ? -VELOCITY : 0);
+        const gl   = !GL_ACTIVE || (stc >= (100 - GL_CEIL) && stc <= (100 - GL_FLOOR));
+        if (base && vel && gl) g4_pass = 1;
       }
 
       // ── G1/G2/G3: sweep the lookback window ───────────────────────────────
