@@ -204,8 +204,11 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
             if (pk <= BOUND_OS && pd <= BOUND_OS && pk > pd && gap > STOCH_GAP) sawExtCall = true;
             if (pk >= BOUND_OB && pd >= BOUND_OB && pk < pd && gap > STOCH_GAP) sawExtPut = true;
           } else {
-            if (direction === 'CALL' && pk <= BOUND_OS && gap > STOCH_GAP) g2_pass = 1;
-            if (direction === 'PUT' && pk >= BOUND_OB && gap > STOCH_GAP) g2_pass = 1;
+            // When OU_ZONE=100 (OFF), skip zone restriction — matches dashboard behaviour
+            const inOS = OU_ZONE === 100 || pk <= BOUND_OS;
+            const inOB = OU_ZONE === 100 || pk >= BOUND_OB;
+            if (direction === 'CALL' && inOS && gap > STOCH_GAP) g2_pass = 1;
+            if (direction === 'PUT' && inOB && gap > STOCH_GAP) g2_pass = 1;
           }
         }
 
@@ -238,8 +241,8 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
 
       // Informational only — does not affect signal decision
       // Thresholds mirror Goldilocks bounds: GL_FLOOR for CALL extreme, (100-GL_FLOOR) for PUT extreme
-      const PIN_CALL_FLOOR = GL_FLOOR > 0 ? GL_FLOOR : 5;
-      const PIN_PUT_CEIL = GL_FLOOR > 0 ? (100 - GL_FLOOR) : 95;
+      const PIN_CALL_FLOOR = 5;   // STC < 5 = deeply pinned at floor
+      const PIN_PUT_CEIL  = 95;  // STC > 95 = deeply pinned at ceiling
       let stc_pin_time = 0;
       for (let p = idx - 1; p >= 0; p--) {
         const s = assetRows[p].schaff_value;
