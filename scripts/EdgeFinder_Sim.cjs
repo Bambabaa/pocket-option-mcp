@@ -37,7 +37,7 @@ const BOUND_OS = OU_ZONE === 100 ? 20 : (100 - OU_ZONE);
 
 const AMOUNT = 500;
 const PAYOUT = 0.92;
-const EXPIRIES = [1, 2, 3]; // minutes
+const EXPIRIES = [1, 2, 3, 5, 6, 8, 10]; // minutes
 
 // Resolve asset filter: CLI arg only — meta.asset is informational, not a filter
 const metaAsset = cfg._meta?.asset ?? null;
@@ -242,7 +242,7 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
       // Informational only — does not affect signal decision
       // Thresholds mirror Goldilocks bounds: GL_FLOOR for CALL extreme, (100-GL_FLOOR) for PUT extreme
       const PIN_CALL_FLOOR = 5;   // STC < 5 = deeply pinned at floor
-      const PIN_PUT_CEIL  = 95;  // STC > 95 = deeply pinned at ceiling
+      const PIN_PUT_CEIL = 95;  // STC > 95 = deeply pinned at ceiling
       let stc_pin_time = 0;
       for (let p = idx - 1; p >= 0; p--) {
         const s = assetRows[p].schaff_value;
