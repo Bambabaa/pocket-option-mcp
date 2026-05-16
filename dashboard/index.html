@@ -408,11 +408,9 @@
     <div class="scoreboard">
       <span class="score-real">HIST: <span id="count_real">0</span></span>
       <span class="score-sim">SIM: <span id="count_sim">0</span></span>
-      <span style="color:#26a69a;">2m WR: <span id="wr_sim">—</span></span>
       <button onclick="exportSimConfig()" title="Export current simulator settings as JSON"
-        style="font-size:10px;padding:2px 7px;background:#1e222d;color:#787b86;border:1px solid #2a2e39;border-radius:3px;cursor:pointer;margin-left:8px;">⬇ JSON</button>
-      <button onclick="exportSimCSV()" title="Export simulated signals with 2m WR validation as CSV"
-        style="font-size:10px;padding:2px 7px;background:#1e222d;color:#787b86;border:1px solid #2a2e39;border-radius:3px;cursor:pointer;">⬇ CSV</button>
+        style="font-size:10px;padding:2px 7px;background:#1e222d;color:#787b86;border:1px solid #2a2e39;border-radius:3px;cursor:pointer;margin-left:8px;">⬇
+        JSON</button>
     </div>
   </div>
 
@@ -458,7 +456,6 @@
     // ── edge finder state ─────────────────────────────────────────────
     let isEdgeFinderMode = false;
     let simulatedSignals = [];
-    let candleMap = new Map(); // timestamp → candle, built once per loadData()
 
     // ── shared chart options ──────────────────────────────────────────
     const BASE = {
@@ -575,12 +572,10 @@
         const isCall = s.direction === 'CALL';
         let color;
         if (isSimulated) {
-          if (s.result === 'WIN') color = '#26a69a';
-          else if (s.result === 'LOSS') color = '#ef5350';
-          else color = '#ffb74d'; // orange = OPEN (no exit candle yet)
+          color = '#ffb74d'; // Orange/Yellow for sim
         } else {
-          if (s.result === 'WIN') color = '#26a69a';
-          else if (s.result === 'LOSS') color = '#ef5350';
+          if (s.result === 'WIN') color = '#26a69a'; // green
+          else if (s.result === 'LOSS') color = '#ef5350'; // red
           else color = '#787b86'; // grey — pending/unresolved
         }
 
@@ -643,8 +638,6 @@
         fetch(`/api/indicators?asset=${asset}&limit=${limit}`).then(r => r.json()),
         fetch(`/api/signals?asset=${asset}`).then(r => r.json())
       ]);
-
-      candleMap = new Map(fullCandles.map(c => [c.timestamp, c]));
 
       if (!isReplayMode) {
         replayIndex = fullCandles.length;
@@ -924,6 +917,9 @@
       if (currentCandles.length === 0) return;
       const currentLastTimestamp = currentCandles[currentCandles.length - 1].timestamp;
 
+      const candleMap = new Map();
+      fullCandles.forEach(c => candleMap.set(c.timestamp, c));
+
       let lastFireIndex = -100;
 
       const boundOB = pStochOU === 100 ? 80 : pStochOU;
@@ -1040,8 +1036,6 @@
         }
       }
 
-      validateSimulatedSignals();
-
       cachedMarkers = buildMarkers(simulatedSignals, currentCandles, true);
       if (signalsVisible) applyMarkers(cachedMarkers);
 
@@ -1049,13 +1043,6 @@
       document.getElementById('count_real').textContent = currentSignals.length;
       document.getElementById('count_sim').textContent = simulatedSignals.length;
       document.getElementById('sigCount').textContent = 'Viewing ' + simulatedSignals.length + ' simulated signals';
-
-      const settled = simulatedSignals.filter(s => s.result === 'WIN' || s.result === 'LOSS');
-      const wins = settled.filter(s => s.result === 'WIN').length;
-      const wrText = settled.length > 0
-        ? `${Math.round(wins / settled.length * 100)}% (${wins}/${settled.length})`
-        : '—';
-      document.getElementById('wr_sim').textContent = wrText;
     }
 
     // ── controls ──────────────────────────────────────────────────────
@@ -1133,57 +1120,6 @@
       }
     }
 
-
-    function validateSimulatedSignals() {
-      // sorted ascending — binary search for first candle >= target timestamp
-      const sortedCandles = fullCandles; // already sorted asc by loadData
-      for (const sig of simulatedSignals) {
-        const entryCandle = candleMap.get(sig.timestamp);
-        if (!entryCandle) { sig.result = 'OPEN'; continue; }
-
-        const exitTarget = sig.timestamp + 120;
-        let exitCandle = null;
-        let lo = 0, hi = sortedCandles.length - 1;
-        while (lo <= hi) {
-          const mid = (lo + hi) >> 1;
-          if (sortedCandles[mid].timestamp >= exitTarget) { exitCandle = sortedCandles[mid]; hi = mid - 1; }
-          else lo = mid + 1;
-        }
-
-        if (!exitCandle) { sig.result = 'OPEN'; sig.entry_price = entryCandle.close; continue; }
-
-        sig.entry_price = entryCandle.close;
-        sig.exit_price  = exitCandle.close;
-        sig.exit_timestamp = exitCandle.timestamp;
-        sig.pnl_bps = Math.round(
-          (exitCandle.close - entryCandle.close) / entryCandle.close * 10000
-          * (sig.direction === 'CALL' ? 1 : -1)
-        );
-        sig.result = sig.pnl_bps > 0 ? 'WIN' : sig.pnl_bps < 0 ? 'LOSS' : 'OPEN';
-      }
-    }
-
-    function exportSimCSV() {
-      if (!simulatedSignals.length) return;
-      const asset = document.getElementById('assetSelect').value || 'unknown';
-      const headers = ['timestamp', 'datetime', 'direction', 'entry_price', 'exit_price', 'result', 'pnl_bps'];
-      const rows = simulatedSignals.map(s => [
-        s.timestamp,
-        new Date(s.timestamp * 1000).toISOString(),
-        s.direction,
-        s.entry_price  ?? '',
-        s.exit_price   ?? '',
-        s.result       ?? '',
-        s.pnl_bps      ?? ''
-      ]);
-      const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `sim_signals_${asset}_${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }
 
     function startInterval() {
       clearInterval(intervalId);
