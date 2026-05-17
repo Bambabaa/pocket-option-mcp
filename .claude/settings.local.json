@@ -44,11 +44,14 @@
       "mcp__pocket-option__po_pending_signals",
       "mcp__pocket-option__po_trade",
       "mcp__pocket-option__po_cancel_order",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "pocket-option"
-  ],
-  "enableAllProjectMcpServers": true
+  ]
 }
