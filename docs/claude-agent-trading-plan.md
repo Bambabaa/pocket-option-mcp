@@ -54,7 +54,7 @@ Build a self-contained stack — own WebSocket feed, own database, own indicator
 ║                         │ read/write                             ║
 ║  ┌──────────────────────▼──────────────────────────────────┐    ║
 ║  │  data/agent.db                                           │    ║
-║  │  candles_5m · indicators_5m · agent_orders · agent_log  │    ║
+║  │  candles · indicators · agent_orders · agent_log  │    ║
 ║  └──────────────────────┬──────────────────────────────────┘    ║
 ║                         │ read/write                             ║
 ║  ┌──────────────────────▼──────────────────────────────────┐    ║
@@ -117,7 +117,7 @@ Build a self-contained stack — own WebSocket feed, own database, own indicator
 
 ```sql
 -- 5-minute OHLC candles
-CREATE TABLE candles_5m (
+CREATE TABLE candles (
     asset      TEXT    NOT NULL,
     timestamp  INTEGER NOT NULL,   -- unix seconds, bar open time
     open       REAL    NOT NULL,
@@ -129,7 +129,7 @@ CREATE TABLE candles_5m (
 
 -- Computed indicators for each completed 5m bar
 -- All 14 indicators at bot/indicators.js defaults — discover what works at 5m via data
-CREATE TABLE indicators_5m (
+CREATE TABLE indicators (
     asset              TEXT    NOT NULL,
     timestamp          INTEGER NOT NULL,
     -- SMA (PO defaults: 10, 20, 50)
@@ -228,7 +228,7 @@ CREATE TABLE agent_log (
 
 **Purpose:** Pure math module. Takes an array of 5m OHLC bars, returns all indicator values for the latest bar. No DB access — stateless computation.
 
-**Design principle:** Capture every indicator at Pocket Option's platform defaults — the values you see when you drop the indicator onto the chart without touching anything. No tuning, no exclusions. All values land in `indicators_5m` so Claude can discover which ones have predictive power at the 5m timeframe through actual trading data.
+**Design principle:** Capture every indicator at Pocket Option's platform defaults — the values you see when you drop the indicator onto the chart without touching anything. No tuning, no exclusions. All values land in `indicators` so Claude can discover which ones have predictive power at the 5m timeframe through actual trading data.
 
 > **Note:** These differ from the bot's `INDICATOR_CONFIG`, which was hand-tuned for 1m trading (RSI=5, CCI=8, STC=10/20/5, Keltner=18/11/2, ZigZag=0.5%). For the 5m system we use PO platform defaults so the data matches what traders see on the chart.
 
@@ -367,7 +367,7 @@ pocket-option-mcp/
 │   │   └── config.json                  NEW — assets, candle period, gate params, expiry profiles
 │   │
 │   └── data/                            ← agent's own isolated data store
-│       └── agent.db                     NEW — candles_5m, indicators_5m,
+│       └── agent.db                     NEW — candles, indicators,
 │                                               agent_orders, agent_log
 │
 ├── src/                                 ← existing MCP server (add agent tools here)
@@ -398,47 +398,55 @@ pocket-option-mcp/
 ## 5. Build Sequence
 
 ### Phase 1 — Data Foundation
-**Goal:** 5m candles and indicators flowing into agent.db
+**Goal:** 5m candles and indicators flowing into `agent/data/agent.db`
 
-1. Create `data/agent.db` schema (all four tables)
-2. Build `src/core/indicators-5m.js` — extract math from bot/indicators.js, add unit tests
-3. Build `src/scripts/agent-ws.js`:
-   - WS connection + auth (reference bot's connection pattern)
-   - Tick → 5m candle aggregation
-   - On bar close → compute indicators via indicators-5m.js → write to agent.db
-   - Reconnect loop
-4. Run agent-ws.js against shortlisted assets, verify candles_5m + indicators_5m populate
+1. Create `agent/data/agent.db` schema (all four tables)
+2. Build `agent/websocket/indicators.js` — extract all 14 `calculate*` methods from `bot/indicators.js` as pure exports, apply PO-default parameters
+3. Build `agent/websocket/config.json` — asset shortlist, candle_interval_minutes, gate params, expiry profiles
+4. Build `agent/websocket/client.js`:
+   - **Live mode:** WS connect + auth → tick stream → 5m OHLC aggregation → on bar close: compute indicators → write candles + indicators → reconnect loop
+   - **Backfill mode** (`--backfill`): request historical 5m candles from PO WS API for each configured asset → compute indicators on full array → write to agent.db → exit
+5. Run `node agent/websocket/client.js --backfill` for all 10 shortlisted assets, verify candles + indicators populate
+
+### Research Step — Validate Edge Before Going Live
+**Goal:** Find which indicator gates produce a real edge at 5m/10m/15m expiry
+
+6. Run backtest sim on `agent/data/agent.db` (dedicated research script, reads agent.db only):
+   - Scan each bar for indicator zone conditions (STC floor/ceiling, RSI, Stoch, CCI, BB width)
+   - Compute WIN/LOSS using next-bar close prices from candles
+   - Output WR by: asset, direction, expiry (5m/10m/15m), indicator zone, confluence count
+7. Identify load-bearing gates → set validated thresholds in `agent/websocket/config.json`
+8. Do not proceed to Phase 2 until edge confirmed (WR ≥ 55%, n ≥ 50 per asset)
 
 ### Phase 2 — MCP Tools
 **Goal:** Claude can read agent.db and scan assets
 
-5. Build `src/agent-connection.js` — SQLite readonly connection to agent.db
-6. Build `src/core/agent-tools.js`:
-   - `po_agent_candles` — last N bars for asset
-   - `po_agent_indicators` — latest indicator row per asset
-   - `po_agent_scan` — score all shortlisted assets, return ranked list with verdicts
-7. Register tools in `src/server.js`
-8. Test: Claude calls `po_agent_scan` and gets live 5m data
+9. Build `src/agent-connection.js` — SQLite readonly connection to `agent/data/agent.db`
+10. Build `src/core/agent-tools.js`:
+    - `po_agent_candles` — last N 5m bars for asset
+    - `po_agent_indicators` — latest indicator row per asset
+    - `po_agent_scan` — score all shortlisted assets, return ranked list with verdicts
+11. Register tools in `src/server.js`
+12. Test: Claude calls `po_agent_scan` and gets live 5m data
 
 ### Phase 3 — Execution
 **Goal:** Claude can place trades that execute directly on Pocket Option
 
-9. Add `agent_orders` polling loop to `agent-ws.js`:
-   - Every 2s: SELECT PENDING from agent_orders
-   - Send WS trade message with asset, direction, amount, duration
-   - Update status → EXECUTED + entry_price
-   - After expiry: resolve WIN/LOSS from next price tick → update result + profit_loss
-10. Build `po_agent_trade` MCP tool — validates params, writes PENDING to agent_orders
-11. Build `po_agent_orders` + `po_agent_log` tools
-12. Register remaining tools in server.js
-13. Test: Claude places a trade → agent-ws.js executes → result recorded in agent.db
+13. Add `agent_orders` polling loop to `agent/websocket/client.js`:
+    - Every 2s: SELECT PENDING from agent_orders
+    - Send WS trade message with asset, direction, amount, duration
+    - Update status → EXECUTED + entry_price
+    - After expiry: resolve WIN/LOSS from next price tick → update result + profit_loss
+14. Build `po_agent_trade` MCP tool — validates params, writes PENDING to agent_orders
+15. Build `po_agent_orders` + `po_agent_log` tools
+16. Register remaining tools in `src/server.js`
+17. Test: Claude places a trade → client.js executes → result recorded in agent.db
 
 ### Phase 4 — Scan Loop Agent
 **Goal:** Claude runs autonomously on a 5–10 minute cycle
 
-14. Write `agents/shortlist.json` — asset list, profiles, safe zone thresholds
-15. Write `agents/scan-agent.md` — Claude's full loop prompt (scan → analyse → decide → log)
-16. Test full loop: `/loop` → scan → safe zone check → trade placed → validated next cycle
+18. Write `agents/scan-agent.md` — Claude's full loop prompt (scan → analyse → decide → log)
+19. Test full loop: `/loop` → scan → safe zone check → trade placed → validated next cycle
 
 ---
 
@@ -453,7 +461,7 @@ If the bot is running alongside:
 If the bot is not running:
 - New agent system operates fully independently
 - No data is missing — agent-ws.js is the sole data source
-- No execution dependency — agent-ws.js handles DOM click replacement via WS API
+- No execution dependency — `agent/websocket/client.js` handles trade placement directly via WS API
 
 ---
 
