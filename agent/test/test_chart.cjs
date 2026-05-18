@@ -9,15 +9,15 @@
 // 4. Script processes all captured history dumps → indicators → agent.db → exits
 
 const puppeteer = require('puppeteer');
-const readline  = require('readline');
-const path      = require('path');
-const fs        = require('fs');
-const Database  = require('better-sqlite3');
+const readline = require('readline');
+const path = require('path');
+const fs = require('fs');
+const Database = require('better-sqlite3');
 const { computeAll } = require('../websocket/indicators.cjs');
 
-const CFG     = JSON.parse(fs.readFileSync(path.join(__dirname, '../websocket/config.json'), 'utf8'));
+const CFG = JSON.parse(fs.readFileSync(path.join(__dirname, '../websocket/config.json'), 'utf8'));
 const DB_PATH = path.join(__dirname, '../data/agent.db');
-const PERIOD  = CFG.candle_period_seconds;
+const PERIOD = CFG.candle_period_seconds;
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 const dataDir = path.join(__dirname, '../data');
@@ -128,7 +128,7 @@ const stmtInsertIndicators = db.prepare(`
     )
 `);
 
-const writeCandleBatch    = db.transaction((rows) => { for (const r of rows) stmtInsertCandle.run(r); });
+const writeCandleBatch = db.transaction((rows) => { for (const r of rows) stmtInsertCandle.run(r); });
 const writeIndicatorBatch = db.transaction((rows) => { for (const r of rows) stmtInsertIndicators.run(r); });
 
 function log(msg) { console.log(`[test_chart] ${new Date().toISOString().slice(11, 19)} ${msg}`); }
@@ -144,7 +144,7 @@ function processAndStore(asset, serverCandles, historyTicks) {
     if (Array.isArray(historyTicks)) {
         const buckets = new Map(); // bucket_ts → { open, high, low, close }
         for (const [rawTs, rawPrice] of historyTicks) {
-            const ts    = parseInt(parseFloat(rawTs));
+            const ts = parseInt(parseFloat(rawTs));
             const price = parseFloat(rawPrice);
             if (isNaN(ts) || ts <= 0 || isNaN(price)) continue;
             const bucket = Math.floor(ts / PERIOD) * PERIOD;
@@ -152,8 +152,8 @@ function processAndStore(asset, serverCandles, historyTicks) {
                 buckets.set(bucket, { open: price, high: price, low: price, close: price });
             } else {
                 const b = buckets.get(bucket);
-                b.high  = Math.max(b.high,  price);
-                b.low   = Math.min(b.low,   price);
+                b.high = Math.max(b.high, price);
+                b.low = Math.min(b.low, price);
                 b.close = price; // last tick in this bucket = close
             }
         }
@@ -183,7 +183,7 @@ function processAndStore(asset, serverCandles, historyTicks) {
     const indRows = [];
     for (let i = 1; i <= bars.length; i++) {
         const slice = bars.slice(0, i);
-        const ind   = computeAll(slice, CFG.indicators, prevStc);
+        const ind = computeAll(slice, CFG.indicators, prevStc);
         if (!ind) continue;
         prevStc = ind.stc_value;
         indRows.push({ asset, timestamp: slice[slice.length - 1][0], ...ind });
@@ -191,14 +191,29 @@ function processAndStore(asset, serverCandles, historyTicks) {
 
     writeIndicatorBatch(indRows);
     log(`${asset}: indicators computed for ${indRows.length} bars`);
-    return bars.length;
+
+    // Drop warmup bars — STC is the last indicator to become valid (ema_slow=50).
+    // Any bar where stc_value IS NULL is incomplete; remove it from both tables immediately.
+    const dropWarmup = db.transaction(() => {
+        const { changes } = db.prepare(
+            `DELETE FROM indicators WHERE asset = ? AND stc_value IS NULL`
+        ).run(asset);
+        db.prepare(
+            `DELETE FROM candles WHERE asset = ? AND timestamp NOT IN (SELECT timestamp FROM indicators WHERE asset = ?)`
+        ).run(asset, asset);
+        return changes;
+    });
+    const dropped = dropWarmup();
+    if (dropped > 0) log(`${asset}: dropped ${dropped} warmup bars`);
+
+    return bars.length - dropped;
 }
 
 // ── Wait for user to press Enter ──────────────────────────────────────────────
 function waitForEnter() {
     return new Promise((resolve) => {
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-        rl.question('\n✅ Select your assets in the Pocket Option UI, then press Enter here to process...\n', () => {
+        rl.question('\n✅ Select your assets on the 5m chart. Scroll the chart LEFT to load more history. Press Enter when done.\n', () => {
             rl.close();
             resolve();
         });
@@ -233,39 +248,56 @@ async function main() {
             log(`CDP error: ${err.message}`);
     });
 
-    // Collect dumps keyed by asset — last dump wins (PO sends a 0-candle stub first, then the real dump)
-    const captured = new Map();
+    // Accumulate ALL dumps per asset — merges candles from every history response
+    // (initial load + each chart scrollback loads another ~99 older candles)
+    const candleStore = new Map(); // asset → Map<ts, candle[]>
+    const tickStore = new Map(); // asset → [[ts, price], ...]
 
     cdp.on('Network.webSocketFrameReceived', ({ response }) => {
         try {
             if (!response.payloadData) return;
-            const raw     = Buffer.from(response.payloadData, 'base64').toString('utf-8');
+            const raw = Buffer.from(response.payloadData, 'base64').toString('utf-8');
             const jsonStr = raw.replace(/^\d+/, '');
             if (!jsonStr.startsWith('[') && !jsonStr.startsWith('{')) return;
             const data = JSON.parse(jsonStr);
             if (data && !Array.isArray(data) && data.asset && data.history !== undefined) {
-                const candleCount = Array.isArray(data.candles) ? data.candles.length : 0;
-                const tickCount   = Array.isArray(data.history) ? data.history.length : 0;
-                captured.set(data.asset, data);
-                log(`captured: ${data.asset} (${candleCount} candles, ${tickCount} ticks)`);
+                const asset = data.asset;
+
+                if (!candleStore.has(asset)) candleStore.set(asset, new Map());
+                if (!tickStore.has(asset)) tickStore.set(asset, []);
+
+                // Merge candles by timestamp (dedup)
+                for (const c of (data.candles || [])) candleStore.get(asset).set(c[0], c);
+
+                // Append ticks (duplicates handled in processAndStore via bucket dedup)
+                tickStore.get(asset).push(...(data.history || []));
+
+                const totalBars = candleStore.get(asset).size;
+                const totalTicks = tickStore.get(asset).length;
+                log(`captured: ${asset} — ${totalBars} candles | ${totalTicks} ticks`);
             }
-        } catch (_) {}
+        } catch (_) { }
     });
 
-    // Wait for user to finish selecting assets in the UI
+    // Wait for user — they should scroll back in the chart to load more history before pressing Enter
     await waitForEnter();
 
-    // Drain window — PO often sends the real dump a few seconds after the initial 0-candle stub.
-    // Give the event loop 4s to collect any pending frames before we process.
+    // Drain window — give event loop 4s to flush any in-flight frames
     log('collecting final frames — please wait 4s...');
     await new Promise(r => setTimeout(r, 4000));
 
-    // Filter out stubs (0 server candles AND < 10 ticks — not useful)
-    const usable = [...captured.entries()].filter(([, d]) => {
-        const c = Array.isArray(d.candles) ? d.candles.length : 0;
-        const t = Array.isArray(d.history) ? d.history.length : 0;
-        return c > 0 || t >= 10;
-    });
+    // Build usable list — assets with at least some data
+    const usable = [...candleStore.entries()]
+        .filter(([asset]) => {
+            const c = candleStore.get(asset)?.size ?? 0;
+            const t = tickStore.get(asset)?.length ?? 0;
+            return c > 0 || t >= 10;
+        })
+        .map(([asset]) => ({
+            asset,
+            candles: [...candleStore.get(asset).values()],
+            history: tickStore.get(asset) || [],
+        }));
 
     if (usable.length === 0) {
         log('no usable history dumps — select assets in the UI first, then press Enter');
@@ -274,13 +306,13 @@ async function main() {
         process.exit(0);
     }
 
-    log(`processing ${usable.length} asset(s): ${usable.map(([a]) => a).join(', ')}`);
+    log(`processing ${usable.length} asset(s): ${usable.map(a => a.asset).join(', ')}`);
 
     let success = 0;
-    for (const [asset, data] of usable) {
+    for (const { asset, candles, history } of usable) {
         log(`--- ${asset} ---`);
         try {
-            const count = processAndStore(asset, data.candles, data.history);
+            const count = processAndStore(asset, candles, history);
             log(`${asset}: done — ${count} bars in agent.db`);
             success++;
         } catch (e) {
