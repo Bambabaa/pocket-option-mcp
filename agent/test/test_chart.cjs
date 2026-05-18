@@ -20,8 +20,80 @@ const DB_PATH = path.join(__dirname, '../data/agent.db');
 const PERIOD  = CFG.candle_period_seconds;
 
 // ── DB ────────────────────────────────────────────────────────────────────────
+const dataDir = path.join(__dirname, '../data');
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+// Create schema if tables don't exist yet
+db.exec(`
+CREATE TABLE IF NOT EXISTS candles (
+    asset      TEXT    NOT NULL,
+    timestamp  INTEGER NOT NULL,
+    open       REAL    NOT NULL,
+    high       REAL    NOT NULL,
+    low        REAL    NOT NULL,
+    close      REAL    NOT NULL,
+    PRIMARY KEY (asset, timestamp)
+);
+
+CREATE TABLE IF NOT EXISTS indicators (
+    asset              TEXT    NOT NULL,
+    timestamp          INTEGER NOT NULL,
+    sma_10             REAL, sma_20 REAL, sma_50 REAL,
+    ema_12             REAL, ema_26 REAL,
+    rsi_14             REAL,
+    macd_line          REAL, macd_signal REAL, macd_histogram REAL,
+    bb_upper           REAL, bb_middle REAL, bb_lower REAL, bb_width_bps REAL,
+    stoch_k            REAL, stoch_d REAL, stoch_prev_d REAL,
+    keltner_upper      REAL, keltner_middle REAL, keltner_lower REAL,
+    zigzag_direction   INTEGER, zigzag_reversal INTEGER, zigzag_pivot REAL,
+    stc_value          REAL, stc_signal REAL, stc_prev REAL, stc_delta REAL,
+    adx                REAL, plus_di REAL, minus_di REAL,
+    cci_20             REAL, williams_r REAL, atr_14 REAL,
+    psar_value         REAL, psar_trend INTEGER, psar_is_bullish INTEGER,
+    PRIMARY KEY (asset, timestamp)
+);
+
+CREATE TABLE IF NOT EXISTS prices (
+    asset      TEXT    NOT NULL,
+    timestamp  INTEGER NOT NULL,
+    price      REAL    NOT NULL,
+    PRIMARY KEY (asset, timestamp)
+);
+
+CREATE TABLE IF NOT EXISTS agent_orders (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset          TEXT    NOT NULL,
+    direction      TEXT    NOT NULL CHECK(direction IN ('CALL','PUT')),
+    amount         REAL    NOT NULL,
+    expiry_seconds INTEGER NOT NULL DEFAULT 300,
+    signal_ts      INTEGER NOT NULL,
+    created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    executed_at    INTEGER,
+    status         TEXT    NOT NULL DEFAULT 'PENDING'
+                           CHECK(status IN ('PENDING','EXECUTED','CLOSED','FAILED','CANCELLED')),
+    result         TEXT    CHECK(result IN ('WIN','LOSS','DRAW',NULL)),
+    profit_loss    REAL
+);
+
+CREATE TABLE IF NOT EXISTS agent_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    cycle_id   TEXT    NOT NULL,
+    cycle_ts   INTEGER NOT NULL,
+    asset      TEXT,
+    decision   TEXT    NOT NULL CHECK(decision IN ('TRADE','SKIP','PAUSE','STOP')),
+    direction  TEXT,
+    expiry_min INTEGER,
+    score      REAL,
+    reason     TEXT,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_prices_asset_ts ON prices(asset, timestamp);
+`);
 
 const stmtInsertCandle = db.prepare(`
     INSERT OR IGNORE INTO candles (asset, timestamp, open, high, low, close)
@@ -63,15 +135,33 @@ function log(msg) { console.log(`[test_chart] ${new Date().toISOString().slice(1
 
 // ── Process a captured history dump ───────────────────────────────────────────
 function processAndStore(asset, serverCandles, historyTicks) {
+    // Start with server-provided OHLC candles (reversed — PO sends newest-first)
     const merged = [...(serverCandles || [])].reverse();
 
+    // Aggregate ALL ticks into PERIOD buckets → proper OHLC per bar.
+    // Ticks arrive chronologically; we accumulate O/H/L/C per bucket then
+    // add any bucket not already covered by a server candle.
     if (Array.isArray(historyTicks)) {
-        for (const [rawTs, price] of historyTicks) {
-            const ts = parseInt(parseFloat(rawTs));
-            if (isNaN(ts) || ts <= 0) continue;
-            if (ts % PERIOD !== 0) continue;
-            if (merged.some(c => c[0] === ts)) continue;
-            merged.push([ts, price, price, price, price]);
+        const buckets = new Map(); // bucket_ts → { open, high, low, close }
+        for (const [rawTs, rawPrice] of historyTicks) {
+            const ts    = parseInt(parseFloat(rawTs));
+            const price = parseFloat(rawPrice);
+            if (isNaN(ts) || ts <= 0 || isNaN(price)) continue;
+            const bucket = Math.floor(ts / PERIOD) * PERIOD;
+            if (!buckets.has(bucket)) {
+                buckets.set(bucket, { open: price, high: price, low: price, close: price });
+            } else {
+                const b = buckets.get(bucket);
+                b.high  = Math.max(b.high,  price);
+                b.low   = Math.min(b.low,   price);
+                b.close = price; // last tick in this bucket = close
+            }
+        }
+        for (const [bucket, ohlc] of buckets) {
+            if (!merged.some(c => c[0] === bucket)) {
+                // format: [ts, open, close, high, low] — matches bot's STATE.CANDLES
+                merged.push([bucket, ohlc.open, ohlc.close, ohlc.high, ohlc.low]);
+            }
         }
     }
 
@@ -81,7 +171,6 @@ function processAndStore(asset, serverCandles, historyTicks) {
     const candleRows = [];
     for (const c of merged) {
         const [ts, open, close, high, low] = c;
-        if (open === high && high === low && low === close) continue;
         candleRows.push({ asset, timestamp: ts, open, high, low, close });
         if (!bars.some(r => r[0] === ts)) bars.push([ts, open, close, high, low]);
     }
@@ -144,7 +233,7 @@ async function main() {
             log(`CDP error: ${err.message}`);
     });
 
-    // Collect dumps keyed by asset (last dump wins if asset re-selected)
+    // Collect dumps keyed by asset — last dump wins (PO sends a 0-candle stub first, then the real dump)
     const captured = new Map();
 
     cdp.on('Network.webSocketFrameReceived', ({ response }) => {
@@ -155,26 +244,40 @@ async function main() {
             if (!jsonStr.startsWith('[') && !jsonStr.startsWith('{')) return;
             const data = JSON.parse(jsonStr);
             if (data && !Array.isArray(data) && data.asset && data.history !== undefined) {
+                const candleCount = Array.isArray(data.candles) ? data.candles.length : 0;
+                const tickCount   = Array.isArray(data.history) ? data.history.length : 0;
                 captured.set(data.asset, data);
-                log(`captured history dump: ${data.asset} (${Array.isArray(data.candles) ? data.candles.length : 0} candles, ${Array.isArray(data.history) ? data.history.length : 0} ticks)`);
+                log(`captured: ${data.asset} (${candleCount} candles, ${tickCount} ticks)`);
             }
         } catch (_) {}
     });
 
-    // Wait for user to select assets in the UI
+    // Wait for user to finish selecting assets in the UI
     await waitForEnter();
 
-    if (captured.size === 0) {
-        log('no history dumps captured — did you select any assets in the UI?');
+    // Drain window — PO often sends the real dump a few seconds after the initial 0-candle stub.
+    // Give the event loop 4s to collect any pending frames before we process.
+    log('collecting final frames — please wait 4s...');
+    await new Promise(r => setTimeout(r, 4000));
+
+    // Filter out stubs (0 server candles AND < 10 ticks — not useful)
+    const usable = [...captured.entries()].filter(([, d]) => {
+        const c = Array.isArray(d.candles) ? d.candles.length : 0;
+        const t = Array.isArray(d.history) ? d.history.length : 0;
+        return c > 0 || t >= 10;
+    });
+
+    if (usable.length === 0) {
+        log('no usable history dumps — select assets in the UI first, then press Enter');
         db.close();
         await browser.close();
         process.exit(0);
     }
 
-    log(`processing ${captured.size} asset(s): ${[...captured.keys()].join(', ')}`);
+    log(`processing ${usable.length} asset(s): ${usable.map(([a]) => a).join(', ')}`);
 
     let success = 0;
-    for (const [asset, data] of captured) {
+    for (const [asset, data] of usable) {
         log(`--- ${asset} ---`);
         try {
             const count = processAndStore(asset, data.candles, data.history);
@@ -185,7 +288,7 @@ async function main() {
         }
     }
 
-    log(`complete — ${success}/${captured.size} assets`);
+    log(`complete — ${success}/${usable.length} assets`);
     db.close();
     await browser.close();
     process.exit(0);
