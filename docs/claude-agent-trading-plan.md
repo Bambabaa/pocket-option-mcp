@@ -97,15 +97,16 @@ Build a self-contained stack — own WebSocket feed, own database, own indicator
 - Update order status to EXECUTED, FAILED, or SKIPPED
 - After expiry elapses: resolve WIN/LOSS from next price tick, write result to `agent_orders`
 
-**Config (loaded from `agents/shortlist.json`):**
+**Config (`agent/websocket/config.json`) — configuration knobs only, no static asset lists:**
 ```json
 {
-  "assets": ["GBPJPY_otc", "USDJPY_otc", "EURJPY_otc", "NZDJPY_otc",
-             "USDCOP_otc", "USDIDR_otc", "USDPKR_otc", "JODCNY_otc"],
-  "candle_interval_minutes": 5,
-  "max_concurrent_trades": 2
+  "candle_period_seconds": 300,
+  "max_concurrent_trades": 2,
+  "pocket_option_url": "https://pocketoption.com",
+  "indicators": { ... }
 }
 ```
+Assets are dynamic: live mode captures every asset PO streams; backfill mode accepts an explicit list as CLI args (`--backfill GBPJPY_otc EURJPY_otc ...`).
 
 ---
 

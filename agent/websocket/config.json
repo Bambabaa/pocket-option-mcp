@@ -1,0 +1,21 @@
+{
+  "candle_period_seconds": 300,
+  "max_concurrent_trades": 2,
+  "pocket_option_url": "https://pocketoption.com",
+  "indicators": {
+    "sma_periods":     [10, 20, 50],
+    "ema_periods":     [12, 26],
+    "rsi_period":      14,
+    "macd":            { "fast": 12, "slow": 26, "signal": 9 },
+    "bb":              { "period": 20, "std_dev": 2 },
+    "stoch":           { "k_period": 5, "d_period": 3, "smooth": 3 },
+    "keltner":         { "ema": 20, "atr": 10, "mult": 2 },
+    "zigzag":          { "deviation_pct": 5, "min_bars": 4 },
+    "stc":             { "ema_fast": 23, "ema_slow": 50, "cycle": 10, "smooth1": 3, "smooth2": 3 },
+    "adx_period":      14,
+    "cci_period":      20,
+    "williams_period": 14,
+    "atr_period":      14,
+    "psar":            { "acceleration": 0.02, "max": 0.2 }
+  }
+}
