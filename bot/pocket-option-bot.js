@@ -366,25 +366,9 @@ const STATE = {
     // No other strategies (e.g. vote-based MA/RSI/MACD) are used.
     // ============================================================================
     SETTINGS: {
-        // ----------  Strategy (YouTube videos) ----------
-        Strategy: ' ',                 // 'video1' | ' ' | 'video3' (Set to null to run all)
-        // Optional Video 1 (calibrated to displayed: ZigZag periods 6 and 4, avoid high vol):
-        // ZigZagDeviation: 0.5,            // default 0.5
-        // ZigZagMinBars: 4,                // default 4 (matches "Periods 6 and 4")
-        // Video1MaxATRPercent: 0.5,        // skip when ATR% > this
-        // Video1ATRPeriod: 14,             // ATR period for ATR% (default 14)
-
-        // ---------- (Legacy/unused: gates are now  per-video only) ----------
-        // adxPeriod: 14,
-        // adxThreshold: 10,
-        // minTradeADX: 10,
-        // maxTradeADX: 75,
-        // useADXFilter: true,
-        // atrPeriod: 14,
-        // minAbsoluteATR: 0.0001,
-        // distanceEquilibriumCoefficient: 0.15,
-        // requireDirectionalPermissionGate: false,
-
+        // ----------  Strategy () ----------
+        Strategy: ' ',                 
+       
         useQualifiedAssetsLayer: false,
         enqueueAllSignalsForTesting: false,
         executeInlineWithBot: true,
