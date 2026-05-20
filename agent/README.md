@@ -13,11 +13,14 @@ agent/
 ├── data/
 │   └── agent.db              ← SQLite database (auto-created on first run)
 ├── test/
-│   └── test_chart.cjs        ← Manual-run script: fetch history → compute indicators → write DB
+│   ├── fetch_history.cjs     ← 24h history via loadHistoryPeriod → agent.db (recommended)
+│   └── test_chart.cjs        ← Manual scroll / subscribe dump → agent.db
 └── websocket/
     ├── client.cjs            ← Live WebSocket client (continuous — for future use)
+    ├── history.cjs           ← loadHistoryPeriod protocol (emit, parse, pagination)
+    ├── store.cjs             ← DB schema + batch candle/indicator writes
     ├── indicators.cjs        ← Pure indicator math (14 indicators, PO platform defaults)
-    ├── config.json           ← Shared config: period, URL, indicator parameters
+    ├── config.json           ← Shared config: period, URL, history, indicators
     └── setup-db.cjs          ← One-time DB schema creator (run before client.cjs)
 ```
 
@@ -25,7 +28,20 @@ agent/
 
 ## Quick Start
 
-### 1. Fetch historical data (one-shot)
+### 1. Fetch 24h historical data (recommended)
+
+```
+node agent/test/fetch_history.cjs EURUSD_otc
+node agent/test/fetch_history.cjs EURUSD_otc GBPUSD_otc
+```
+
+1. Browser opens — log in and open the **trading chart**
+2. Press **Enter** in the terminal
+3. Fetches 24h (288 × 5m bars), writes to `agent/data/agent.db`, exits
+
+Uses the Pocket Option `loadHistoryPeriod` WebSocket API (same protocol as [BinaryOptionsTools-v2 get_candles.rs](https://github.com/ChipaDevTeam/BinaryOptionsTools-v2/blob/master/crates/binary_options_tools/src/pocketoption/modules/get_candles.rs)). No chart scrolling required.
+
+### 2. Fetch historical data (manual scroll — legacy)
 
 ```
 node agent/test/test_chart.cjs
@@ -37,7 +53,7 @@ node agent/test/test_chart.cjs
 4. Press Enter in the terminal
 5. Script computes all indicators and writes to `agent/data/agent.db`, then exits
 
-### 2. Run the live client (continuous)
+### 3. Run the live client (continuous)
 
 First create the schema if `agent.db` doesn't exist yet:
 
@@ -56,6 +72,31 @@ Browser opens, log in, select assets. The client runs until you press Ctrl+C, ac
 ---
 
 ## Files
+
+### `test/fetch_history.cjs`
+
+Dedicated 24h backfill via **`loadHistoryPeriod`** (not `changeSymbol` subscribe dumps).
+
+**What it does:**
+- Opens Puppeteer + CDP WebSocket interception (port 9225)
+- For each asset: `sock.emit('loadHistoryPeriod', { asset, period, time, index, offset })`
+- Correlates responses by `index`; paginates with earlier `time` if fewer than target bars
+- Merges OHLC into memory, then `store.cjs` writes candles + indicators + warmup drop
+
+**Config** (`websocket/config.json` → `history`):
+- `target_hours`: 24 (default)
+- `batch_size`: 288 (bars per request; derived from period × hours)
+- `request_timeout_ms`, `stall_limit`, `inter_request_delay_ms`
+
+**Expected yield:** ~288 candles per asset at `candle_period_seconds: 300` (24h of 5m bars).
+
+### `websocket/history.cjs`
+
+Shared module: parse Socket.IO frames, emit `loadHistoryPeriod`, pagination loop, candle store merge. Used by `fetch_history.cjs`.
+
+### `websocket/store.cjs`
+
+Shared module: `openAgentDb()`, `storeBarsAndIndicators()` — batch inserts, indicator backfill, STC warmup drop.
 
 ### `test/test_chart.cjs`
 
@@ -135,11 +176,18 @@ Shared config read by both `client.cjs` and `test_chart.cjs`.
 {
   "candle_period_seconds": 300,
   "pocket_option_url": "https://pocketoption.com",
+  "history": {
+    "target_hours": 24,
+    "batch_size": 288,
+    "request_timeout_ms": 12000,
+    "stall_limit": 6,
+    "inter_request_delay_ms": 800
+  },
   "indicators": { ... }
 }
 ```
 
-Change `candle_period_seconds` to switch between timeframes (e.g. `60` for 1m, `300` for 5m).
+Change `candle_period_seconds` to switch between timeframes (e.g. `60` for 1m, `300` for 5m). `target_hours` × period determines how many bars `fetch_history.cjs` requests.
 
 ---
 
@@ -174,4 +222,4 @@ All timestamps are **Unix seconds** (UTC). `candles.timestamp` is the bar **open
 - **No Python** — `agent.db` is a `better-sqlite3` database. Opening it with Python's `sqlite3` while the JS process is running can corrupt WAL files.
 - **INSERT OR IGNORE on candles** — running `test_chart.cjs` multiple times accumulates bars across sessions safely.
 - **Warmup bars are auto-dropped** — `test_chart.cjs` deletes any bar where `stc_value IS NULL` immediately after computation. Both `candles` and `indicators` rows are removed.
-- **Port 9224** — `test_chart.cjs` launches Chrome on remote debugging port 9224. If you also run `client.cjs` (port 9223) or the main bot (port 9222), they won't conflict.
+- **Debug ports** — bot 9222, `client.cjs` 9223, `test_chart.cjs` 9224, `fetch_history.cjs` 9225. Run one at a time or ports will conflict.

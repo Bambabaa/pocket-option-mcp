@@ -2,6 +2,14 @@
   "candle_period_seconds": 300,
   "max_concurrent_trades": 2,
   "pocket_option_url": "https://pocketoption.com",
+  "trading_url": "https://pocketoption.com/en/cabinet/demo-quick-high-low/",
+  "history": {
+    "target_hours": 24,
+    "batch_size": 288,
+    "request_timeout_ms": 12000,
+    "stall_limit": 6,
+    "inter_request_delay_ms": 800
+  },
   "indicators": {
     "sma_periods":     [10, 20, 50],
     "ema_periods":     [12, 26],
