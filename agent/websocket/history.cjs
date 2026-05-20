@@ -251,31 +251,6 @@ async function waitForPageSocket(page, timeoutMs = 90000, log = () => {}) {
     return false;
 }
 
-/**
- * Navigate to trading cabinet URLs until socket appears.
- * @param {object} cfg config.json
- */
-async function ensureTradingPage(page, cfg, log = () => {}) {
-    const urls = [
-        cfg.trading_url,
-        'https://pocketoption.com/en/cabinet/demo-quick-high-low/',
-        'https://pocketoption.com/en/cabinet/',
-    ].filter((u, i, a) => u && a.indexOf(u) === i);
-
-    for (const url of urls) {
-        if (await probeAllFrames(page)) return true;
-        log(`opening trading page: ${url}`);
-        try {
-            await page.goto(url, { waitUntil: 'load', timeout: 120000 });
-            await sleep(4000);
-        } catch (e) {
-            log(`navigation failed: ${e.message}`);
-        }
-        if (await waitForPageSocket(page, 30000, log)) return true;
-    }
-    return false;
-}
-
 function getSocketFrame(page) {
     return _socketFrame || page.mainFrame();
 }
@@ -299,10 +274,63 @@ async function emitChangeSymbol(page, asset, period) {
 }
 
 /**
+ * CDP transport — send on the same WebSocket the chart already uses (no window.socket needed).
+ * @param {import('puppeteer').CDPSession} cdp
+ */
+function createCdpWsTransport(cdp) {
+    /** @type {Map<string, string>} */
+    const sockets = new Map();
+
+    return {
+        onCreated({ requestId, url }) {
+            if (!requestId || !url) return;
+            if (/po\.market|socket\.io|pocketoption/i.test(url)) {
+                sockets.set(requestId, url);
+            }
+        },
+        onFrame({ requestId }) {
+            if (requestId) sockets.set(requestId, sockets.get(requestId) || 'active');
+        },
+        pickId() {
+            for (const [id, url] of sockets) {
+                if (String(url).includes('po.market')) return id;
+            }
+            return sockets.keys().next().value || null;
+        },
+        async waitReady(timeoutMs, log = () => {}) {
+            const deadline = Date.now() + timeoutMs;
+            let lastLog = 0;
+            while (Date.now() < deadline) {
+                const id = this.pickId();
+                if (id) return id;
+                if (Date.now() - lastLog > 8000) {
+                    log('waiting for chart WebSocket (prices ticking on chart)...');
+                    lastLog = Date.now();
+                }
+                await sleep(400);
+            }
+            return null;
+        },
+        async send(requestId, event, payload) {
+            const msg = `42${JSON.stringify([event, payload])}`;
+            await cdp.send('Network.sendWebSocketFrame', {
+                requestId,
+                response: {
+                    opcode: 1,
+                    mask: true,
+                    payloadData: Buffer.from(msg, 'utf8').toString('base64'),
+                },
+            });
+        },
+    };
+}
+
+/**
  * @param {import('puppeteer').Page} page
  * @param {{ asset: string, period: number, time: number, index: number, offset: number }} req
+ * @param {ReturnType<createCdpWsTransport>|null} cdpWs
  */
-async function emitLoadHistoryPeriod(page, req) {
+async function emitLoadHistoryPeriod(page, req, cdpWs) {
     if (!(await probeAllFrames(page))) throw new Error('socket not available');
     const frame = getSocketFrame(page);
     const ok = await frame.evaluate((payload) => {
@@ -354,7 +382,7 @@ function clearAllPending(pending) {
  * @param {object} result LoadHistoryPeriodResult
  * @param {(msg: string) => void} [log]
  */
-function dispatchHistoryResult(pending, result, log = () => {}) {
+function dispatchHistoryResult(pending, result) {
     const idx = Number(result.index);
     const entry = pending.get(idx);
     if (!entry) {
@@ -375,7 +403,9 @@ function dispatchHistoryResult(pending, result, log = () => {}) {
  * @property {number} stallLimit
  * @property {number} interRequestDelayMs
  * @property {Map<number, object>} pending shared pending map
+ * @property {ReturnType<createCdpWsTransport>} cdpWs CDP WebSocket transport
  * @property {(msg: string) => void} log
+ * @property {((event: string, payload: unknown) => Promise<boolean>)|undefined} emitter optional CDP-context emitter
  */
 
 /**
@@ -394,18 +424,22 @@ async function fetchAssetHistory(page, asset, store, opts) {
         stallLimit,
         interRequestDelayMs,
         pending,
+        cdpWs,
         log,
+        emitter,
     } = opts;
 
-    const socketReady = await waitForPageSocket(page, 15000);
-    if (!socketReady) {
-        throw new Error(
-            'socket not available — log in fully and open the trading chart, then retry'
-        );
+    if (!cdpWs?.pickId()) {
+        throw new Error('chart WebSocket not found — stay on QT chart until prices update');
     }
 
     try {
-        await emitChangeSymbol(page, asset, period);
+        if (emitter) {
+            const ok = await emitter('changeSymbol', { asset, period });
+            if (!ok) throw new Error('socket not available');
+        } else {
+            await emitChangeSymbol(page, asset, period);
+        }
         log(`${asset}: changeSymbol(${period}s)`);
         await sleep(2000);
     } catch (e) {
@@ -427,13 +461,12 @@ async function fetchAssetHistory(page, asset, store, opts) {
         const responsePromise = waitForHistoryResponse(pending, index, requestTimeoutMs);
 
         try {
-            await emitLoadHistoryPeriod(page, {
-                asset,
-                period,
-                time: anchorTime,
-                index,
-                offset: batchSize,
-            });
+            if (emitter) {
+                const ok = await emitter('loadHistoryPeriod', { asset, period, time: anchorTime, index, offset: batchSize });
+                if (!ok) throw new Error('socket not available');
+            } else {
+                await emitLoadHistoryPeriod(page, { asset, period, time: anchorTime, index, offset: batchSize }, cdpWs);
+            }
         } catch (e) {
             cancelPending(pending, index);
             log(`${asset}: emit failed: ${e.message}`);
@@ -517,7 +550,7 @@ module.exports = {
     getSortedBars,
     installSocketSpy,
     waitForPageSocket,
-    ensureTradingPage,
+    createCdpWsTransport,
     emitChangeSymbol,
     emitLoadHistoryPeriod,
     waitForHistoryResponse,

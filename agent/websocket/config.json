@@ -2,7 +2,7 @@
   "candle_period_seconds": 300,
   "max_concurrent_trades": 2,
   "pocket_option_url": "https://pocketoption.com",
-  "trading_url": "https://pocketoption.com/en/cabinet/demo-quick-high-low/",
+  "trading_url": "https://pocketoption.com/en/cabinet/",
   "history": {
     "target_hours": 24,
     "batch_size": 288,
