@@ -14,18 +14,23 @@ const WebSocket = require('ws');
 const STATE = { IDLE: 0, CONNECTING: 1, HANDSHAKE: 2, READY: 3, CLOSED: 4 };
 
 /**
- * @param {{ log: (m: string) => void, pingTimeoutMs?: number }} opts
+ * @param {{ log: (m: string) => void, pingTimeoutMs?: number, psIntervalMs?: number }} opts
  * @returns {{ connect: Function, emit: Function, close: Function }}
  */
-function createDirectWs({ log, pingTimeoutMs = 35_000 }) {
+function createDirectWs({ log, pingTimeoutMs = 35_000, psIntervalMs = 15_000 }) {
     let ws = null;
     let state = STATE.IDLE;
     let pingTimer = null;
+    let psTimer = null;
     let connectResolve = null;
     let connectReject = null;
 
     function clearPingTimer() {
         if (pingTimer) { clearTimeout(pingTimer); pingTimer = null; }
+    }
+
+    function clearPsTimer() {
+        if (psTimer) { clearInterval(psTimer); psTimer = null; }
     }
 
     function resetPingTimer() {
@@ -34,6 +39,15 @@ function createDirectWs({ log, pingTimeoutMs = 35_000 }) {
             log('directWs: ping timeout — closing');
             ws?.terminate();
         }, pingTimeoutMs);
+    }
+
+    function startPsKeepalive() {
+        clearPsTimer();
+        psTimer = setInterval(() => {
+            if (state === STATE.READY && ws) {
+                ws.send('42["ps"]');
+            }
+        }, psIntervalMs);
     }
 
     function onMessage(raw) {
@@ -46,10 +60,21 @@ function createDirectWs({ log, pingTimeoutMs = 35_000 }) {
             return;
         }
 
+        // Socket.IO auth rejection
+        if (msg === '41') {
+            log('directWs: auth rejected (41) — closing');
+            clearPingTimer();
+            clearPsTimer();
+            state = STATE.CLOSED;
+            ws?.close();
+            return;
+        }
+
         // Socket.IO namespace ACK → send auth → READY
         if (state === STATE.HANDSHAKE && msg.startsWith('40')) {
             state = STATE.READY;
             resetPingTimer();
+            startPsKeepalive();
             log('directWs: connected and authenticated');
             connectResolve?.();
             connectResolve = null;
@@ -100,6 +125,7 @@ function createDirectWs({ log, pingTimeoutMs = 35_000 }) {
                         ws.send(`42${JSON.stringify(['auth', ssid])}`);
                         state = STATE.READY;
                         resetPingTimer();
+                        startPsKeepalive();
                         log('directWs: connected and authenticated');
                         connectResolve?.();
                         connectResolve = null;
@@ -113,6 +139,7 @@ function createDirectWs({ log, pingTimeoutMs = 35_000 }) {
                 ws.on('error', (err) => {
                     clearTimeout(timer);
                     clearPingTimer();
+                    clearPsTimer();
                     state = STATE.CLOSED;
                     log(`directWs: error — ${err.message}`);
                     connectReject?.(err);
@@ -123,6 +150,7 @@ function createDirectWs({ log, pingTimeoutMs = 35_000 }) {
                 ws.on('close', () => {
                     clearTimeout(timer);
                     clearPingTimer();
+                    clearPsTimer();
                     const wasConnecting = state !== STATE.READY && state !== STATE.CLOSED;
                     state = STATE.CLOSED;
                     log('directWs: closed');
@@ -152,6 +180,7 @@ function createDirectWs({ log, pingTimeoutMs = 35_000 }) {
 
         close() {
             clearPingTimer();
+            clearPsTimer();
             state = STATE.CLOSED;
             ws?.close();
         },
