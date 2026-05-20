@@ -418,10 +418,11 @@ async function setupBrowser() {
             '--disable-dev-shm-usage',
             '--no-sandbox'
         ],
-        defaultViewport: {
-            width: 960,
-            height: 540
-        }
+        defaultViewport: null,
+        // defaultViewport: {
+        //     width: 960,
+        //     height: 540
+        // }
     });
 
     log('✅ Browser launched', 'green');
