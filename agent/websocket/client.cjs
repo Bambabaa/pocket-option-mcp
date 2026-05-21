@@ -2,6 +2,10 @@
 // Agent WebSocket Client — live mode
 // Usage: node agent/websocket/client.cjs
 //
+// NOTE (Phase 3): pollOrders currently uses page.evaluate → sock.emit('openOrder')
+// which fails due to PO's cross-origin iframe. Order execution needs to be ported
+// to direct-ws.cjs (same pattern as fetch_history.cjs) before live trading works.
+//
 // Mirrors the bot's two-message pattern exactly:
 //
 //  MSG TYPE 1 — history dump  { asset, candles:[...], history:[[ts,price],...] }
@@ -18,18 +22,18 @@
 // history dumps cannot starve the event loop.
 
 const puppeteer = require('puppeteer');
+const readline  = require('readline');
 const path      = require('path');
 const fs        = require('fs');
-const Database  = require('better-sqlite3');
-const { computeAll } = require('./indicators.cjs');
+const { openAgentDb } = require('./store.cjs');
+const { computeAll }  = require('./indicators.cjs');
 
 const CFG     = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
 const DB_PATH = path.join(__dirname, '../data/agent.db');
 const PERIOD  = CFG.candle_period_seconds; // e.g. 300 for 5m
 
 // ── DB ────────────────────────────────────────────────────────────────────────
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
+const db = openAgentDb(DB_PATH); // auto-creates schema if tables don't exist
 
 const stmtInsertCandle = db.prepare(`
     INSERT OR IGNORE INTO candles (asset, timestamp, open, high, low, close)
@@ -305,6 +309,13 @@ async function pollOrders(page) {
     }
 }
 
+function pressEnter(msg) {
+    return new Promise((resolve) => {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        rl.question(msg, () => { rl.close(); resolve(); });
+    });
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
     log(`starting — PERIOD=${PERIOD}s`);
@@ -317,12 +328,15 @@ async function main() {
 
     const page = await browser.newPage();
 
+    // Interception must be set up BEFORE navigation so we catch the first WS
+    // connection and initial history dump (fires within ~2s of auth).
+    await setupInterception(page);
+
     log('navigating to Pocket Option...');
     await page.goto(CFG.pocket_option_url, { waitUntil: 'load', timeout: 120000 });
-    log('page loaded — set up your assets in the UI, then trading data will flow automatically');
-
-    // Set up interception BEFORE the page settles so we catch the first history dump
-    await setupInterception(page);
+    log('log in → open trading chart → click assets → press Enter to start');
+    await pressEnter('');
+    log('live data collection started — Ctrl+C to stop');
 
     // Periodic price flush safety net
     setInterval(flushPrices, FLUSH_MS);

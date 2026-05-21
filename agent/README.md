@@ -52,19 +52,19 @@ Uses the Pocket Option `loadHistoryPeriod` WebSocket API. No chart scrolling req
 
 ### 2. Run the live client (continuous)
 
-First create the schema if `agent.db` doesn't exist yet:
-
-```
-node agent/websocket/setup-db.cjs
-```
-
-Then start the live client:
-
 ```
 node agent/websocket/client.cjs
 ```
 
-Browser opens, log in, select assets. The client runs until you press Ctrl+C, accumulating candles and indicators in real time.
+1. Browser opens — log in (real or demo account)
+2. Open the trading chart and click assets you want to track
+3. Press **Enter** in the terminal
+4. Client runs indefinitely — bars close every 5 minutes, indicators computed on each close
+5. Press **Ctrl+C** to stop
+
+The schema is auto-created on first run — no need to run `setup-db.cjs` separately.
+
+**Recommended workflow:** Run `fetch_history.cjs` first to backfill 24h of history, then start `client.cjs` for live updates. The live client's history dump only seeds ~99 bars on subscribe; `fetch_history.cjs` gives 225 bars (288 fetched, 62 warmup dropped).
 
 ### 3. Fetch historical data (manual scroll — legacy)
 
@@ -133,10 +133,12 @@ Continuous live client. Connects to PO via Puppeteer + CDP, subscribes to price 
 
 | Message type | Format | What happens |
 |---|---|---|
-| History dump | `{ asset, candles, history, period }` | Seeds in-memory candle array; backfills indicators |
+| History dump | `{ asset, candles, history, period }` | Seeds in-memory candle array; backfills indicators for all seeded bars |
 | Live tick | `[[asset, timestamp, price]]` | Builds current OHLC bar; on period rollover → finalises bar, computes + stores indicators |
 
-**Order execution:** Polls `agent_orders` table every 2 seconds for `PENDING` rows and executes them via WebSocket.
+**History on subscribe:** PO pushes ~99 bars per asset when you open the chart. Run `fetch_history.cjs` first for full 24h coverage.
+
+**Order execution (Phase 3):** Polls `agent_orders` every 2 seconds for `PENDING` rows. Currently uses `page.evaluate → sock.emit('openOrder')` which fails due to PO's cross-origin iframe — will be ported to `direct-ws.cjs` in Phase 3.
 
 ---
 
