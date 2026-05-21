@@ -1,7 +1,7 @@
 # Claude Agent Trading System — Implementation Plan
 
-**Date:** 2026-05-17  
-**Status:** Draft — For Review  
+**Date:** 2026-05-17 (updated 2026-05-20)  
+**Status:** Phase 1 complete — DB populating, indicators live  
 **Scope:** Fully independent Claude CLI-driven scan-and-trade system targeting 5–15 minute expiries. Zero dependency on the existing bot or its database. Bot remains optional and can run in parallel for 1m trading.
 
 ---
@@ -78,35 +78,43 @@ Build a self-contained stack — own WebSocket feed, own database, own indicator
 
 ## 3. Component Specifications
 
-### Component 1 — WebSocket Client (`src/scripts/agent-ws.js`)
+### Component 1 — WebSocket Layer (`agent/websocket/`)
 
-**Purpose:** Always-on service. Handles all real-time data collection and trade execution. Runs independently of the bot.
+**✅ Built.** Four modules, all `.cjs`:
 
-**Responsibilities:**
+| File | Purpose | Status |
+|---|---|---|
+| `client.cjs` | Always-on live data + execution service | ✅ exists |
+| `history.cjs` | `loadHistoryPeriod` protocol — paginated 24h backfill | ✅ exists |
+| `direct-ws.cjs` | Direct Node.js EIO v4 WS connection (bypasses browser socket) | ✅ exists |
+| `indicators.cjs` | 14 indicators at PO defaults — pure math, no DB | ✅ exists |
+| `store.cjs` | DB schema + batch candle/indicator writes | ✅ exists |
+| `setup-db.cjs` | One-time schema creator | ✅ exists |
+| `config.json` | Shared config: period, URL, history, indicators | ✅ exists |
 
-*Data side (WS IN):*
-- Connect to Pocket Option WebSocket using the same endpoint + auth pattern as the existing bot
-- Subscribe to price streams for shortlisted assets only (configurable list)
-- Accumulate incoming ticks into 5m OHLC bars (bar completes at each 5-minute boundary)
-- On bar completion: trigger indicator calculation → write candle + indicators to `agent.db`
-- Reconnect automatically on disconnect
+**Key design decision — `direct-ws.cjs`:**  
+PO's socket.io runs in a cross-origin iframe, unreachable via `page.evaluate`. All WS sends go through a second direct Node.js WebSocket (`ws` package) that authenticates with the SSID captured from the browser's own auth frame via CDP. PO uses Socket.IO binary events (`451-[...]`) for history responses — the binary attachment is plain JSON, handled by forwarding `{`/`[`-prefixed frames to the response dispatcher.
 
-*Execution side (WS OUT):*
-- Poll `agent_orders` table every 2 seconds for PENDING rows
-- For each PENDING order: send trade placement message via WebSocket to Pocket Option with correct `duration` (expiry_seconds from order row)
-- Update order status to EXECUTED, FAILED, or SKIPPED
-- After expiry elapses: resolve WIN/LOSS from next price tick, write result to `agent_orders`
+**Backfill (historical data):**  
+`agent/test/fetch_history.cjs` — not a flag on `client.cjs`. Opens a Puppeteer browser, user logs in (real or demo), clicks assets in the PO UI (auto-detected via `changeSymbol` CDP frames), presses Enter. Fetches 288 × 5m bars per asset via `loadHistoryPeriod`, writes candles + indicators to `agent.db`, exits.
 
-**Config (`agent/websocket/config.json`) — configuration knobs only, no static asset lists:**
+**Config (`agent/websocket/config.json`):**
 ```json
 {
   "candle_period_seconds": 300,
   "max_concurrent_trades": 2,
   "pocket_option_url": "https://pocketoption.com",
+  "history": {
+    "target_hours": 24,
+    "batch_size": 288,
+    "request_timeout_ms": 12000,
+    "stall_limit": 6,
+    "inter_request_delay_ms": 800
+  },
   "indicators": { ... }
 }
 ```
-Assets are dynamic: live mode captures every asset PO streams; backfill mode accepts an explicit list as CLI args (`--backfill GBPJPY_otc EURJPY_otc ...`).
+Assets are dynamic: live mode captures every asset PO streams; backfill detects from UI clicks or accepts explicit CLI args.
 
 ---
 
@@ -340,7 +348,7 @@ Every 5-10 minutes:
 | Consistent | WR stable across 2m–10m | 7 min |
 | Default | | 5 min |
 
-**Initial shortlist with profiles (from 2026-05-17 EdgeFinder sim):**
+**Initial shortlist Sample:**
 
 | Asset | 2m WR | 5m WR | 10m WR | Profile | Expiry |
 |---|---|---|---|---|---|
@@ -362,54 +370,68 @@ pocket-option-mcp/
 │
 ├── agent/                               ← self-contained agent system
 │   │
-│   ├── websocket/                       ← all WS + indicator logic lives here
-│   │   ├── client.js                    NEW — WS connect/auth, live stream, backfill mode
-│   │   ├── indicators.js                NEW — 14 indicators at PO defaults (pure math)
-│   │   └── config.json                  NEW — assets, candle period, gate params, expiry profiles
+│   ├── claude-agent-trading-plan.md     ← this file
 │   │
-│   └── data/                            ← agent's own isolated data store
-│       └── agent.db                     NEW — candles, indicators,
-│                                               agent_orders, agent_log
+│   ├── websocket/                       ← WS + indicator + DB logic
+│   │   ├── client.cjs          ✅       live WS client — tick stream → 5m OHLC → indicators
+│   │   ├── history.cjs         ✅       loadHistoryPeriod protocol (paginated backfill)
+│   │   ├── direct-ws.cjs       ✅       direct Node.js EIO v4 WS (bypasses browser socket)
+│   │   ├── indicators.cjs      ✅       14 indicators at PO defaults (pure math, no DB)
+│   │   ├── store.cjs           ✅       DB schema + batch candle/indicator writes
+│   │   ├── setup-db.cjs        ✅       one-time schema creator
+│   │   └── config.json         ✅       shared config: period, URL, history, indicators
+│   │
+│   ├── test/
+│   │   ├── fetch_history.cjs   ✅       24h backfill via loadHistoryPeriod → agent.db
+│   │   └── test_chart.cjs             manual scroll legacy backfill (kept for reference)
+│   │
+│   └── data/
+│       └── agent.db            ✅       candles · indicators · agent_orders · agent_log
 │
-├── src/                                 ← existing MCP server (add agent tools here)
-│   ├── server.js                        MODIFIED — register 6 new po_agent_* tools
-│   ├── agent-connection.js              NEW — SQLite connection to agent/data/agent.db
+├── src/                                 ← existing MCP server
+│   ├── server.js                        MODIFIED — register po_agent_* tools  ⬜ Phase 2
+│   ├── agent-connection.js              NEW — SQLite readonly → agent/data/agent.db  ⬜ Phase 2
 │   └── core/
 │       └── agent-tools.js               NEW — po_agent_scan, po_agent_indicators,
-│                                               po_agent_trade, po_agent_orders, etc.
+│                                               po_agent_trade, po_agent_orders  ⬜ Phase 2
 │
 ├── data/                                ← existing bot data (untouched)
 │   ├── trading_data.db                  UNCHANGED — bot's DB (readonly to MCP)
 │   └── mcp.db                           UNCHANGED — MCP orders/blocks/logs
 │
-├── agents/
-│   ├── scan-agent.md                    NEW — Claude loop prompt + decision rules
-│   ├── market-scanner.md                existing
-│   ├── trade-analyst.md                 existing
-│   └── trade-executor.md               existing
-│
-└── docs/
-    └── claude-agent-trading-plan.md     this file
+└── agents/
+    ├── scan-agent.md                    NEW — Claude loop prompt + decision rules  ⬜ Phase 4
+    ├── market-scanner.md                existing
+    ├── trade-analyst.md                 existing
+    └── trade-executor.md               existing
 ```
 
-**Key separation:** Everything the agent owns lives under `agent/`. The `websocket/` subdir holds both the live/backfill client and the indicator engine — they belong together because the WS client is the only process that ever calls the indicators. The `data/` subdir keeps the DB co-located with what writes to it. The existing `src/` and `data/` directories are untouched except for the new MCP tool registration.
+**Key separation:** Everything the agent owns lives under `agent/`. The `websocket/` subdir holds the live client, backfill protocol, direct WS transport, and the indicator engine — they belong together because the WS client is the only process that ever calls the indicators. The `test/` subdir holds one-off data collection scripts. The `data/` subdir keeps the DB co-located with what writes to it. The existing `src/` and `data/` directories are untouched until Phase 2.
 
 ---
 
 ## 5. Build Sequence
 
-### Phase 1 — Data Foundation
+### Phase 1 — Data Foundation ✅ COMPLETE
 **Goal:** 5m candles and indicators flowing into `agent/data/agent.db`
 
-1. Create `agent/data/agent.db` schema (all four tables)
-2. Build `agent/websocket/indicators.js` — extract all 14 `calculate*` methods from `bot/indicators.js` as pure exports, apply PO-default parameters
-3. Build `agent/websocket/config.json` — asset shortlist, candle_interval_minutes, gate params, expiry profiles
-4. Build `agent/websocket/client.js`:
-   - **Live mode:** WS connect + auth → tick stream → 5m OHLC aggregation → on bar close: compute indicators → write candles + indicators → reconnect loop
-   - **Backfill mode** (`--backfill`): request historical 5m candles from PO WS API for each configured asset → compute indicators on full array → write to agent.db → exit
-5. Run `node agent/websocket/client.js --backfill` for all 10 shortlisted assets, verify candles + indicators populate
+- ✅ `agent/data/agent.db` schema — all four tables (candles, indicators, agent_orders, agent_log)
+- ✅ `agent/websocket/indicators.cjs` — 14 indicators at PO defaults (pure math, no DB)
+- ✅ `agent/websocket/store.cjs` — batch candle/indicator writes, warmup drop
+- ✅ `agent/websocket/config.json` — period, URL, history params, all indicator configs
+- ✅ `agent/websocket/history.cjs` — `loadHistoryPeriod` paginated protocol
+- ✅ `agent/websocket/direct-ws.cjs` — EIO v4 + Socket.IO binary event support, `42["ps"]` keepalive
+- ✅ `agent/test/fetch_history.cjs` — browser-based backfill: auto-detects UI-clicked assets via CDP `changeSymbol` frames, fetches 288 × 5m bars per asset, demo fallback
+- ✅ `agent/websocket/client.cjs` — live continuous client (tick → 5m OHLC → indicators)
+- ✅ Verified: 9 assets × 225 bars + 225 indicator rows each in `agent.db` (clean, no gaps)
 
-### Research Step — Validate Edge Before Going Live
+**How to backfill:**
+```
+node agent/test/fetch_history.cjs                  # auto-detect from UI clicks
+node agent/test/fetch_history.cjs EURUSD_otc       # explicit assets
+```
+
+### Research Step — Validate Edge Before Going Live ⬜ NEXT
 **Goal:** Find which indicator gates produce a real edge at 5m/10m/15m expiry
 
 6. Run backtest sim on `agent/data/agent.db` (dedicated research script, reads agent.db only):

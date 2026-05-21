@@ -1,8 +1,10 @@
 # agent/
 
-Standalone data-collection layer for Pocket Option. Uses Puppeteer to intercept the live WebSocket feed, compute all 14 indicators, and persist candles + indicators to a local SQLite database (`agent.db`).
+Standalone data-collection layer for Pocket Option. Uses Puppeteer + CDP to intercept the live WebSocket feed, compute all 14 indicators, and persist candles + indicators to a local SQLite database (`agent.db`).
 
-This is **separate from the main bot** (`bot/pocket-option-bot.js`). It writes to its own database and is used for backtesting, research, and analysis only. It does not place trades.
+This is **separate from the main bot** (`bot/pocket-option-bot.js`). It writes to its own database and is used for backtesting, research, and the Claude agent trading system. It does not place trades (yet — Phase 3).
+
+See [`claude-agent-trading-plan.md`](claude-agent-trading-plan.md) for the full system design.
 
 ---
 
@@ -10,18 +12,20 @@ This is **separate from the main bot** (`bot/pocket-option-bot.js`). It writes t
 
 ```
 agent/
+├── claude-agent-trading-plan.md  ← full system design + build sequence
 ├── data/
-│   └── agent.db              ← SQLite database (auto-created on first run)
+│   └── agent.db                  ← SQLite database (auto-created on first run)
 ├── test/
-│   ├── fetch_history.cjs     ← 24h history via loadHistoryPeriod → agent.db (recommended)
-│   └── test_chart.cjs        ← Manual scroll / subscribe dump → agent.db
+│   ├── fetch_history.cjs         ← 24h backfill via loadHistoryPeriod → agent.db (recommended)
+│   └── test_chart.cjs            ← manual scroll / subscribe dump → agent.db (legacy)
 └── websocket/
-    ├── client.cjs            ← Live WebSocket client (continuous — for future use)
-    ├── history.cjs           ← loadHistoryPeriod protocol (emit, parse, pagination)
-    ├── store.cjs             ← DB schema + batch candle/indicator writes
-    ├── indicators.cjs        ← Pure indicator math (14 indicators, PO platform defaults)
-    ├── config.json           ← Shared config: period, URL, history, indicators
-    └── setup-db.cjs          ← One-time DB schema creator (run before client.cjs)
+    ├── client.cjs                ← live WebSocket client (continuous — tick → 5m OHLC → indicators)
+    ├── direct-ws.cjs             ← direct Node.js EIO v4 WS connection (bypasses browser socket)
+    ├── history.cjs               ← loadHistoryPeriod protocol (emit, parse, pagination)
+    ├── store.cjs                 ← DB schema + batch candle/indicator writes
+    ├── indicators.cjs            ← pure indicator math (14 indicators, PO platform defaults)
+    ├── config.json               ← shared config: period, URL, history, indicators
+    └── setup-db.cjs              ← one-time DB schema creator (run before client.cjs)
 ```
 
 ---
@@ -31,29 +35,22 @@ agent/
 ### 1. Fetch 24h historical data (recommended)
 
 ```
-node agent/test/fetch_history.cjs EURUSD_otc
+node agent/test/fetch_history.cjs                    # auto-detect assets from UI clicks
+node agent/test/fetch_history.cjs EURUSD_otc         # explicit asset list
 node agent/test/fetch_history.cjs EURUSD_otc GBPUSD_otc
 ```
 
-1. Browser opens — log in and open the **trading chart**
-2. Press **Enter** in the terminal
-3. Fetches 24h (288 × 5m bars), writes to `agent/data/agent.db`, exits
+**Flow:**
+1. Browser opens — log in (real or demo account)
+2. If no CLI assets: click assets in the PO UI — each click is auto-detected
+3. Press **Enter** in the terminal
+4. Fetches 288 × 5m bars per asset (~4 min/asset at 800ms delay), writes to `agent/data/agent.db`, exits
 
-Uses the Pocket Option `loadHistoryPeriod` WebSocket API (same protocol as [BinaryOptionsTools-v2 get_candles.rs](https://github.com/ChipaDevTeam/BinaryOptionsTools-v2/blob/master/crates/binary_options_tools/src/pocketoption/modules/get_candles.rs)). No chart scrolling required.
+If no login session is detected, the script automatically navigates to the guest demo (`/en/cabinet/try-demo/`) — no login required.
 
-### 2. Fetch historical data (manual scroll — legacy)
+Uses the Pocket Option `loadHistoryPeriod` WebSocket API. No chart scrolling required.
 
-```
-node agent/test/test_chart.cjs
-```
-
-1. Browser opens — log in to Pocket Option
-2. Click each asset you want data for (any chart period — script auto-switches to 300s)
-3. Scroll the chart left to load more historical bars
-4. Press Enter in the terminal
-5. Script computes all indicators and writes to `agent/data/agent.db`, then exits
-
-### 3. Run the live client (continuous)
+### 2. Run the live client (continuous)
 
 First create the schema if `agent.db` doesn't exist yet:
 
@@ -69,67 +66,77 @@ node agent/websocket/client.cjs
 
 Browser opens, log in, select assets. The client runs until you press Ctrl+C, accumulating candles and indicators in real time.
 
+### 3. Fetch historical data (manual scroll — legacy)
+
+```
+node agent/test/test_chart.cjs
+```
+
+1. Browser opens — log in to Pocket Option
+2. Click each asset, scroll the chart left to load history
+3. Press Enter — script computes indicators and writes to `agent.db`
+
 ---
 
 ## Files
 
 ### `test/fetch_history.cjs`
 
-Dedicated 24h backfill via **`loadHistoryPeriod`** (not `changeSymbol` subscribe dumps).
+Recommended 24h backfill via **`loadHistoryPeriod`** (not `changeSymbol` subscribe dumps).
 
 **What it does:**
 - Opens Puppeteer + CDP WebSocket interception (port 9225)
-- For each asset: `sock.emit('loadHistoryPeriod', { asset, period, time, index, offset })`
-- Correlates responses by `index`; paginates with earlier `time` if fewer than target bars
+- Captures auth SSID from the browser's outbound WS frames (supports real account `session` field and demo `token` field)
+- Auto-detects assets from the user's UI clicks via `changeSymbol` CDP events (or uses CLI args)
+- For each asset: emits `loadHistoryPeriod` via a direct Node.js WS connection → correlates binary-event responses by `index` → paginates backward
 - Merges OHLC into memory, then `store.cjs` writes candles + indicators + warmup drop
 
 **Config** (`websocket/config.json` → `history`):
-- `target_hours`: 24 (default)
-- `batch_size`: 288 (bars per request; derived from period × hours)
+- `target_hours`: 24 (default) — set lower for fewer bars
+- `batch_size`: 288 — **do not change** (PO requires this offset value)
 - `request_timeout_ms`, `stall_limit`, `inter_request_delay_ms`
 
-**Expected yield:** ~288 candles per asset at `candle_period_seconds: 300` (24h of 5m bars).
+**Expected yield:** ~225 candles per asset at `candle_period_seconds: 300` (288 fetched, 62 warmup bars dropped for STC validity).
+
+---
+
+### `websocket/direct-ws.cjs`
+
+Direct Node.js WebSocket to PO's server — bypasses the browser's socket.io entirely.
+
+**Why it exists:** PO's socket.io connection runs inside a cross-origin iframe. `page.evaluate`, `Runtime.evaluate`, and CDP `Network.sendWebSocketFrame` all fail to reach it. The solution: capture the auth SSID from the browser's own outbound CDP frames, then open a second WS connection from Node.js using that SSID.
+
+**Protocol:** EIO v4 + Socket.IO
+- Handles EIO ping/pong (`2` → `3`) keepalive
+- Sends `42["ps"]` application-level keepalive every 15s (prevents PO dropping the connection after ~90s)
+- Handles Socket.IO binary events (`451-[...]`): the binary attachment arrives as a plain JSON string and is forwarded to the response dispatcher
+
+**Exports:** `createDirectWs({ log, onFrame })` → `{ connect, emit, close }`
+
+---
 
 ### `websocket/history.cjs`
 
 Shared module: parse Socket.IO frames, emit `loadHistoryPeriod`, pagination loop, candle store merge. Used by `fetch_history.cjs`.
 
+---
+
 ### `websocket/store.cjs`
 
 Shared module: `openAgentDb()`, `storeBarsAndIndicators()` — batch inserts, indicator backfill, STC warmup drop.
-
-### `test/test_chart.cjs`
-
-Manual-run historical fetcher. Designed for backtesting data collection — not for live trading.
-
-**What it does:**
-- Opens a Puppeteer browser and navigates to Pocket Option
-- Intercepts WebSocket history dumps via Chrome DevTools Protocol (CDP)
-- Detects wrong-period data and auto-corrects via `changeSymbol(asset, 300)` — no manual 5m selection needed
-- Aggregates raw ticks into proper OHLC bars (open/high/low/close per 300s bucket)
-- Merges server-provided OHLC candles with tick-derived candles (deduped by timestamp)
-- Computes all 14 indicators for every bar (full backfill)
-- Drops warmup bars where `stc_value IS NULL` (STC needs ~62 bars of lookback to produce valid values)
-- Target: **1000 bars per asset** after warmup removal
-
-**Socket spy:** The script injects a `window.io` spy before the page loads (via `evaluateOnNewDocument`). Every outgoing socket event appears in the terminal as `[SOCK] emit "eventName" ...`. This is used to discover PO's history-request API when you scroll the chart.
-
-**DB writes:**
-- `candles` — `INSERT OR IGNORE` (safe to run multiple times; accumulates across runs)
-- `indicators` — `INSERT OR REPLACE` (always uses latest computed values)
 
 ---
 
 ### `websocket/client.cjs`
 
-Continuous live client — mirrors the bot's two-message WebSocket pattern exactly.
+Continuous live client. Connects to PO via Puppeteer + CDP, subscribes to price streams, aggregates ticks into 5m OHLC bars, computes indicators on every bar close.
 
 | Message type | Format | What happens |
 |---|---|---|
-| History dump | `{ asset, candles, history, period }` | Seeds in-memory candle array; backfills indicators for all seeded bars |
-| Live tick | `[[asset, timestamp, price]]` | Stored to `prices` table (batched); builds current OHLC bar; on period rollover → finalises bar, computes + stores indicators |
+| History dump | `{ asset, candles, history, period }` | Seeds in-memory candle array; backfills indicators |
+| Live tick | `[[asset, timestamp, price]]` | Builds current OHLC bar; on period rollover → finalises bar, computes + stores indicators |
 
-**Order execution:** Polls `agent_orders` table every 2 seconds for `PENDING` rows and executes them via `socket.emit('openOrder', ...)`.
+**Order execution:** Polls `agent_orders` table every 2 seconds for `PENDING` rows and executes them via WebSocket.
 
 ---
 
@@ -164,13 +171,13 @@ const ind = computeAll(candles, cfg, prevStcValue);
 // ind === null when there is insufficient data (warmup period)
 ```
 
-**Warmup:** STC is the last indicator to become valid (`ema_slow = 50` requires ~62 bars of history). `computeAll` returns `null` for bars below this threshold.
+**Warmup:** STC needs ~62 bars of history. `computeAll` returns `null` below this threshold. Warmup bars are dropped from `agent.db` automatically.
 
 ---
 
 ### `websocket/config.json`
 
-Shared config read by both `client.cjs` and `test_chart.cjs`.
+Shared config read by all scripts.
 
 ```json
 {
@@ -187,19 +194,21 @@ Shared config read by both `client.cjs` and `test_chart.cjs`.
 }
 ```
 
-Change `candle_period_seconds` to switch between timeframes (e.g. `60` for 1m, `300` for 5m). `target_hours` × period determines how many bars `fetch_history.cjs` requests.
+**`batch_size` must stay at 288** — this is the `offset` parameter sent to PO's `loadHistoryPeriod` API. Lower values cause the server to return no data.
+
+Change `candle_period_seconds` to switch timeframes (e.g. `60` for 1m). `target_hours` controls how many bars are fetched.
 
 ---
 
 ### `websocket/setup-db.cjs`
 
-One-time schema creator for `agent.db`. Safe to re-run (uses `CREATE TABLE IF NOT EXISTS`).
+One-time schema creator for `agent.db`. Safe to re-run (`CREATE TABLE IF NOT EXISTS`).
 
 ```
 node agent/websocket/setup-db.cjs
 ```
 
-`test_chart.cjs` auto-creates the schema on every run, so you only need this before running `client.cjs`.
+`fetch_history.cjs` and `test_chart.cjs` auto-create the schema on every run, so you only need this before running `client.cjs`.
 
 ---
 
@@ -208,18 +217,18 @@ node agent/websocket/setup-db.cjs
 ```sql
 candles        (asset, timestamp PK, open, high, low, close)
 indicators     (asset, timestamp PK, sma_10..psar_is_bullish)   -- 35 columns
-prices         (asset, timestamp PK, price)                     -- per-tick
 agent_orders   (id PK, asset, direction, amount, expiry_seconds, status, result, ...)
 agent_log      (id PK, cycle_id, asset, decision, direction, score, reason, ...)
 ```
 
-All timestamps are **Unix seconds** (UTC). `candles.timestamp` is the bar **open** time aligned to the period boundary (e.g. `ts % 300 === 0` for 5m bars).
+All timestamps are **Unix seconds** (UTC). `candles.timestamp` is the bar **open** time aligned to the period boundary (`ts % 300 === 0` for 5m bars).
 
 ---
 
 ## Notes
 
 - **No Python** — `agent.db` is a `better-sqlite3` database. Opening it with Python's `sqlite3` while the JS process is running can corrupt WAL files.
-- **INSERT OR IGNORE on candles** — running `test_chart.cjs` multiple times accumulates bars across sessions safely.
-- **Warmup bars are auto-dropped** — `test_chart.cjs` deletes any bar where `stc_value IS NULL` immediately after computation. Both `candles` and `indicators` rows are removed.
+- **`INSERT OR IGNORE` on candles** — running backfill multiple times accumulates bars safely without duplicates.
+- **Warmup bars are auto-dropped** — any bar where `stc_value IS NULL` is deleted after computation. Both `candles` and `indicators` rows are removed.
 - **Debug ports** — bot 9222, `client.cjs` 9223, `test_chart.cjs` 9224, `fetch_history.cjs` 9225. Run one at a time or ports will conflict.
+- **Demo support** — `fetch_history.cjs` accepts demo token auth (`{"token":"...","isFastHistory":true}`). PO uses Socket.IO binary events (`loadHistoryPeriodFast`) for demo accounts; the client handles both formats.
