@@ -14,10 +14,10 @@ const WebSocket = require('ws');
 const STATE = { IDLE: 0, CONNECTING: 1, HANDSHAKE: 2, READY: 3, CLOSED: 4 };
 
 /**
- * @param {{ log: (m: string) => void, pingTimeoutMs?: number, psIntervalMs?: number }} opts
+ * @param {{ log: (m: string) => void, pingTimeoutMs?: number, psIntervalMs?: number, onFrame?: (raw: string) => void }} opts
  * @returns {{ connect: Function, emit: Function, close: Function }}
  */
-function createDirectWs({ log, pingTimeoutMs = 35_000, psIntervalMs = 15_000 }) {
+function createDirectWs({ log, pingTimeoutMs = 35_000, psIntervalMs = 15_000, onFrame }) {
     let ws = null;
     let state = STATE.IDLE;
     let pingTimer = null;
@@ -84,6 +84,14 @@ function createDirectWs({ log, pingTimeoutMs = 35_000, psIntervalMs = 15_000 }) 
 
         // EIO open packet — informational only
         if (msg.startsWith('0')) return;
+
+        // Forward Socket.IO app-level events (42[...]) AND binary attachment payloads
+        // PO uses binary events (451-[...]) for loadHistoryPeriodFast: the event
+        // announcement has a placeholder, and the actual JSON arrives as the next
+        // binary frame (decoded to a plain {asset,index,data} string).
+        if (onFrame && (msg.startsWith('42') || msg.startsWith('{') || msg.startsWith('['))) {
+            onFrame(msg);
+        }
     }
 
     return {
