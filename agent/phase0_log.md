@@ -165,4 +165,79 @@ Outputs: `phase0_r2_results.csv` (102 cells), `phase0_r2_survivors.csv` (1 row)
 
 **Next:** R.3 — walk-forward validation. The single survivor (`di_oversold_bounce` CALL 15m) must be re-tested on the held-out test fold. Pass requires test-fold ci_lower > 0.5405 AND test-fold WR within 5pp of train-fold WR (consistency check for overfitting). The 10m and 5m versions of the same gate are dead per R.2 — they won't be re-tested. Awaiting user confirmation.
 
+### R.3 — Walk-forward validation (run on 2026-05-23)
+
+Script: `agent/research/phase0_r3.cjs`
+Output log: `agent/research/phase0_r3_output.log`
+Outputs:
+- `phase0_r3_results.csv` (1 row)
+- `phase0_r3_asset_breakdown.csv` (34 per-asset rows)
+- `phase0_r3_session_breakdown.csv` (4 per-session rows)
+
+**Pre-checks (all passed):**
+
+| Check | Result |
+|---|---|
+| Entry close correctness (200 sampled) | 0 mismatches — PASS |
+| Exit from different bar (207 sampled) | 0 mismatches, 6 same-value cases (real flat moves, not bug) — PASS |
+| 3-bar independence (15-min min gap) | 0 violations, min gap = 900s — PASS |
+| Fold chronology (34 assets checked) | 0 violations — PASS |
+
+No methodology bugs detected. No leakage path identified.
+
+**Fold metrics for `di_oversold_bounce` CALL 15m:**
+
+| Fold | n | k | WR | CI lower | CI upper | p-value |
+|---|---|---|---|---|---|---|
+| Train | 174 | 121 | 69.54% | 62.34% | 75.90% | 2.86e-5 |
+| Test | 33 | 22 | 66.67% | **49.61%** | 80.25% | 1.00e-1 |
+
+Train − Test delta = **+2.87pp** (well within the 5pp consistency tolerance).
+
+**Verdict logic applied:**
+- Pre-checks all passed ✓
+- Consistency |delta| ≤ 5pp ✓ (2.87pp)
+- Test clears break-even floor ✗ (test ci_lower = 49.61% vs floor 54.05%)
+- → **r3_verdict = OVERFIT**
+
+Per prompt's strict pass criteria: this gate is dead.
+
+**Important nuance worth documenting (does NOT change verdict):**
+
+1. The **point estimate** WR drop was negligible (69.54% → 66.67%, only 2.87pp). The verdict failed not because the gate stopped working, but because the test sample (n=33) is too small to push the 95% CI lower bound above 54.05%. With n=33 and 66.67% point estimate, ci_lower = 49.61%. To clear 54.05% with the same WR, would need ~n=85+.
+
+2. **Sample ratio**: train n=174 vs test n=33 = 5.3x ratio. Expected ratio is 2.33x (70/30). The gate fires disproportionately less in the test period (last 30% of data). Possible interpretations:
+   - Regime change — the DI/CCI/BB combo arose more often in earlier market conditions
+   - Volatility difference — bb_width_bps band [13.7, 37.7] may exclude more bars in recent low-vol period
+   - Survivorship — the gate's "edge" may have been a transient market regime
+   - All of the above
+
+3. **Session breakdown shows internal inconsistency:**
+
+| Session | Train n | Train WR | Test n | Test WR |
+|---|---|---|---|---|
+| Asian | 9 | 33.3% | 1 | 100% |
+| European | 72 | 63.9% | 0 | — |
+| American | 64 | 70.3% | 29 | **72.4%** |
+| Off-hours | 29 | 93.1% | 3 | 0% |
+
+The American session shows clean train→test consistency (70.3% → 72.4% on n=64/29). The Off-hours train WR of 93.1% on n=29 is a textbook small-sample artefact — it collapses to 0% on test n=3. The European session has zero test signals (no firings during the test window in European hours).
+
+4. **Per-asset concentration**: 34 distinct assets fired this gate. Top-3 share is 20.1% — well distributed, no single-asset over-fit signature.
+
+**Per the prompt's hard constraint #6**: "No retrying on test fold. If a gate passes R.2 (train fold) but fails R.3 (test fold), it is dead. You do not search for a different threshold that makes it pass."
+
+**Per the prompt's hard constraint #7**: "If R.3 kills every R.2 survivor, you stop and report. You do not invent new tests to find edge."
+
+**Stop condition triggered. R.4, R.5, R.6 do not run unless user explicitly overrides.**
+
+The honest conclusion is: across 102 cells with proper statistical methodology, exactly zero gates survived walk-forward validation on this dataset. The single R.2 survivor (`di_oversold_bounce` CALL 15m) had clean train-to-test consistency but the test fold was too small to confirm the edge above the break-even floor.
+
+**Next:** await user decision. Three honest options:
+- **(A) Stop now** — write `phase0_results.md` documenting the full pipeline failure. This is a valid completion. The dataset (57 hours, 28k bars) is too small for definitive Phase 0 conclusions on rare-firing gates. Recommendation: collect more data (target 200+ hours = ~1.4M+ ticks) and re-run.
+- **(B) Continue to R.5/R.6 with the dead survivor** — explore the American-session pattern (n=29 test) as a finding, but explicitly note it is not a validated edge per strict R.3. Verdict stays OVERFIT in the strategy document.
+- **(C) Add the survivor's failure to a `phase0_results.md`** as the falsification record of the ML report's `di_oversold_bounce` claim and stop here.
+
+I will not propose a path without your decision.
+
 ---
