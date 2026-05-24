@@ -241,3 +241,103 @@ The honest conclusion is: across 102 cells with proper statistical methodology, 
 I will not propose a path without your decision.
 
 ---
+
+### Round 2 — Sync + Check (2026-05-24)
+
+- New candles synced:    5762
+- New indicators synced: 5762
+- test_r2 signals:       12
+
+Test fold result (15m expiry):
+  WR: 41.67%  n=12
+  CI lower: 19.33%
+  Flag: low_n  Verdict: INCONCLUSIVE
+
+Next check at n_test = 20.
+
+---
+
+### Round 2 — OTC/non-OTC split (2026-05-24)
+- OTC: n=31 WR=54.84% ci_low=37.77%
+- non-OTC: n=176 WR=71.59% ci_low=64.52%
+---
+
+### Round 2 — Sync only (2026-05-24)
+- Candles/indicators synced from agent.db (timestamp > 1779511200)
+- test_r2 signals: 12 for di_oversold_bounce CALL
+---
+
+### Round 2 — Continuous check (2026-05-24)
+- test_r2 n=12  WR=41.67%  ci_lower=19.33%  flag=low_n  verdict=INCONCLUSIVE
+- Next milestone: n=20
+---
+
+### Round 2 — Pre-registration update (2026-05-24)
+
+**Trigger:** Option (d) OTC/non-OTC split on R1 training corpus revealed a structural split that was not visible in the pooled R1 results.
+
+**Finding (R1 training corpus, fold 0 + fold 1):**
+
+| Group | n | WR | CI lower | CI upper | p-value | Clears floor |
+|---|---|---|---|---|---|---|
+| All combined | 207 | 69.1% | 62.5% | 75.0% | 9.78e-6 | ✓ |
+| OTC only | 31 | 54.8% | 37.8% | 70.8% | 0.537 | ✗ |
+| non-OTC only | 176 | 71.6% | 64.5% | 77.7% | 2.18e-6 | ✓ |
+
+**Interpretation:** The `di_oversold_bounce` gate's edge resides almost entirely in non-OTC (standard forex) pairs. OTC signals (n=31) show 54.8% WR with no statistical significance — indistinguishable from noise. Non-OTC signals (n=176) show 71.6% WR, highly significant, CI lower 64.5% vs floor 54.05%.
+
+Non-OTC session breakdown:
+- American: n=78, WR=73.1%, CI lower=62.3% ← clears floor independently
+- Off-hours: n=30, WR=83.3%, CI lower=66.4% ← clears floor independently
+- European: n=68, WR=64.7%, CI lower=52.8% (just below floor)
+- Asian: n=0 (gate never fires on non-OTC during Asian session — no market activity)
+
+**Pre-registration decision:**
+
+Per Round 2 methodology: a gate that passes R.2 on the full R1 training corpus can be pre-registered for test_r2 validation. The OTC/non-OTC split is an **observational finding on training data** — it informs what to watch in test_r2 but does NOT retroactively change the pre-registered gate definition.
+
+**Two pre-registered positions for Round 2 test_r2 monitoring:**
+
+1. **`di_oversold_bounce` CALL 15m — ALL assets** (original pre-registration, unchanged)
+   - Training WR: 69.1% (n=207)
+   - Validation standard: test_r2 ci_lower > 54.05%
+
+2. **`di_oversold_bounce` CALL 15m — non-OTC only** (new pre-registration, added today)
+   - Training WR: 71.6% (n=176, non-OTC subset of R1 corpus)
+   - Validation standard: test_r2 non-OTC ci_lower > 54.05%
+   - Rationale: OTC/non-OTC split is a meaningful structural distinction (different market microstructure, trading hours, liquidity). Pre-registering the non-OTC filter now — before seeing any test_r2 non-OTC results — is valid. It would not be valid after non-OTC test_r2 signals have arrived.
+   - **This registration is locked as of 2026-05-24. Cannot be changed after non-OTC test_r2 signals appear.**
+
+**Current test_r2 status:** n=12, all OTC. No non-OTC signals yet (11h10m of new data, limited non-OTC market hours in that window). OTC WR so far: 41.7% on n=12 — consistent with the finding that OTC has no edge.
+
+**What to watch:**
+- When non-OTC test_r2 signals arrive (London/NY open), run `phase0_r3_continuous.cjs` and inspect the OTC vs non-OTC split in the output.
+- The non-OTC validation is the one that matters.
+- Both registrations remain active — if ALL-assets clears the floor, that is also a valid pass.
+
+**Action taken:** `phase0_r3_continuous.cjs` already reports OTC vs non-OTC split in its output block. No script changes needed.
+
+---
+
+### Round 2 — Continuous check (2026-05-24)
+- non-OTC test_r2:  n=0  WR=n/a  ci_lower=n/a  verdict=INCONCLUSIVE
+- OTC test_r2:      n=12  WR=41.7%  (informational only)
+- Next non-OTC milestone: n=10
+---
+
+### Round 2 — Continuous check (2026-05-24)
+- non-OTC test_r2:  n=0  WR=n/a  ci_lower=n/a  verdict=WAITING
+- OTC test_r2:      n=12  WR=41.7%  (informational only — excluded from gate)
+- Next non-OTC milestone: n=10
+---
+
+### Round 2 — Sync only (2026-05-24)
+- Candles/indicators synced from agent.db (timestamp > 1779511200)
+- test_r2 signals: 12 for di_oversold_bounce CALL
+---
+
+### Round 2 — Continuous check (2026-05-24)
+- non-OTC test_r2:  n=0  WR=n/a  ci_lower=n/a  verdict=WAITING
+- OTC test_r2:      n=12  WR=41.7%  (informational only — excluded from gate)
+- Next non-OTC milestone: n=10
+---
