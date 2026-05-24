@@ -48,7 +48,8 @@
       "WebSearch",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(tee agent/research/phase0_r3_output.log)"
     ]
   },
   "enableAllProjectMcpServers": true,
