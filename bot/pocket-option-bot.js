@@ -797,16 +797,18 @@ async function processWebSocketMessage(payload, page) {
                     }
 
                     // Push finalized candle to STATE.CANDLES for indicators [timestamp, open, close, high, low]
-                    // Guard 2: skip the entire indicator + signal pipeline if this candle timestamp is already
-                    // the last entry in STATE.CANDLES — the feed is frozen and re-firing the same bar.
-                    // Asset volatility fluctuates; we never hardcode asset lists — all filtering is data-driven.
+                    // If history pre-populated this candle, update it in-place with live-aggregated OHLC
+                    // (live ticks are more accurate than the server-provided history bar).
                     if (!STATE.CANDLES[asset]) STATE.CANDLES[asset] = [];
                     const _lastEntry = STATE.CANDLES[asset][STATE.CANDLES[asset].length - 1];
                     const _isDupCandle = _lastEntry && _lastEntry[0] === STATE.CURRENT_CANDLE_START[asset];
                     if (_isDupCandle) {
-                        log(`[STALE] Skipping duplicate candle push for ${asset} @ ${STATE.CURRENT_CANDLE_START[asset]} — feed may be frozen`, 'yellow');
+                        // Overwrite history OHLC with live-aggregated values
+                        _lastEntry[1] = currentCandle.open;
+                        _lastEntry[2] = currentCandle.close;
+                        _lastEntry[3] = currentCandle.high;
+                        _lastEntry[4] = currentCandle.low;
                     } else {
-
                         STATE.CANDLES[asset].push([
                             STATE.CURRENT_CANDLE_START[asset],
                             currentCandle.open,
@@ -814,7 +816,9 @@ async function processWebSocketMessage(payload, page) {
                             currentCandle.high,
                             currentCandle.low
                         ]);
+                    }
 
+                    {
                         // Recalculate indicators on finalized candle
                         const candlesArr = STATE.CANDLES[asset];
                         const minCandles = Indicators.getMinCandlesForKT(STATE.SETTINGS);
@@ -919,8 +923,8 @@ async function processWebSocketMessage(payload, page) {
                             }
                         }
 
-                    } // end Guard 2: else (not a duplicate candle push)
-                } // end shouldStore else (candle persisted → push + recompute indicators)
+                    } // end indicator + signal pipeline
+                } // end shouldStore (candle persisted → push + recompute indicators)
             }
 
             // Start or update current in-memory candle
