@@ -924,7 +924,7 @@ async function processWebSocketMessage(payload, page) {
             }
 
             // Update indicators periodically (every 30 seconds, tracked per asset)
-            // pushHistory=false: intra-bar refresh must not advance _stochHistory/_cciHistory/_lastSchaffValues
+            // pushHistory=false: intra-bar refresh must not advance _lastSchaffValues
             if (STATE.CANDLES[asset] && STATE.CANDLES[asset].length >= Indicators.getMinCandles()) {
                 if (!STATE.lastIndicatorUpdate[asset] || Date.now() - STATE.lastIndicatorUpdate[asset] > 30000) {
                     const indicatorData = indicators.calculateAll(asset, STATE.CANDLES[asset], false);

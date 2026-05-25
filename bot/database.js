@@ -116,6 +116,7 @@ class TradingDatabase {
                 williams_14 REAL,
                 atr_14 REAL,
                 psar REAL,
+                psar_bull INTEGER,
                 zz_direction TEXT,
                 zz_pivot REAL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -546,7 +547,7 @@ class TradingDatabase {
                       atr_14,
                       adx_14, adx_plus_di, adx_minus_di,
                       williams_14,
-                      psar,
+                      psar, psar_bull,
                       zz_direction, zz_pivot)
                      VALUES (?, ?,
                              (SELECT id FROM candles WHERE asset = ? AND timestamp = ?),
@@ -561,6 +562,7 @@ class TradingDatabase {
                              ?, ?, ?,
                              ?,
                              ?, ?, ?,
+                             ?,
                              ?,
                              ?,
                              ?, ?)
@@ -596,6 +598,7 @@ class TradingDatabase {
                          adx_minus_di = excluded.adx_minus_di,
                          williams_14  = excluded.williams_14,
                          psar         = excluded.psar,
+                         psar_bull    = excluded.psar_bull,
                          zz_direction = excluded.zz_direction,
                          zz_pivot     = excluded.zz_pivot`;
 
@@ -632,6 +635,7 @@ class TradingDatabase {
             indicators.adx_minus_di ?? null,
             indicators.williams_14  ?? null,
             indicators.psar         ?? null,
+            indicators.psar_bull    ?? null,
             indicators.zz_direction ?? null,
             indicators.zz_pivot     ?? null,
         ];
@@ -1056,6 +1060,7 @@ class TradingDatabase {
             ['williams_14',  'REAL'],
             ['atr_14',       'REAL'],
             ['psar',         'REAL'],
+            ['psar_bull', 'INTEGER'],
             ['zz_direction', 'TEXT'],
             ['zz_pivot',     'REAL'],
         ];

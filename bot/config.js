@@ -93,8 +93,8 @@ module.exports = {
         },
 
         zigzag: {
-            deviationPct: 5,   // Minimum reversal % to confirm a pivot
-            minBars:       4,  // Minimum bars between pivots
+            deviationPct: 0.15,  // Minimum reversal % to confirm a pivot (forex 5m: ~0.1-0.2%)
+            minBars:          2,  // Minimum bars between pivots
         },
     },
 

@@ -537,17 +537,30 @@ class Indicators {
         if (!indicators || typeof indicators !== 'object') return 'No data';
 
         try {
-            const parts = [];
-            if (indicators.currentPrice != null) parts.push(`Price: ${indicators.currentPrice.toFixed(5)}`);
-            if (indicators.sma_10 != null) parts.push(`MA10: ${indicators.sma_10.toFixed(5)}`);
-            if (indicators.sma_20 != null) parts.push(`MA20: ${indicators.sma_20.toFixed(5)}`);
-            if (indicators.sma_50 != null) parts.push(`MA50: ${indicators.sma_50.toFixed(5)}`);
-            if (indicators.rsi_14 != null) parts.push(`RSI(14): ${indicators.rsi_14.toFixed(1)}`);
-            if (indicators.stoch_k != null) parts.push(`Stoch K: ${indicators.stoch_k.toFixed(1)} D: ${(indicators.stoch_d ?? 0).toFixed(1)}`);
-            if (indicators.bb_upper != null) parts.push(`BB(20,2): U ${indicators.bb_upper.toFixed(5)} M ${(indicators.bb_middle ?? 0).toFixed(5)} L ${(indicators.bb_lower ?? 0).toFixed(5)}`);
-            if (indicators.stc_value != null) parts.push(`STC: ${indicators.stc_value.toFixed(2)}`);
+            const fmt = (v, d=5) => v != null ? v.toFixed(d) : '—';
+            const f1  = (v)      => v != null ? v.toFixed(1)  : '—';
+            const f2  = (v)      => v != null ? v.toFixed(2)  : '—';
 
-            return parts.length > 0 ? parts.join(' | ') : 'Calculating...';
+            const line1 = [
+                indicators.currentPrice  != null ? `P:${fmt(indicators.currentPrice)}` : null,
+                indicators.sma_10        != null ? `MA10:${fmt(indicators.sma_10)}` : null,
+                indicators.sma_20        != null ? `MA20:${fmt(indicators.sma_20)}` : null,
+                indicators.rsi_14        != null ? `RSI:${f1(indicators.rsi_14)}` : null,
+                indicators.stoch_k       != null ? `K:${f1(indicators.stoch_k)} D:${f1(indicators.stoch_d)}` : null,
+                indicators.stc_value     != null ? `STC:${f1(indicators.stc_value)} Δ${f2(indicators.stc_delta)}` : null,
+                indicators.bb_width_bps  != null ? `BBw:${Math.round(indicators.bb_width_bps)}bps` : null,
+            ].filter(Boolean).join(' | ');
+
+            const line2 = [
+                indicators.macd_hist     != null ? `MACD-H:${f2(indicators.macd_hist)}` : null,
+                indicators.atr_14        != null ? `ATR:${fmt(indicators.atr_14)}` : null,
+                indicators.adx_14        != null ? `ADX:${f1(indicators.adx_14)}` : null,
+                indicators.psar          != null ? `PSAR:${fmt(indicators.psar)}(${indicators.psar_bull ? '▲' : '▼'})` : null,
+                indicators.zz_direction  != null ? `ZZ:${indicators.zz_direction}` : null,
+            ].filter(Boolean).join(' | ');
+
+            if (!line1 && !line2) return 'Calculating...';
+            return line2 ? `${line1}\n  ${line2}` : line1;
         } catch (error) {
             console.error('Error in formatIndicators:', error);
             return 'Error formatting indicators';
