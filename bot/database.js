@@ -115,6 +115,7 @@ class TradingDatabase {
                 adx_minus_di REAL,
                 williams_14 REAL,
                 atr_14 REAL,
+                atr_pct REAL,
                 psar REAL,
                 psar_bull INTEGER,
                 zz_direction TEXT,
@@ -544,7 +545,7 @@ class TradingDatabase {
                       ema_12, ema_26,
                       macd_macd, macd_signal, macd_hist,
                       kc_upper, kc_middle, kc_lower,
-                      atr_14,
+                      atr_14, atr_pct,
                       adx_14, adx_plus_di, adx_minus_di,
                       williams_14,
                       psar, psar_bull,
@@ -560,7 +561,7 @@ class TradingDatabase {
                              ?, ?,
                              ?, ?, ?,
                              ?, ?, ?,
-                             ?,
+                             ?, ?,
                              ?, ?, ?,
                              ?,
                              ?,
@@ -593,7 +594,8 @@ class TradingDatabase {
                          kc_middle    = excluded.kc_middle,
                          kc_lower     = excluded.kc_lower,
                          atr_14       = excluded.atr_14,
-                         adx_14       = excluded.adx_14,
+                         atr_pct      = excluded.atr_pct,
+                      adx_14       = excluded.adx_14,
                          adx_plus_di  = excluded.adx_plus_di,
                          adx_minus_di = excluded.adx_minus_di,
                          williams_14  = excluded.williams_14,
@@ -630,6 +632,7 @@ class TradingDatabase {
             indicators.kc_middle    ?? null,
             indicators.kc_lower     ?? null,
             indicators.atr_14       ?? null,
+            indicators.atr_pct      ?? null,
             indicators.adx_14       ?? null,
             indicators.adx_plus_di  ?? null,
             indicators.adx_minus_di ?? null,
@@ -972,6 +975,7 @@ class TradingDatabase {
                 adx_14 REAL, adx_plus_di REAL, adx_minus_di REAL,
                 williams_14 REAL,
                 atr_14 REAL,
+                atr_pct REAL,
                 psar REAL,
                 zz_direction TEXT, zz_pivot REAL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1059,6 +1063,7 @@ class TradingDatabase {
             ['adx_minus_di', 'REAL'],
             ['williams_14',  'REAL'],
             ['atr_14',       'REAL'],
+            ['atr_pct',     'REAL'],
             ['psar',         'REAL'],
             ['psar_bull', 'INTEGER'],
             ['zz_direction', 'TEXT'],
@@ -1559,7 +1564,7 @@ class TradingDatabase {
     async exportIndicatorsToCSV(asset, limit = 1000) {
         const indicators = await this.getIndicators(asset, limit);
 
-        const header = 'timestamp,datetime,asset,sma_10,sma_20,sma_50,rsi_14,stoch_k,stoch_d,stoch_prev_d,bb_upper,bb_middle,bb_lower,bb_width_bps,stc_value,stc_signal,stc_prev,stc_delta,cci_20,ema_12,ema_26,macd_macd,macd_signal,macd_hist,kc_upper,kc_middle,kc_lower,adx_14,adx_plus_di,adx_minus_di,williams_14,atr_14,psar,zz_direction,zz_pivot\n';
+        const header = 'timestamp,datetime,asset,sma_10,sma_20,sma_50,rsi_14,stoch_k,stoch_d,stoch_prev_d,bb_upper,bb_middle,bb_lower,bb_width_bps,stc_value,stc_signal,stc_prev,stc_delta,cci_20,ema_12,ema_26,macd_macd,macd_signal,macd_hist,kc_upper,kc_middle,kc_lower,adx_14,adx_plus_di,adx_minus_di,williams_14,atr_14,atr_pct,psar,zz_direction,zz_pivot\n';
 
         if (indicators.length === 0) return header;
 
