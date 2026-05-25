@@ -11,6 +11,7 @@ const { TradingDatabase, initMcpSchema } = require('./database');
 const { executeOneOrder, syncLiveTradeResultsFromDOM, resetSessionCalibration, getBalanceFromDOM } = require('./scripts/order-executor');
 const { validatePendingSignals } = require('./scripts/validate-signals');
 const CONFIG = require('./config');
+const strategy = require('./strategy');
 
 // ============================================================================
 // MCP ORDERS WORKER
@@ -608,10 +609,10 @@ async function processWebSocketMessage(payload, page) {
             log(`   Stored ${storedCandles} candles in database for ${data.asset}`, 'cyan');
 
             // Calculate indicators when we have enough candles
-            const minCandles = Indicators.getMinCandlesForKT(STATE.SETTINGS);
+            const minCandles = Indicators.getMinCandles();
             log(`   Checking indicator calculation for ${data.asset}: ${candles.length} candles >= ${minCandles}?`, 'cyan');
             if (candles.length >= minCandles) {
-                const indicatorData = indicators.calculateAll(data.asset, candles, STATE.SETTINGS);
+                const indicatorData = indicators.calculateAll(data.asset, candles);
                 if (indicatorData) {
                     STATE.INDICATORS[data.asset] = indicatorData;
                     log(`   Indicators calculated for ${data.asset}`, 'magenta');
@@ -630,14 +631,13 @@ async function processWebSocketMessage(payload, page) {
 
                     // Backfill indicator rows for every prior candle that has enough lookback.
                     // Keeps the candles ↔ indicators table 1:1 across restarts (warmup floor unavoidable).
-                    // Clear stale cross history before backfill so pre-reconnect entries don't leak into
-                    // cross detection on the first post-reconnect tick.
-                    indicators._stochHistory[data.asset] = [];
-                    indicators._cciHistory[data.asset]   = [];
+                    // Clear STC history before backfill so pre-reconnect values don't leak into
+                    // stc_delta on the first post-reconnect bar.
+                    indicators._lastSchaffValues[data.asset] = null;
                     let backfilled = 0;
                     for (let i = minCandles - 1; i < candles.length - 1; i++) {
                         const window = candles.slice(0, i + 1);
-                        const ind = indicators.calculateAll(data.asset, window, STATE.SETTINGS);
+                        const ind = indicators.calculateAll(data.asset, window);
                         if (!ind) continue;
                         try {
                             await database.insertIndicators(data.asset, candles[i][0], ind);
@@ -649,49 +649,22 @@ async function processWebSocketMessage(payload, page) {
                         }
                     }
                     // Restore _lastSchaffValues to current bar's STC after backfill loop overwrites it
-                    indicators._lastSchaffValues[data.asset] = indicatorData.schaffTrendCycle?.value ?? null;
+                    indicators._lastSchaffValues[data.asset] = indicatorData.stc_value ?? null;
                     if (backfilled > 0) log(`   ↩️  Backfilled ${backfilled} historical indicator rows for ${data.asset}`, 'cyan');
 
-                    // Store signal in database if not NEUTRAL and direction is valid
-                    if (indicatorData.signals &&
-                        indicatorData.signals.direction &&
-                        indicatorData.signals.direction !== 'NEUTRAL' &&
-                        (indicatorData.signals.direction === 'CALL' || indicatorData.signals.direction === 'PUT')) {
+                    // Store signal in database if strategy fires
+                    const _signal0 = strategy.evaluate(indicatorData);
+                    if (_signal0) {
                         try {
-                            await database.insertSignal(data.asset, lastCandle[0], {
-                                ...indicatorData.signals
-                            });
-                            log(`   ✅ Signal stored for ${data.asset}: ${indicatorData.signals.direction}`, 'green');
+                            await database.insertSignal(data.asset, lastCandle[0], _signal0);
+                            log(`   ✅ Signal stored for ${data.asset}: ${_signal0.direction}`, 'green');
                         } catch (error) {
-                            // Log error but don't spam console - only log if it's not a duplicate
                             if (!error.message || !error.message.includes('UNIQUE constraint')) {
                                 console.error(`   ❌ Error inserting signal for ${data.asset}:`, error.message);
                             }
                         }
                     } else {
-                        // Log why signal wasn't stored (for debugging) - show condition/reasons
-                        if (indicatorData.signals) {
-                            const signals = indicatorData.signals;
-                            const reasons = signals.reasons || [];
-
-                            // Find a reason that indicates why no signal (e.g. condition not met)
-                            const failureReason = reasons.find(r => r && (r.includes('No pure') || r.includes('❌') || r.includes('No Strategy')));
-
-                            if (failureReason) {
-                                log(`   ${failureReason} | ${data.asset} | dir=${signals.direction}`, 'red');
-                            } else if (reasons.length > 0) {
-                                // Show all reasons if no clear failure
-                                log(`   ℹ️  Signal not stored for ${data.asset}: direction=${signals.direction}`, 'yellow');
-                                // Show first few reasons
-                                reasons.slice(0, 2).forEach(reason => {
-                                    if (reason && typeof reason === 'string') {
-                                        log(`      ${reason}`, 'yellow');
-                                    }
-                                });
-                            } else {
-                                log(`   ℹ️  Signal not stored for ${data.asset}: direction=${signals.direction} (no reasons given)`, 'yellow');
-                            }
-                        }
+                        log(`   ℹ️  No signal for ${data.asset}`, 'yellow');
                     }
                 } else {
                     log(`   ⚠️  calculateAll returned null/undefined for ${data.asset}`, 'yellow');
@@ -821,9 +794,9 @@ async function processWebSocketMessage(payload, page) {
                     {
                         // Recalculate indicators on finalized candle
                         const candlesArr = STATE.CANDLES[asset];
-                        const minCandles = Indicators.getMinCandlesForKT(STATE.SETTINGS);
+                        const minCandles = Indicators.getMinCandles();
                         if (candlesArr.length >= minCandles) {
-                            const indicatorData = indicators.calculateAll(asset, candlesArr, STATE.SETTINGS);
+                            const indicatorData = indicators.calculateAll(asset, candlesArr);
                             if (indicatorData) {
                                 STATE.INDICATORS[asset] = indicatorData;
 
@@ -839,13 +812,11 @@ async function processWebSocketMessage(payload, page) {
                                     }
                                 }
 
-                                // Only insert signals if direction is valid and not NEUTRAL
-                                if (indicatorData.signals &&
-                                    indicatorData.signals.direction &&
-                                    indicatorData.signals.direction !== 'NEUTRAL' &&
-                                    (indicatorData.signals.direction === 'CALL' || indicatorData.signals.direction === 'PUT')) {
+                                // Only insert signals if strategy fires
+                                const _signal = strategy.evaluate(indicatorData);
+                                if (_signal) {
                                     try {
-                                        const finalSignals = indicatorData.signals;
+                                        const finalSignals = _signal;
                                         const signalTimestamp = STATE.CURRENT_CANDLE_START[asset];
 
                                         // Guard 1: reject signal if the candle array hasn't advanced.
@@ -860,9 +831,7 @@ async function processWebSocketMessage(payload, page) {
                                             log(`[STALE] Signal blocked for ${asset}: same candle timestamp ${signalTimestamp} fired again — feed frozen`, 'red');
                                         } else {
 
-                                            const insertResult = await database.insertSignal(asset, signalTimestamp, {
-                                                ...finalSignals
-                                            });
+                                            const insertResult = await database.insertSignal(asset, signalTimestamp, finalSignals);
 
                                             // Enqueue ALL signals directly — no qualification gate.
                                             // The validation loop still runs separately for analysis (signal_outcomes).
@@ -901,7 +870,7 @@ async function processWebSocketMessage(payload, page) {
                                             }
 
                                             if (DEBUG_OHLC) {
-                                                log(`✅ Signal stored for ${asset}: ${indicatorData.signals.direction}`, 'green');
+                                                log(`✅ Signal stored for ${asset}: ${finalSignals.direction}`, 'green');
                                             }
 
                                         } // end Guard 1 stale-signal check
@@ -956,9 +925,9 @@ async function processWebSocketMessage(payload, page) {
 
             // Update indicators periodically (every 30 seconds, tracked per asset)
             // pushHistory=false: intra-bar refresh must not advance _stochHistory/_cciHistory/_lastSchaffValues
-            if (STATE.CANDLES[asset] && STATE.CANDLES[asset].length >= Indicators.getMinCandlesForKT(STATE.SETTINGS)) {
+            if (STATE.CANDLES[asset] && STATE.CANDLES[asset].length >= Indicators.getMinCandles()) {
                 if (!STATE.lastIndicatorUpdate[asset] || Date.now() - STATE.lastIndicatorUpdate[asset] > 30000) {
-                    const indicatorData = indicators.calculateAll(asset, STATE.CANDLES[asset], STATE.SETTINGS, false);
+                    const indicatorData = indicators.calculateAll(asset, STATE.CANDLES[asset], false);
                     if (indicatorData) {
                         STATE.INDICATORS[asset] = indicatorData;
                         STATE.lastIndicatorUpdate[asset] = Date.now();
@@ -1067,29 +1036,17 @@ function displayStatus() {
                     // Silently skip if formatting fails
                 }
 
-                // Display signals - check if signals exist
-                if (ind.signals) {
-                    const signals = ind.signals;
-                    const direction = signals.direction;
-
-                    // Debug: Log signal info for troubleshooting
-                    if (signals.buy || signals.sell) {
-                        console.log(`${colors.reset}[${formatTimestamp()}]       [DEBUG] direction: ${direction}, buy: ${signals.buy}, sell: ${signals.sell}`);
-                    }
-
-                    // Display signal if it's not NEUTRAL
-                    if (direction &&
-                        direction !== 'NEUTRAL' &&
-                        direction !== 'undefined') {
-                        const signalColor = direction === 'CALL' ? 'green' : 'red';
-                        log(`      Signal: ${direction}`, signalColor);
-                        if (signals.reasons && Array.isArray(signals.reasons) && signals.reasons.length > 0) {
-                            signals.reasons.forEach(reason => {
-                                if (reason && typeof reason === 'string' && reason.trim() !== '') {
-                                    log(`         - ${reason}`, 'yellow');
-                                }
-                            });
-                        }
+                // Display signal if strategy fires on current indicator snapshot
+                const _dispSignal = strategy.evaluate(ind);
+                if (_dispSignal) {
+                    const signalColor = _dispSignal.direction === 'CALL' ? 'green' : 'red';
+                    log(`      Signal: ${_dispSignal.direction}`, signalColor);
+                    if (_dispSignal.reasons && Array.isArray(_dispSignal.reasons)) {
+                        _dispSignal.reasons.forEach(reason => {
+                            if (reason && typeof reason === 'string' && reason.trim() !== '') {
+                                log(`         - ${reason}`, 'yellow');
+                            }
+                        });
                     }
                 }
             });

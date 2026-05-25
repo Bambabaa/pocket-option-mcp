@@ -4,11 +4,7 @@ const { indicators: INDICATOR_CONFIG } = require('./config');
 
 class Indicators {
     constructor() {
-        this._v2ConsecCount = {};
-        this._v2LastTs = {};
         this._lastSchaffValues = {};
-        this._stochHistory = {};  // last 4 [k,d] pairs per asset (cross detection)
-        this._cciHistory = {};    // last 25 CCI(20) values per asset (cross + depth detection)
     }
 
     // ==================== BASIC INDICATORS ====================
@@ -263,7 +259,7 @@ class Indicators {
             sar = newSar;
         }
 
-        return sar;
+        return { sar, bull };
     }
 
     // ==================== ZIG ZAG ====================
@@ -449,7 +445,7 @@ class Indicators {
 
     // ==================== CALCULATE ALL INDICATORS ====================
 
-    calculateAll(asset, candles, settings = {}, pushHistory = true) {
+    calculateAll(asset, candles, pushHistory = true) {
         if (!candles || candles.length === 0) return null;
 
         const indicators = { asset, timestamp: Date.now() };
@@ -465,13 +461,6 @@ class Indicators {
         indicators.stoch_k      = stoch?.k     ?? null;
         indicators.stoch_d      = stoch?.d     ?? null;
         indicators.stoch_prev_d = stoch?.prevD ?? null;
-
-        // 4-bar stoch history for cross-age detection — only advance on bar close
-        if (!this._stochHistory[asset]) this._stochHistory[asset] = [];
-        if (pushHistory) {
-            this._stochHistory[asset].push({ k: indicators.stoch_k, d: indicators.stoch_d });
-            if (this._stochHistory[asset].length > 4) this._stochHistory[asset].shift();
-        }
 
         const bb = this.calculateBollingerBands(candles, INDICATOR_CONFIG.bb.period, INDICATOR_CONFIG.bb.stdDev);
         indicators.bb_upper     = bb?.upper        ?? null;
@@ -495,13 +484,8 @@ class Indicators {
             this._lastSchaffValues[asset] = indicators.stc_value;
         }
 
-        // CCI(20) + rolling history for cross+depth detection — only advance on bar close
+        // CCI(20)
         indicators.cci_20 = this.calculateCCI(candles, INDICATOR_CONFIG.cci.period);
-        if (!this._cciHistory[asset]) this._cciHistory[asset] = [];
-        if (pushHistory) {
-            this._cciHistory[asset].push(indicators.cci_20);
-            if (this._cciHistory[asset].length > 25) this._cciHistory[asset].shift();
-        }
 
         // EMA (12, 26)
         indicators.ema_12 = this.calculateEMA(candles, INDICATOR_CONFIG.ema[0]);
@@ -531,143 +515,20 @@ class Indicators {
         // Williams %R (14)
         indicators.williams_14 = this.calculateWilliamsR(candles, INDICATOR_CONFIG.williams.period);
 
-        // Parabolic SAR
-        indicators.psar = this.calculatePSAR(candles, INDICATOR_CONFIG.psar.acceleration, INDICATOR_CONFIG.psar.max);
+        // Parabolic SAR — { sar, bull } where bull=true means price > SAR (uptrend)
+        const psarResult = this.calculatePSAR(candles, INDICATOR_CONFIG.psar.acceleration, INDICATOR_CONFIG.psar.max);
+        indicators.psar      = psarResult?.sar  ?? null;
+        indicators.psar_bull = psarResult?.bull ?? null;
 
         // ZigZag — last confirmed pivot direction + price
         const zz = this.calculateZigZag(candles, INDICATOR_CONFIG.zigzag.deviationPct, INDICATOR_CONFIG.zigzag.minBars);
         indicators.zz_direction = zz?.direction ?? null;
         indicators.zz_pivot     = zz?.pivot     ?? null;
 
-        // Gate 1 — BB touch precomputation (configurable lookback)
-        let _g1Buy = null, _g1Sell = null;
-        for (let _j = 1; _j <= INDICATOR_CONFIG.bb.touchLookback; _j++) {
-            const _jIdx = candles.length - 1 - _j;
-            if (_jIdx < 0) break;
-            const _bbAtJ = this.calculateBollingerBands(candles.slice(0, _jIdx + 1), INDICATOR_CONFIG.bb.period, INDICATOR_CONFIG.bb.stdDev);
-            if (!_bbAtJ) continue;
-            const _c = candles[_jIdx];
-            if (_g1Buy  == null && _c[4] != null && _c[4] <= _bbAtJ.lower) _g1Buy  = { barsAgo: _j, price: _c[4], band: _bbAtJ.lower };
-            if (_g1Sell == null && _c[3] != null && _c[3] >= _bbAtJ.upper) _g1Sell = { barsAgo: _j, price: _c[3], band: _bbAtJ.upper };
-        }
-        indicators.g1_buy  = _g1Buy;
-        indicators.g1_sell = _g1Sell;
-
-        indicators.lastCandle = candles[candles.length - 1];
+        indicators.lastCandle   = candles[candles.length - 1];
         indicators.currentPrice = indicators.lastCandle[2];
 
-        indicators.signals = this.generateSignals(indicators, settings);
-
         return indicators;
-    }
-
-    // ==================== SIGNAL TRADE GENERATION ====================
-
-    signalstrade(indicators, settings, signals) {
-        const stc     = indicators.stc_value;
-        const stcPrev = indicators.stc_prev;
-        const k       = indicators.stoch_k;
-        const d       = indicators.stoch_d;
-
-        if (stc == null || stcPrev == null || k == null || d == null) return false;
-
-        const stcDelta = stc - stcPrev;
-        const asset    = indicators.asset;
-        const _sh      = this._stochHistory[asset] || [];
-        const _cciH    = this._cciHistory[asset]   || [];
-
-        for (const direction of ['CALL', 'PUT']) {
-            const isBuy = direction === 'CALL';
-
-            // ── Gate 4: STC hook + delta bounds ──────────────────────────────────
-            const g4_ok = isBuy
-                ? stcPrev <= INDICATOR_CONFIG.stc.floor    && stcDelta >= 0 && stcDelta < INDICATOR_CONFIG.stc.deltaMaxBuy
-                : stcPrev >= INDICATOR_CONFIG.stc.ceiling  && stcDelta >= INDICATOR_CONFIG.stc.deltaMinSell && stcDelta <= 0;
-            if (!g4_ok) continue;
-
-            // ── Gate 1: BB touch within last N bars (config: bb.touchLookback) ────
-            const g1 = isBuy ? indicators.g1_buy : indicators.g1_sell;
-            if (!g1) continue;
-
-            // ── Gate 2: Stoch cross from deep, exactly 1 bar ago ─────────────────
-            // _sh after push: [..., C-2, C-1, C] — barsAgo=1: prev=C-2, cross=C-1
-            let g2_ok = false;
-            if (_sh.length >= 3) {
-                const _prev = _sh[_sh.length - 3]; // C-2
-                const _cur  = _sh[_sh.length - 2]; // C-1
-                const _now  = _sh[_sh.length - 1]; // C
-                if (_prev.k != null && _prev.d != null && _cur.k != null && _cur.d != null && _now.k != null && _now.d != null) {
-                    const crossedUp   = _prev.k <= _prev.d && _cur.k > _cur.d && _prev.k < INDICATOR_CONFIG.stoch.oversold   && _prev.d < INDICATOR_CONFIG.stoch.oversold;
-                    const crossedDown = _prev.k >= _prev.d && _cur.k < _cur.d && _prev.k > INDICATOR_CONFIG.stoch.overbought && _prev.d > INDICATOR_CONFIG.stoch.overbought;
-                    const kOkBuy  = _now.k < INDICATOR_CONFIG.stoch.kMaxBuy  && Math.abs(_now.k - _now.d) > INDICATOR_CONFIG.stoch.minSep;
-                    const kOkSell = _now.k > INDICATOR_CONFIG.stoch.kMinSell && Math.abs(_now.k - _now.d) > INDICATOR_CONFIG.stoch.minSep;
-                    if (isBuy  && crossedUp   && kOkBuy)  g2_ok = true;
-                    if (!isBuy && crossedDown && kOkSell) g2_ok = true;
-                }
-            }
-            if (!g2_ok) continue;
-
-            // ── Gate 3: CCI cross ±crossLevel + depth ±minDepth ──────────────────
-            // Walk _cciH backward from C-1 (index len-2), stop at first cross found
-            let g3_ok = false;
-            for (let _x = _cciH.length - 2; _x >= 1; _x--) {
-                const _cX   = _cciH[_x];
-                const _cXm1 = _cciH[_x - 1];
-                if (_cX == null || _cXm1 == null) continue;
-                const crossed = isBuy
-                    ? (_cXm1 <= -INDICATOR_CONFIG.cci.crossLevel && _cX > -INDICATOR_CONFIG.cci.crossLevel)
-                    : (_cXm1 >= INDICATOR_CONFIG.cci.crossLevel  && _cX < INDICATOR_CONFIG.cci.crossLevel);
-                if (crossed) {
-                    const _depthSlice = _cciH.slice(Math.max(0, _x - INDICATOR_CONFIG.cci.depthWindow), Math.max(0, _x - 1)).filter(v => v != null);
-                    const _depth = _depthSlice.length > 0 ? (isBuy ? Math.min(..._depthSlice) : Math.max(..._depthSlice)) : null;
-                    if (_depth != null && (isBuy ? _depth < -INDICATOR_CONFIG.cci.minDepth : _depth > INDICATOR_CONFIG.cci.minDepth)) g3_ok = true;
-                    break;
-                }
-            }
-            if (!g3_ok) continue;
-
-            // ── All gates passed ──────────────────────────────────────────────────
-            if (isBuy) {
-                signals.buy = true;
-                signals.direction = 'CALL';
-                signals.strategyUsed = 'STC_CALL_8GSR';
-                signals.reasons.push(
-                    `STC_CALL_8GSR: stc=${stc.toFixed(1)} prev=${stcPrev.toFixed(1)} delta=${stcDelta.toFixed(3)} g1=BB${g1.barsAgo}b k=${k.toFixed(1)} d=${d.toFixed(1)}`
-                );
-            } else {
-                signals.sell = true;
-                signals.direction = 'PUT';
-                signals.strategyUsed = 'STC_PUT_8GSR';
-                signals.reasons.push(
-                    `STC_PUT_8GSR: stc=${stc.toFixed(1)} prev=${stcPrev.toFixed(1)} delta=${stcDelta.toFixed(3)} g1=BB${g1.barsAgo}b k=${k.toFixed(1)} d=${d.toFixed(1)}`
-                );
-            }
-            return true;
-        }
-        return false;
-    }
-
-    // Generate trading signals —   indicator values available as inputs
-    generateSignals(indicators, settings = {}) {
-        const signals = {
-            buy: false,
-            sell: false,
-            direction: 'NEUTRAL',
-            strategyUsed: null,
-            reasons: []
-        };
-
-        if (!indicators.currentPrice) return signals;
-
-        const fired =
-            indicators.stc_value != null && indicators.stc_prev != null && indicators.stoch_k != null && indicators.lastCandle
-                ? this.signalstrade(indicators, settings, signals)
-                : false;
-
-        if (!fired) {
-            signals.reasons.push('No Strategy Conditions Met');
-        }
-        return signals;
     }
 
     // ==================== FORMAT INDICATORS FOR DISPLAY ====================
@@ -693,7 +554,7 @@ class Indicators {
         }
     }
 
-    static getMinCandlesForKT(settings = {}) {
+    static getMinCandles() {
         const buffer   = 5;
         const maMin    = Math.max(...INDICATOR_CONFIG.sma);
         const stcMin   = INDICATOR_CONFIG.stc.emaSlow + INDICATOR_CONFIG.stc.cycle + Math.max(INDICATOR_CONFIG.stc.smooth1, INDICATOR_CONFIG.stc.smooth2);
