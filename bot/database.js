@@ -1404,8 +1404,10 @@ class TradingDatabase {
     /**
      * Get executed orders awaiting result sync
      */
-    async getExecutedOrdersAwaitingResultSync(limit = 20, expirySeconds = 65) {
-        const sec = Math.max(60, parseInt(expirySeconds, 10) || 65);
+    async getExecutedOrdersAwaitingResultSync(limit = 20, expirySeconds = 900, staleWindowSec = null) {
+        const sec = Math.max(60, parseInt(expirySeconds, 10) || 900);
+        // stale ceiling: don't retry syncing orders that are far past expiry (default: expiry + 2h)
+        const staleSec = staleWindowSec != null ? Math.max(sec + 60, parseInt(staleWindowSec, 10)) : sec + 60;
         return await this.all(
             `SELECT oq.id, oq.signal_id, oq.asset, oq.signal_timestamp, oq.direction, oq.status_reason, oq.last_update_at, oq.created_at
              FROM orders_queue oq
@@ -1413,12 +1415,16 @@ class TradingDatabase {
              WHERE oq.status = 'EXECUTED' AND t.id IS NULL
                AND (oq.status_reason LIKE 'placed_via=live%' OR oq.status_reason LIKE 'placed_via=dry%')
                AND (
-                 (oq.last_update_at IS NOT NULL AND datetime(oq.last_update_at) < datetime('now', '-' || ? || ' seconds'))
-                 OR (oq.last_update_at IS NULL AND oq.signal_timestamp < ?)
+                 (oq.last_update_at IS NOT NULL
+                   AND datetime(oq.last_update_at) < datetime('now', '-' || ? || ' seconds')
+                   AND datetime(oq.last_update_at) > datetime('now', '-' || ? || ' seconds'))
+                 OR (oq.last_update_at IS NULL
+                   AND oq.signal_timestamp < ?
+                   AND oq.signal_timestamp > ?)
                )
              ORDER BY oq.last_update_at DESC, oq.signal_timestamp DESC
              LIMIT ?`,
-            [sec, Math.floor(Date.now() / 1000) - sec, limit]
+            [sec, staleSec, Math.floor(Date.now() / 1000) - sec, Math.floor(Date.now() / 1000) - staleSec, limit]
         );
     }
 
