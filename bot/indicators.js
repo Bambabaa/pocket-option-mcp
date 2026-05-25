@@ -1,13 +1,6 @@
 // Technical Indicators Module
 
-const INDICATOR_CONFIG = {
-    sma:   [10, 20, 50],                                        // SMA periods — ma1=10 (fast), ma2=20 (mid), ma3=50 (slow)
-    rsi:   14,                                                  // RSI period
-    stoch: { kPeriod: 5, dPeriod: 3, smoothPeriod: 3 },        // Full/Slow Stochastic
-    bb:    { period: 20, stdDev: 2 },                           // Bollinger Bands
-    schaff:{ emaFast: 23, emaSlow: 50, cycle: 10, smooth1: 3, smooth2: 3 }, // Schaff Trend Cycle
-    cci:   20,                                                  // CCI period
-};
+const { indicators: INDICATOR_CONFIG } = require('./config');
 
 class Indicators {
     constructor() {
@@ -237,7 +230,7 @@ class Indicators {
         indicators.sma_20 = this.calculateSMA(candles, INDICATOR_CONFIG.sma[1]);
         indicators.sma_50 = this.calculateSMA(candles, INDICATOR_CONFIG.sma[2]);
 
-        indicators.rsi_14 = this.calculateRSI(candles, INDICATOR_CONFIG.rsi);
+        indicators.rsi_14 = this.calculateRSI(candles, INDICATOR_CONFIG.rsi.period);
 
         const stoch = this.calculateStochastic(candles, INDICATOR_CONFIG.stoch.kPeriod, INDICATOR_CONFIG.stoch.dPeriod, INDICATOR_CONFIG.stoch.smoothPeriod);
         indicators.stoch_k      = stoch?.k     ?? null;
@@ -259,8 +252,8 @@ class Indicators {
 
         const stcResult = this.calculateSchaffTrendCycle(
             candles,
-            INDICATOR_CONFIG.schaff.emaFast, INDICATOR_CONFIG.schaff.emaSlow,
-            INDICATOR_CONFIG.schaff.cycle, INDICATOR_CONFIG.schaff.smooth1, INDICATOR_CONFIG.schaff.smooth2
+            INDICATOR_CONFIG.stc.emaFast, INDICATOR_CONFIG.stc.emaSlow,
+            INDICATOR_CONFIG.stc.cycle, INDICATOR_CONFIG.stc.smooth1, INDICATOR_CONFIG.stc.smooth2
         );
         indicators.stc_value  = stcResult?.value  ?? null;
         indicators.stc_signal = stcResult?.signal ?? null;
@@ -274,16 +267,16 @@ class Indicators {
         }
 
         // CCI(20) + rolling history for cross+depth detection — only advance on bar close
-        indicators.cci_20 = this.calculateCCI(candles, INDICATOR_CONFIG.cci);
+        indicators.cci_20 = this.calculateCCI(candles, INDICATOR_CONFIG.cci.period);
         if (!this._cciHistory[asset]) this._cciHistory[asset] = [];
         if (pushHistory) {
             this._cciHistory[asset].push(indicators.cci_20);
             if (this._cciHistory[asset].length > 25) this._cciHistory[asset].shift();
         }
 
-        // Gate 1 — BB touch precomputation (j=1..3 bars before current bar)
+        // Gate 1 — BB touch precomputation (configurable lookback)
         let _g1Buy = null, _g1Sell = null;
-        for (let _j = 1; _j <= 3; _j++) {
+        for (let _j = 1; _j <= INDICATOR_CONFIG.bb.touchLookback; _j++) {
             const _jIdx = candles.length - 1 - _j;
             if (_jIdx < 0) break;
             const _bbAtJ = this.calculateBollingerBands(candles.slice(0, _jIdx + 1), INDICATOR_CONFIG.bb.period, INDICATOR_CONFIG.bb.stdDev);
@@ -323,11 +316,11 @@ class Indicators {
 
             // ── Gate 4: STC hook + delta bounds ──────────────────────────────────
             const g4_ok = isBuy
-                ? stcPrev <= 25 && stcDelta >= 0    && stcDelta < 0.5
-                : stcPrev >= 85 && stcDelta >= -0.9 && stcDelta <= 0;
+                ? stcPrev <= INDICATOR_CONFIG.stc.floor    && stcDelta >= 0 && stcDelta < INDICATOR_CONFIG.stc.deltaMaxBuy
+                : stcPrev >= INDICATOR_CONFIG.stc.ceiling  && stcDelta >= INDICATOR_CONFIG.stc.deltaMinSell && stcDelta <= 0;
             if (!g4_ok) continue;
 
-            // ── Gate 1: BB touch within last 3 bars ──────────────────────────────
+            // ── Gate 1: BB touch within last N bars (config: bb.touchLookback) ────
             const g1 = isBuy ? indicators.g1_buy : indicators.g1_sell;
             if (!g1) continue;
 
@@ -339,28 +332,30 @@ class Indicators {
                 const _cur  = _sh[_sh.length - 2]; // C-1
                 const _now  = _sh[_sh.length - 1]; // C
                 if (_prev.k != null && _prev.d != null && _cur.k != null && _cur.d != null && _now.k != null && _now.d != null) {
-                    const crossedUp   = _prev.k <= _prev.d && _cur.k > _cur.d && _prev.k < 30 && _prev.d < 30;
-                    const crossedDown = _prev.k >= _prev.d && _cur.k < _cur.d && _prev.k > 80 && _prev.d > 80;
-                    const kOkBuy  = _now.k < 50  && Math.abs(_now.k - _now.d) > 0.5;
-                    const kOkSell = _now.k > 50  && Math.abs(_now.k - _now.d) > 0.5;
+                    const crossedUp   = _prev.k <= _prev.d && _cur.k > _cur.d && _prev.k < INDICATOR_CONFIG.stoch.oversold   && _prev.d < INDICATOR_CONFIG.stoch.oversold;
+                    const crossedDown = _prev.k >= _prev.d && _cur.k < _cur.d && _prev.k > INDICATOR_CONFIG.stoch.overbought && _prev.d > INDICATOR_CONFIG.stoch.overbought;
+                    const kOkBuy  = _now.k < INDICATOR_CONFIG.stoch.kMaxBuy  && Math.abs(_now.k - _now.d) > INDICATOR_CONFIG.stoch.minSep;
+                    const kOkSell = _now.k > INDICATOR_CONFIG.stoch.kMinSell && Math.abs(_now.k - _now.d) > INDICATOR_CONFIG.stoch.minSep;
                     if (isBuy  && crossedUp   && kOkBuy)  g2_ok = true;
                     if (!isBuy && crossedDown && kOkSell) g2_ok = true;
                 }
             }
             if (!g2_ok) continue;
 
-            // ── Gate 3: CCI cross ±100 + depth ±150 ──────────────────────────────
+            // ── Gate 3: CCI cross ±crossLevel + depth ±minDepth ──────────────────
             // Walk _cciH backward from C-1 (index len-2), stop at first cross found
             let g3_ok = false;
             for (let _x = _cciH.length - 2; _x >= 1; _x--) {
                 const _cX   = _cciH[_x];
                 const _cXm1 = _cciH[_x - 1];
                 if (_cX == null || _cXm1 == null) continue;
-                const crossed = isBuy ? (_cXm1 <= -100 && _cX > -100) : (_cXm1 >= 100 && _cX < 100);
+                const crossed = isBuy
+                    ? (_cXm1 <= -INDICATOR_CONFIG.cci.crossLevel && _cX > -INDICATOR_CONFIG.cci.crossLevel)
+                    : (_cXm1 >= INDICATOR_CONFIG.cci.crossLevel  && _cX < INDICATOR_CONFIG.cci.crossLevel);
                 if (crossed) {
-                    const _depthSlice = _cciH.slice(Math.max(0, _x - 10), Math.max(0, _x - 1)).filter(v => v != null);
+                    const _depthSlice = _cciH.slice(Math.max(0, _x - INDICATOR_CONFIG.cci.depthWindow), Math.max(0, _x - 1)).filter(v => v != null);
                     const _depth = _depthSlice.length > 0 ? (isBuy ? Math.min(..._depthSlice) : Math.max(..._depthSlice)) : null;
-                    if (_depth != null && (isBuy ? _depth < -150 : _depth > 150)) g3_ok = true;
+                    if (_depth != null && (isBuy ? _depth < -INDICATOR_CONFIG.cci.minDepth : _depth > INDICATOR_CONFIG.cci.minDepth)) g3_ok = true;
                     break;
                 }
             }
@@ -436,7 +431,7 @@ class Indicators {
     static getMinCandlesForKT(settings = {}) {
         const buffer   = 5;
         const maMin    = Math.max(...INDICATOR_CONFIG.sma);
-        const stcMin   = INDICATOR_CONFIG.schaff.emaSlow + INDICATOR_CONFIG.schaff.cycle + Math.max(INDICATOR_CONFIG.schaff.smooth1, INDICATOR_CONFIG.schaff.smooth2);
+        const stcMin   = INDICATOR_CONFIG.stc.emaSlow + INDICATOR_CONFIG.stc.cycle + Math.max(INDICATOR_CONFIG.stc.smooth1, INDICATOR_CONFIG.stc.smooth2);
         return Math.max(maMin, stcMin) + buffer;
     }
 }

@@ -10,6 +10,7 @@ const Indicators = require('./indicators');
 const { TradingDatabase, initMcpSchema } = require('./database');
 const { executeOneOrder, syncLiveTradeResultsFromDOM, resetSessionCalibration, getBalanceFromDOM } = require('./scripts/order-executor');
 const { validatePendingSignals } = require('./scripts/validate-signals');
+const CONFIG = require('./config');
 
 // ============================================================================
 // MCP ORDERS WORKER
@@ -343,7 +344,7 @@ async function waitForAssetConfirmation() {
     });
 }
 
-// Global state (like Python bot)
+// Global state 
 const STATE = {
     ASSETS: {},
     CANDLES: {},
@@ -354,7 +355,7 @@ const STATE = {
     SELECTED_ASSETS: new Set(),  // Assets explicitly selected via UI
     ACTIONS: {},
     CURRENT_ASSET: null,
-    PERIOD: 300, // Fixed period in seconds — 5-minute candles (ignores server period changes)
+    PERIOD: CONFIG.candle.period,
     PRICES: {},
     AUTHENTICATED: false,
     INDICATORS: {},
@@ -369,30 +370,29 @@ const STATE = {
         // ----------  Strategy () ----------
         Strategy: ' ',                 
        
-        useQualifiedAssetsLayer: false,
         enqueueAllSignalsForTesting: false,
         executeInlineWithBot: true,
-        tradeAmount: 500,
+        tradeAmount: CONFIG.execution.tradeAmount,
 
         // Validation loop: runs every N seconds to fill signal_outcomes for analysis
-        enableValidationLoop: true,         // Master switch for the validation loop
-        validationLoopIntervalMs: 60000,    // How often to run (ms) — every 60s by default
-        lookAheadSeconds: 300,              // Option expiry to determine WIN/LOSS from candle close data (5m)
+        enableValidationLoop: true,
+        validationLoopIntervalMs: 60000,
+        lookAheadSeconds: CONFIG.candle.lookAheadSeconds,
 
-        // Execution Settings (Live trades only - no dry-run)
+        // Execution Settings (Live trades only)
         execution: {
-            enabled: true,          // Master switch - must be true to trade
-            maxDailyTrades: 50,      // Safety: Stop after this many trades
-            minPayout: 70,           // Safety: Minimum payout percentage to trade
-            tradeDelayMs: 0,         // No delay (FIFO fast execution)
-            buttonWaitTimeoutMs: 4000,    // Max wait for CALL/PUT button
-            postAssetSelectWaitMs: 300,  // Wait after asset selection for chart to settle
-            useEvaluateClick: true,       // CDP mouse hits overlay
-            resultSyncIntervalMs: 60000,  // Poll PO DOM every 35s for pending live trades
-            resultSyncFirstDelayMs: 25000,  // First result sync run
-            resultSyncStaleHours: 2,  // After this many hours, EXECUTED-without-trades_ordered is "stale"
-            expirationSec: 900,      // Option expiration (seconds) — 15-minute trades
-            placeOrderTimeoutMs: 10000  // Max time for one order (calibrate + select asset + click); reduced from 15000ms as requested
+            enabled:                  true,
+            maxDailyTrades:           CONFIG.execution.maxDailyTrades,
+            minPayout:                CONFIG.execution.minPayout,
+            tradeDelayMs:             CONFIG.execution.tradeDelayMs,
+            buttonWaitTimeoutMs:      CONFIG.execution.buttonWaitTimeoutMs,
+            postAssetSelectWaitMs:    CONFIG.execution.postAssetSelectWaitMs,
+            useEvaluateClick:         CONFIG.execution.useEvaluateClick,
+            resultSyncIntervalMs:     CONFIG.execution.resultSyncIntervalMs,
+            resultSyncFirstDelayMs:   CONFIG.execution.resultSyncFirstDelayMs,
+            resultSyncStaleHours:     CONFIG.execution.resultSyncStaleHours,
+            expirationSec:            CONFIG.execution.expirationSec,
+            placeOrderTimeoutMs:      CONFIG.execution.placeOrderTimeoutMs,
         }
     }
 };
