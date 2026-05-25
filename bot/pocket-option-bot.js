@@ -354,7 +354,7 @@ const STATE = {
     SELECTED_ASSETS: new Set(),  // Assets explicitly selected via UI
     ACTIONS: {},
     CURRENT_ASSET: null,
-    PERIOD: 60, // Fixed period in seconds (ignores server period changes)
+    PERIOD: 300, // Fixed period in seconds — 5-minute candles (ignores server period changes)
     PRICES: {},
     AUTHENTICATED: false,
     INDICATORS: {},
@@ -377,7 +377,7 @@ const STATE = {
         // Validation loop: runs every N seconds to fill signal_outcomes for analysis
         enableValidationLoop: true,         // Master switch for the validation loop
         validationLoopIntervalMs: 60000,    // How often to run (ms) — every 60s by default
-        lookAheadSeconds: 60,               // Option expiry to determine WIN/LOSS from candle close data
+        lookAheadSeconds: 300,              // Option expiry to determine WIN/LOSS from candle close data (5m)
 
         // Execution Settings (Live trades only - no dry-run)
         execution: {
@@ -391,7 +391,7 @@ const STATE = {
             resultSyncIntervalMs: 60000,  // Poll PO DOM every 35s for pending live trades
             resultSyncFirstDelayMs: 25000,  // First result sync run
             resultSyncStaleHours: 2,  // After this many hours, EXECUTED-without-trades_ordered is "stale"
-            expirationSec: 60,       // Option expiration (seconds) - calibrated once per session
+            expirationSec: 900,      // Option expiration (seconds) — 15-minute trades
             placeOrderTimeoutMs: 10000  // Max time for one order (calibrate + select asset + click); reduced from 15000ms as requested
         }
     }
