@@ -545,7 +545,11 @@ async function processWebSocketMessage(payload, page) {
             }
 
             // Process candles (reversed like Python bot)
-            const candles = [...(data.candles || [])].reverse();
+            // Filter to only candles whose timestamp aligns with our fixed period (e.g. 300s)
+            // Guards against server sending 1m bars before user has manually set chart to 5m
+            const candles = [...(data.candles || [])]
+                .reverse()
+                .filter(c => c[0] % STATE.PERIOD === 0);
 
             // Process history data
             if (data.history && Array.isArray(data.history)) {
