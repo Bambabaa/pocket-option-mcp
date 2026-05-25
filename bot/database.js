@@ -102,6 +102,22 @@ class TradingDatabase {
                 stc_prev REAL,
                 stc_delta REAL,
                 cci_20 REAL,
+                ema_12 REAL,
+                ema_26 REAL,
+                macd_macd REAL,
+                macd_signal REAL,
+                macd_hist REAL,
+                kc_upper REAL,
+                kc_middle REAL,
+                kc_lower REAL,
+                adx_14 REAL,
+                adx_plus_di REAL,
+                adx_minus_di REAL,
+                williams_14 REAL,
+                atr_14 REAL,
+                psar REAL,
+                zz_direction TEXT,
+                zz_pivot REAL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(asset, timestamp),
                 FOREIGN KEY (asset, timestamp) REFERENCES candles(asset, timestamp)
@@ -251,6 +267,7 @@ class TradingDatabase {
             // Schema migrations: rebuild indicators to new schema if old one detected, then drop legacy columns
             await this.migrateIndicatorsRebuildSchema();
             await this.migrateIndicatorsDropLegacyColumns();
+            await this.migrateIndicatorsAddExtendedColumns();
             await this.migrateSignalsDropStrengthColumns();
 
             // Backfill candle_id on rows inserted before the soft-FK column existed.
@@ -522,7 +539,15 @@ class TradingDatabase {
                       stoch_k, stoch_d, stoch_prev_d,
                       bb_upper, bb_middle, bb_lower, bb_width_bps,
                       stc_value, stc_signal, stc_prev, stc_delta,
-                      cci_20)
+                      cci_20,
+                      ema_12, ema_26,
+                      macd_macd, macd_signal, macd_hist,
+                      kc_upper, kc_middle, kc_lower,
+                      atr_14,
+                      adx_14, adx_plus_di, adx_minus_di,
+                      williams_14,
+                      psar,
+                      zz_direction, zz_pivot)
                      VALUES (?, ?,
                              (SELECT id FROM candles WHERE asset = ? AND timestamp = ?),
                              ?, ?, ?,
@@ -530,7 +555,15 @@ class TradingDatabase {
                              ?, ?, ?,
                              ?, ?, ?, ?,
                              ?, ?, ?, ?,
-                             ?)
+                             ?,
+                             ?, ?,
+                             ?, ?, ?,
+                             ?, ?, ?,
+                             ?,
+                             ?, ?, ?,
+                             ?,
+                             ?,
+                             ?, ?)
                      ON CONFLICT(asset, timestamp) DO UPDATE SET
                          candle_id    = excluded.candle_id,
                          sma_10       = excluded.sma_10,
@@ -548,11 +581,27 @@ class TradingDatabase {
                          stc_signal   = excluded.stc_signal,
                          stc_prev     = excluded.stc_prev,
                          stc_delta    = excluded.stc_delta,
-                         cci_20       = excluded.cci_20`;
+                         cci_20       = excluded.cci_20,
+                         ema_12       = excluded.ema_12,
+                         ema_26       = excluded.ema_26,
+                         macd_macd    = excluded.macd_macd,
+                         macd_signal  = excluded.macd_signal,
+                         macd_hist    = excluded.macd_hist,
+                         kc_upper     = excluded.kc_upper,
+                         kc_middle    = excluded.kc_middle,
+                         kc_lower     = excluded.kc_lower,
+                         atr_14       = excluded.atr_14,
+                         adx_14       = excluded.adx_14,
+                         adx_plus_di  = excluded.adx_plus_di,
+                         adx_minus_di = excluded.adx_minus_di,
+                         williams_14  = excluded.williams_14,
+                         psar         = excluded.psar,
+                         zz_direction = excluded.zz_direction,
+                         zz_pivot     = excluded.zz_pivot`;
 
         const params = [
             asset, timestamp,
-            asset, timestamp,           // candle_id subquery
+            asset, timestamp,               // candle_id subquery
             indicators.sma_10       ?? null,
             indicators.sma_20       ?? null,
             indicators.sma_50       ?? null,
@@ -569,6 +618,22 @@ class TradingDatabase {
             indicators.stc_prev     ?? null,
             indicators.stc_delta    ?? null,
             indicators.cci_20       ?? null,
+            indicators.ema_12       ?? null,
+            indicators.ema_26       ?? null,
+            indicators.macd_macd    ?? null,
+            indicators.macd_signal  ?? null,
+            indicators.macd_hist    ?? null,
+            indicators.kc_upper     ?? null,
+            indicators.kc_middle    ?? null,
+            indicators.kc_lower     ?? null,
+            indicators.atr_14       ?? null,
+            indicators.adx_14       ?? null,
+            indicators.adx_plus_di  ?? null,
+            indicators.adx_minus_di ?? null,
+            indicators.williams_14  ?? null,
+            indicators.psar         ?? null,
+            indicators.zz_direction ?? null,
+            indicators.zz_pivot     ?? null,
         ];
 
         try {
@@ -897,6 +962,14 @@ class TradingDatabase {
                 bb_upper REAL, bb_middle REAL, bb_lower REAL, bb_width_bps REAL,
                 stc_value REAL, stc_signal REAL, stc_prev REAL, stc_delta REAL,
                 cci_20 REAL,
+                ema_12 REAL, ema_26 REAL,
+                macd_macd REAL, macd_signal REAL, macd_hist REAL,
+                kc_upper REAL, kc_middle REAL, kc_lower REAL,
+                adx_14 REAL, adx_plus_di REAL, adx_minus_di REAL,
+                williams_14 REAL,
+                atr_14 REAL,
+                psar REAL,
+                zz_direction TEXT, zz_pivot REAL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(asset, timestamp)
             )`);
@@ -946,10 +1019,11 @@ class TradingDatabase {
      * Safe to run multiple times; ignores errors when columns are already gone or DROP COLUMN is unsupported.
      */
     async migrateIndicatorsDropLegacyColumns() {
+        // macd_signal, adx_plus_di, adx_minus_di are KEPT — now valid extended columns
         const deprecated = [
             'fast_ma', 'slow_ma',
-            'macd_value', 'macd_signal', 'macd_histogram',
-            'adx_value', 'adx_plus_di', 'adx_minus_di',
+            'macd_value', 'macd_histogram',
+            'adx_value',
             'cci', 'williams_r',
             'sar_value', 'sar_trend', 'atr'
         ];
@@ -958,6 +1032,38 @@ class TradingDatabase {
                 await this.run(`ALTER TABLE indicators DROP COLUMN ${name}`);
             } catch (e) {
                 // Ignore if column does not exist or DROP COLUMN not supported.
+            }
+        }
+    }
+
+    /**
+     * Additive migration: safely adds the 16 extended indicator columns to existing DBs.
+     * No-op when columns already exist. Safe to call on every startup.
+     */
+    async migrateIndicatorsAddExtendedColumns() {
+        const newCols = [
+            ['ema_12',       'REAL'],
+            ['ema_26',       'REAL'],
+            ['macd_macd',    'REAL'],
+            ['macd_signal',  'REAL'],
+            ['macd_hist',    'REAL'],
+            ['kc_upper',     'REAL'],
+            ['kc_middle',    'REAL'],
+            ['kc_lower',     'REAL'],
+            ['adx_14',       'REAL'],
+            ['adx_plus_di',  'REAL'],
+            ['adx_minus_di', 'REAL'],
+            ['williams_14',  'REAL'],
+            ['atr_14',       'REAL'],
+            ['psar',         'REAL'],
+            ['zz_direction', 'TEXT'],
+            ['zz_pivot',     'REAL'],
+        ];
+        for (const [col, type] of newCols) {
+            try {
+                await this.run(`ALTER TABLE indicators ADD COLUMN ${col} ${type}`);
+            } catch (_) {
+                // Column already exists — no-op
             }
         }
     }
@@ -1448,14 +1554,29 @@ class TradingDatabase {
     async exportIndicatorsToCSV(asset, limit = 1000) {
         const indicators = await this.getIndicators(asset, limit);
 
-        if (indicators.length === 0) {
-            return 'timestamp,datetime,asset,sma_10,sma_20,sma_50,rsi_14,stoch_k,stoch_d,stoch_prev_d,bb_upper,bb_middle,bb_lower,bb_width_bps,stc_value,stc_signal,stc_prev,stc_delta,cci_20\n';
-        }
+        const header = 'timestamp,datetime,asset,sma_10,sma_20,sma_50,rsi_14,stoch_k,stoch_d,stoch_prev_d,bb_upper,bb_middle,bb_lower,bb_width_bps,stc_value,stc_signal,stc_prev,stc_delta,cci_20,ema_12,ema_26,macd_macd,macd_signal,macd_hist,kc_upper,kc_middle,kc_lower,adx_14,adx_plus_di,adx_minus_di,williams_14,atr_14,psar,zz_direction,zz_pivot\n';
 
-        const header = 'timestamp,datetime,asset,sma_10,sma_20,sma_50,rsi_14,stoch_k,stoch_d,stoch_prev_d,bb_upper,bb_middle,bb_lower,bb_width_bps,stc_value,stc_signal,stc_prev,stc_delta,cci_20\n';
+        if (indicators.length === 0) return header;
+
         const rows = indicators.reverse().map(i => {
-            const datetime = new Date(i.timestamp * 1000).toISOString();
-            return `${i.timestamp},${datetime},${i.asset},${i.sma_10 || ''},${i.sma_20 || ''},${i.sma_50 || ''},${i.rsi_14 || ''},${i.stoch_k || ''},${i.stoch_d || ''},${i.stoch_prev_d || ''},${i.bb_upper || ''},${i.bb_middle || ''},${i.bb_lower || ''},${i.bb_width_bps || ''},${i.stc_value || ''},${i.stc_signal || ''},${i.stc_prev || ''},${i.stc_delta || ''},${i.cci_20 || ''}`;
+            const dt = new Date(i.timestamp * 1000).toISOString();
+            return [
+                i.timestamp, dt, i.asset,
+                i.sma_10 ?? '', i.sma_20 ?? '', i.sma_50 ?? '',
+                i.rsi_14 ?? '',
+                i.stoch_k ?? '', i.stoch_d ?? '', i.stoch_prev_d ?? '',
+                i.bb_upper ?? '', i.bb_middle ?? '', i.bb_lower ?? '', i.bb_width_bps ?? '',
+                i.stc_value ?? '', i.stc_signal ?? '', i.stc_prev ?? '', i.stc_delta ?? '',
+                i.cci_20 ?? '',
+                i.ema_12 ?? '', i.ema_26 ?? '',
+                i.macd_macd ?? '', i.macd_signal ?? '', i.macd_hist ?? '',
+                i.kc_upper ?? '', i.kc_middle ?? '', i.kc_lower ?? '',
+                i.adx_14 ?? '', i.adx_plus_di ?? '', i.adx_minus_di ?? '',
+                i.williams_14 ?? '',
+                i.atr_14 ?? '',
+                i.psar ?? '',
+                i.zz_direction ?? '', i.zz_pivot ?? '',
+            ].join(',');
         }).join('\n');
 
         return header + rows;

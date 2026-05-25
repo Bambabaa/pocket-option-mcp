@@ -79,9 +79,238 @@ class Indicators {
         return 100 - (100 / (1 + avgGain / avgLoss));
     }
 
-    // ==================== MACD — removed (not used in live gates) ====================
-    // ==================== KELTNER CHANNEL — removed (not used in live gates) ====================
-    // ==================== ZIG ZAG — removed (not used in live gates) ====================
+    // ==================== MACD (12, 26, 9) ====================
+
+    calculateMACD(candles, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
+        if (!candles || candles.length < slowPeriod + signalPeriod) return null;
+
+        const closes = candles.map(c => c[2]);
+
+        function emaArray(arr, period) {
+            if (arr.length < period) return [];
+            const k = 2 / (period + 1);
+            const result = [];
+            let ema = arr.slice(0, period).reduce((a, b) => a + b, 0) / period;
+            result.push(ema);
+            for (let i = period; i < arr.length; i++) {
+                ema = (arr[i] - ema) * k + ema;
+                result.push(ema);
+            }
+            return result;
+        }
+
+        const fastEMAs = emaArray(closes, fastPeriod);
+        const slowEMAs = emaArray(closes, slowPeriod);
+        if (!fastEMAs.length || !slowEMAs.length) return null;
+
+        // Align: slowEMAs[i] and fastEMAs[offset+i] both refer to the same bar
+        const offset   = slowPeriod - fastPeriod;
+        const macdLine = slowEMAs.map((v, i) => fastEMAs[offset + i] - v);
+        if (macdLine.length < signalPeriod) return null;
+
+        const sigEMAs = emaArray(macdLine, signalPeriod);
+        if (!sigEMAs.length) return null;
+
+        const macd   = macdLine[macdLine.length - 1];
+        const signal = sigEMAs[sigEMAs.length - 1];
+        return { macd, signal, histogram: macd - signal };
+    }
+
+    // ==================== ATR (Average True Range) — Wilder's smoothing ====================
+
+    calculateATR(candles, period = 14) {
+        if (!candles || candles.length < period + 1) return null;
+
+        const trs = [];
+        for (let i = 1; i < candles.length; i++) {
+            const high      = candles[i][3]     ?? candles[i][2];
+            const low       = candles[i][4]     ?? candles[i][1];
+            const prevClose = candles[i - 1][2];
+            trs.push(Math.max(
+                high - low,
+                Math.abs(high - prevClose),
+                Math.abs(low  - prevClose)
+            ));
+        }
+
+        if (trs.length < period) return null;
+
+        let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+        for (let i = period; i < trs.length; i++) {
+            atr = (atr * (period - 1) + trs[i]) / period;
+        }
+        return atr;
+    }
+
+    // ==================== KELTNER CHANNEL (EMA 20, ATR 10, mult 2) ====================
+
+    calculateKeltnerChannel(candles, emaPeriod = 20, atrPeriod = 10, mult = 2) {
+        const middle = this.calculateEMA(candles, emaPeriod);
+        const atr    = this.calculateATR(candles, atrPeriod);
+        if (middle == null || atr == null) return null;
+        return {
+            upper:  middle + mult * atr,
+            middle,
+            lower:  middle - mult * atr,
+        };
+    }
+
+    // ==================== ADX (Average Directional Index, period 14) ====================
+
+    calculateADX(candles, period = 14) {
+        if (!candles || candles.length < period * 2 + 1) return null;
+
+        const plusDM = [], minusDM = [], trs = [];
+        for (let i = 1; i < candles.length; i++) {
+            const high      = candles[i][3]     ?? candles[i][2];
+            const low       = candles[i][4]     ?? candles[i][1];
+            const prevHigh  = candles[i - 1][3] ?? candles[i - 1][2];
+            const prevLow   = candles[i - 1][4] ?? candles[i - 1][1];
+            const prevClose = candles[i - 1][2];
+
+            const upMove   = high - prevHigh;
+            const downMove = prevLow - low;
+            plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0);
+            minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
+            trs.push(Math.max(
+                high - low,
+                Math.abs(high - prevClose),
+                Math.abs(low  - prevClose)
+            ));
+        }
+
+        if (trs.length < period) return null;
+
+        let smoothTR      = trs.slice(0, period).reduce((a, b) => a + b, 0);
+        let smoothPlusDM  = plusDM.slice(0, period).reduce((a, b) => a + b, 0);
+        let smoothMinusDM = minusDM.slice(0, period).reduce((a, b) => a + b, 0);
+
+        const dxValues = [];
+        for (let i = period; i < trs.length; i++) {
+            smoothTR      = smoothTR      - (smoothTR      / period) + trs[i];
+            smoothPlusDM  = smoothPlusDM  - (smoothPlusDM  / period) + plusDM[i];
+            smoothMinusDM = smoothMinusDM - (smoothMinusDM / period) + minusDM[i];
+
+            if (smoothTR === 0) { dxValues.push(0); continue; }
+            const pDI   = 100 * smoothPlusDM  / smoothTR;
+            const mDI   = 100 * smoothMinusDM / smoothTR;
+            const diSum = pDI + mDI;
+            dxValues.push(diSum === 0 ? 0 : 100 * Math.abs(pDI - mDI) / diSum);
+        }
+
+        if (dxValues.length < period) return null;
+
+        let adx = dxValues.slice(0, period).reduce((a, b) => a + b, 0) / period;
+        for (let i = period; i < dxValues.length; i++) {
+            adx = (adx * (period - 1) + dxValues[i]) / period;
+        }
+
+        const plusDI  = smoothTR > 0 ? 100 * smoothPlusDM  / smoothTR : 0;
+        const minusDI = smoothTR > 0 ? 100 * smoothMinusDM / smoothTR : 0;
+        return { adx, plusDI, minusDI };
+    }
+
+    // ==================== WILLIAMS %R (period 14) ====================
+
+    calculateWilliamsR(candles, period = 14) {
+        if (!candles || candles.length < period) return null;
+
+        const recent      = candles.slice(-period);
+        const highestHigh = Math.max(...recent.map(c => c[3] ?? c[2]));
+        const lowestLow   = Math.min(...recent.map(c => c[4] ?? c[1]));
+        const close       = recent[recent.length - 1][2];
+
+        if (highestHigh === lowestLow) return -50;
+        return ((highestHigh - close) / (highestHigh - lowestLow)) * -100;
+    }
+
+    // ==================== PARABOLIC SAR ====================
+
+    calculatePSAR(candles, acceleration = 0.02, max = 0.2) {
+        if (!candles || candles.length < 2) return null;
+
+        let bull = true;
+        let af   = acceleration;
+        let ep   = candles[0][3] ?? candles[0][2];  // extreme point (high for bull start)
+        let sar  = candles[0][4] ?? candles[0][1];  // initial SAR = first low
+
+        for (let i = 1; i < candles.length; i++) {
+            const high      = candles[i][3]     ?? candles[i][2];
+            const low       = candles[i][4]     ?? candles[i][1];
+            const prevHigh  = candles[i - 1][3] ?? candles[i - 1][2];
+            const prevLow   = candles[i - 1][4] ?? candles[i - 1][1];
+            const prev2Low  = i >= 2 ? (candles[i - 2][4] ?? candles[i - 2][1]) : prevLow;
+            const prev2High = i >= 2 ? (candles[i - 2][3] ?? candles[i - 2][2]) : prevHigh;
+
+            let newSar = sar + af * (ep - sar);
+
+            if (bull) {
+                newSar = Math.min(newSar, prevLow, prev2Low);
+                if (low < newSar) {
+                    bull = false; newSar = ep; ep = low; af = acceleration;
+                } else {
+                    if (high > ep) { ep = high; af = Math.min(af + acceleration, max); }
+                }
+            } else {
+                newSar = Math.max(newSar, prevHigh, prev2High);
+                if (high > newSar) {
+                    bull = true; newSar = ep; ep = high; af = acceleration;
+                } else {
+                    if (low < ep) { ep = low; af = Math.min(af + acceleration, max); }
+                }
+            }
+
+            sar = newSar;
+        }
+
+        return sar;
+    }
+
+    // ==================== ZIG ZAG ====================
+
+    calculateZigZag(candles, deviationPct = 5, minBars = 4) {
+        if (!candles || candles.length < minBars + 1) return null;
+
+        const dev   = deviationPct / 100;
+        const highs = candles.map(c => c[3] ?? c[2]);
+        const lows  = candles.map(c => c[4] ?? c[1]);
+
+        let trend      = 'UP';      // initial assumption: bullish until a reversal is seen
+        let pivotPrice = lows[0];
+        let pivotIdx   = 0;
+        const pivots   = [];
+
+        for (let i = 1; i < candles.length; i++) {
+            if (trend === 'UP') {
+                if (highs[i] > pivotPrice) {
+                    pivotPrice = highs[i];
+                    pivotIdx   = i;
+                } else if ((pivotPrice - lows[i]) / pivotPrice >= dev && (i - pivotIdx) >= minBars) {
+                    pivots.push({ type: 'HIGH', price: pivotPrice, idx: pivotIdx });
+                    trend      = 'DOWN';
+                    pivotPrice = lows[i];
+                    pivotIdx   = i;
+                }
+            } else {
+                if (lows[i] < pivotPrice) {
+                    pivotPrice = lows[i];
+                    pivotIdx   = i;
+                } else if ((highs[i] - pivotPrice) / pivotPrice >= dev && (i - pivotIdx) >= minBars) {
+                    pivots.push({ type: 'LOW', price: pivotPrice, idx: pivotIdx });
+                    trend      = 'UP';
+                    pivotPrice = highs[i];
+                    pivotIdx   = i;
+                }
+            }
+        }
+
+        if (pivots.length === 0) return null;
+        const last = pivots[pivots.length - 1];
+        return {
+            direction: last.type === 'HIGH' ? 'DOWN' : 'UP',  // trend after last confirmed pivot
+            pivot:     last.price,
+        };
+    }
 
     // Bollinger Bands
     calculateBollingerBands(candles, period = 20, stdDev = 2) {
@@ -273,6 +502,42 @@ class Indicators {
             this._cciHistory[asset].push(indicators.cci_20);
             if (this._cciHistory[asset].length > 25) this._cciHistory[asset].shift();
         }
+
+        // EMA (12, 26)
+        indicators.ema_12 = this.calculateEMA(candles, INDICATOR_CONFIG.ema[0]);
+        indicators.ema_26 = this.calculateEMA(candles, INDICATOR_CONFIG.ema[1]);
+
+        // MACD (12, 26, 9)
+        const macd = this.calculateMACD(candles, INDICATOR_CONFIG.macd.fast, INDICATOR_CONFIG.macd.slow, INDICATOR_CONFIG.macd.signal);
+        indicators.macd_macd   = macd?.macd      ?? null;
+        indicators.macd_signal = macd?.signal    ?? null;
+        indicators.macd_hist   = macd?.histogram ?? null;
+
+        // Keltner Channel (EMA 20, ATR 10, mult 2)
+        const kc = this.calculateKeltnerChannel(candles, INDICATOR_CONFIG.keltner.emaPeriod, INDICATOR_CONFIG.keltner.atrPeriod, INDICATOR_CONFIG.keltner.mult);
+        indicators.kc_upper  = kc?.upper  ?? null;
+        indicators.kc_middle = kc?.middle ?? null;
+        indicators.kc_lower  = kc?.lower  ?? null;
+
+        // ATR (14) — Wilder's smoothing
+        indicators.atr_14 = this.calculateATR(candles, INDICATOR_CONFIG.atr.period);
+
+        // ADX + DI (14)
+        const adx = this.calculateADX(candles, INDICATOR_CONFIG.adx.period);
+        indicators.adx_14       = adx?.adx    ?? null;
+        indicators.adx_plus_di  = adx?.plusDI ?? null;
+        indicators.adx_minus_di = adx?.minusDI ?? null;
+
+        // Williams %R (14)
+        indicators.williams_14 = this.calculateWilliamsR(candles, INDICATOR_CONFIG.williams.period);
+
+        // Parabolic SAR
+        indicators.psar = this.calculatePSAR(candles, INDICATOR_CONFIG.psar.acceleration, INDICATOR_CONFIG.psar.max);
+
+        // ZigZag — last confirmed pivot direction + price
+        const zz = this.calculateZigZag(candles, INDICATOR_CONFIG.zigzag.deviationPct, INDICATOR_CONFIG.zigzag.minBars);
+        indicators.zz_direction = zz?.direction ?? null;
+        indicators.zz_pivot     = zz?.pivot     ?? null;
 
         // Gate 1 — BB touch precomputation (configurable lookback)
         let _g1Buy = null, _g1Sell = null;

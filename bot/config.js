@@ -12,8 +12,16 @@ module.exports = {
 
         sma: [10, 20, 50],  // SMA periods: fast / mid / slow
 
+        ema: [12, 26],  // EMA periods: fast / slow
+
         rsi: {
             period: 14,
+        },
+
+        macd: {
+            fast:   12,
+            slow:   26,
+            signal:  9,
         },
 
         stoch: {
@@ -59,6 +67,34 @@ module.exports = {
             crossLevel:  100,   // CCI must cross ±crossLevel to qualify
             minDepth:    150,   // Prior extreme must exceed ±minDepth before cross
             depthWindow: 10,    // Bars to look back when measuring depth
+        },
+
+        keltner: {
+            emaPeriod: 20,   // EMA of close
+            atrPeriod: 10,   // ATR period for channel width
+            mult:       2,   // ATR multiplier
+        },
+
+        atr: {
+            period: 14,      // Wilder's ATR
+        },
+
+        adx: {
+            period: 14,      // ADX + DI calculation window
+        },
+
+        williams: {
+            period: 14,      // Williams %R lookback
+        },
+
+        psar: {
+            acceleration: 0.02,  // Initial acceleration factor
+            max:           0.2,  // Maximum acceleration factor
+        },
+
+        zigzag: {
+            deviationPct: 5,   // Minimum reversal % to confirm a pivot
+            minBars:       4,  // Minimum bars between pivots
         },
     },
 
