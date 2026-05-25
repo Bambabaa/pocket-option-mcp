@@ -50,56 +50,28 @@ const FEATURES = {
 
 const STRATEGIES = [
 
-    // ── CALL: STC Floor Bounce ────────────────────────────────────────────────
-    {
-        name:      'STC_CALL_MODE_D',
-        direction: 'CALL',
-        thresholds: {
-            stc_floor:    25,   // STC at floor zone
-            rsi_oversold: 30,   // RSI deeply oversold
-            bb_min_bps:   10,   // minimum BB width (flat-market filter)
-            stoch_mid:    50,   // stochastic midline
-        },
-        gates: [
-            { label: 'stc_floor',    fn: (ind, f, t) => ind.stc_value    <= t.stc_floor },
-            { label: 'stc_curling',  fn: (ind)       => ind.stc_delta     > 0 },
-            { label: 'rsi_oversold', fn: (ind, f, t) => ind.rsi_14        < t.rsi_oversold },
-            { label: 'stoch_cross',  fn: (ind)       => ind.stoch_k != null && ind.stoch_d != null && ind.stoch_k > ind.stoch_d },
-            { label: 'stoch_not_ob', fn: (ind, f, t) => ind.stoch_k       < t.stoch_mid },
-            { label: 'bb_active',    fn: (ind, f, t) => ind.bb_width_bps >= t.bb_min_bps },
-            { label: 'bb_expanding', fn: (ind, f)    => f.bb_expanding   === true },
-            { label: 'ma_momentum',  fn: (ind, f)    => f.ma_gap_trend   !== 'narrowing' },
-        ],
-        reason: (ind, f) =>
-            `stc=${ind.stc_value?.toFixed(1)} delta=${ind.stc_delta?.toFixed(3)}` +
-            ` rsi=${ind.rsi_14?.toFixed(1)} k=${ind.stoch_k?.toFixed(1)} d=${ind.stoch_d?.toFixed(1)}` +
-            ` bbW=${ind.bb_width_bps?.toFixed(1)}bps bb_exp=${f.bb_expanding} ma_gap=${f.ma_gap_trend}`,
-    },
+    // ── CALL/PUT: ────────────────────────────────────────────────
+    // {
+    //     name:      '',
+    //     direction: '',
+    //     thresholds: {
+    //         
+    //     },
+    //     gates: [
+    //         ],
+    //     reason: (ind, f) =>    
+    // },
 
-    // ── PUT: STC Ceiling Rollover ─────────────────────────────────────────────
-    {
-        name:      'STC_PUT_MODE_D',
-        direction: 'PUT',
-        thresholds: {
-            stc_ceiling:    90,  // STC at ceiling zone
-            rsi_overbought: 70,  // RSI deeply overbought
-            bb_min_bps:     10,  // minimum BB width (flat-market filter)
-            stoch_mid:      50,  // stochastic midline
-        },
-        gates: [
-            { label: 'stc_ceiling',    fn: (ind, f, t) => ind.stc_value    >= t.stc_ceiling },
-            { label: 'stc_rolling',    fn: (ind)        => ind.stc_delta     < 0 },
-            { label: 'rsi_overbought', fn: (ind, f, t) => ind.rsi_14        > t.rsi_overbought },
-            { label: 'stoch_cross',    fn: (ind)        => ind.stoch_k != null && ind.stoch_d != null && ind.stoch_k < ind.stoch_d },
-            { label: 'stoch_not_os',   fn: (ind, f, t) => ind.stoch_k       > t.stoch_mid },
-            { label: 'bb_active',      fn: (ind, f, t) => ind.bb_width_bps >= t.bb_min_bps },
-            { label: 'ma_momentum',    fn: (ind, f)    => f.ma_gap_trend   !== 'narrowing' },
-        ],
-        reason: (ind, f) =>
-            `stc=${ind.stc_value?.toFixed(1)} delta=${ind.stc_delta?.toFixed(3)}` +
-            ` rsi=${ind.rsi_14?.toFixed(1)} k=${ind.stoch_k?.toFixed(1)} d=${ind.stoch_d?.toFixed(1)}` +
-            ` bbW=${ind.bb_width_bps?.toFixed(1)}bps ma_gap=${f.ma_gap_trend}`,
-    },
+    // ── PUT/CALL: ─────────────────────────────────────────────
+    // {
+    //     name:      '',
+    //     direction: '',
+    //     thresholds: {
+    //     },
+    //     gates: [
+    //     ],
+    //     reason: (ind, f) =>
+    // },
 
     // ── PUT: STC Compression Breakdown (ML edge) ──────────────────────────────
     {
