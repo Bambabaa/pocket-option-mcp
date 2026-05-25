@@ -80,25 +80,28 @@ class TradingDatabase {
                 UNIQUE(asset, timestamp)
             )`,
 
-            // 2. Indicators table - -only: MA1/2/3, RSI, bands, stochastic (v1+v2), Keltner, Schaff
+            // 2. Indicators table — clean schema matching indicators.cjs reference naming
             `CREATE TABLE IF NOT EXISTS indicators (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset TEXT NOT NULL,
                 timestamp INTEGER NOT NULL,
-                ma1 REAL,
-                ma2 REAL,
-                ma3 REAL,
-                rsi REAL,
-                rsi_5 REAL,
-                rsi_8 REAL,
+                candle_id INTEGER,
+                sma_10 REAL,
+                sma_20 REAL,
+                sma_50 REAL,
+                rsi_14 REAL,
+                stoch_k REAL,
+                stoch_d REAL,
+                stoch_prev_d REAL,
                 bb_upper REAL,
                 bb_middle REAL,
                 bb_lower REAL,
-                stochastic_k REAL,
-                stochastic_d REAL,
-                keltner_upper REAL,
-                keltner_lower REAL,
-                schaff_value REAL,
+                bb_width_bps REAL,
+                stc_value REAL,
+                stc_signal REAL,
+                stc_prev REAL,
+                stc_delta REAL,
+                cci_20 REAL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(asset, timestamp),
                 FOREIGN KEY (asset, timestamp) REFERENCES candles(asset, timestamp)
@@ -148,30 +151,12 @@ class TradingDatabase {
             // Migration: add updated_at to signal_outcomes if missing (safe, idempotent)
             `ALTER TABLE signal_outcomes ADD COLUMN updated_at INTEGER`,
 
-            //  indicators remodel: add columns for cascade 
-            `ALTER TABLE indicators ADD COLUMN keltner_upper REAL`,
-            `ALTER TABLE indicators ADD COLUMN keltner_lower REAL`,
-            `ALTER TABLE indicators ADD COLUMN ma1 REAL`,
-            `ALTER TABLE indicators ADD COLUMN ma2 REAL`,
-            `ALTER TABLE indicators ADD COLUMN ma3 REAL`,
-            // `ALTER TABLE indicators ADD COLUMN rsi_kt REAL`, // Legacy - removed in favor of rsi_5 / rsi_8
-            `ALTER TABLE indicators ADD COLUMN rsi_5 REAL`,
-            `ALTER TABLE indicators ADD COLUMN rsi_8 REAL`,
-            `ALTER TABLE indicators ADD COLUMN schaff_value REAL`,
-
             // Add strategy_used directly to signals table
             `ALTER TABLE signals ADD COLUMN strategy_used TEXT`,
 
-            //   stochastic (5,3,3) — separate columns to avoid overwriting v1 (13,3,3)
-            `ALTER TABLE indicators ADD COLUMN stochastic_k_v2 REAL`,
-            `ALTER TABLE indicators ADD COLUMN stochastic_d_v2 REAL`,
-
-            // CCI(8) — Gate 3 of 8GSR strategy
-            `ALTER TABLE indicators ADD COLUMN cci_8 REAL`,
-
             // candle_id soft FK → candles.id. Stable now that insertCandle uses ON CONFLICT DO UPDATE.
             // Backfilled by migrateBackfillCandleId(); populated on new inserts by app code.
-            `ALTER TABLE indicators       ADD COLUMN candle_id INTEGER`,
+            // Note: indicators.candle_id is baked into CREATE TABLE above — ALTER is a no-op on new DBs.
             `ALTER TABLE signals          ADD COLUMN candle_id INTEGER`,
             `ALTER TABLE signal_outcomes  ADD COLUMN candle_id INTEGER`,
             `ALTER TABLE orders_queue     ADD COLUMN candle_id INTEGER`,
@@ -263,7 +248,8 @@ class TradingDatabase {
             try { await this.run(`DROP TABLE IF EXISTS asset_controls`); } catch (_) { }
             try { await this.run(`DROP INDEX IF EXISTS idx_asset_controls_asset`); } catch (_) { }
 
-            // Schema migrations: drop deprecated columns from indicators/signals tables if present
+            // Schema migrations: rebuild indicators to new schema if old one detected, then drop legacy columns
+            await this.migrateIndicatorsRebuildSchema();
             await this.migrateIndicatorsDropLegacyColumns();
             await this.migrateSignalsDropStrengthColumns();
 
@@ -517,54 +503,72 @@ class TradingDatabase {
      *   stochastic_k, stochastic_d     — Video 1 Stochastic (13,3,3)
      *   stochastic_k_v2, stochastic_d_v2 — Video 2 Stochastic (5,3,3)
      *   keltner_upper, keltner_lower   — Video 1 Keltner channel
-     *   schaff_value      — Video 3 Schaff Trend Cycle
-     * Unset values are stored as null (no legacy strength/ADX columns).
+    /**
+     * Insert indicator data — columns match indicators.cjs reference naming:
+     *   sma_10, sma_20, sma_50        — SMA trio (10, 20, 50 period)
+     *   rsi_14                         — RSI Wilder's, period 14
+     *   stoch_k, stoch_d, stoch_prev_d — Stochastic (5,3,3): K, D, previous D
+     *   bb_upper/middle/lower          — Bollinger Bands (20, 2)
+     *   bb_width_bps                   — BB width as basis points ((upper-lower)/middle * 10000)
+     *   stc_value, stc_signal          — Schaff Trend Cycle (23,50,10,3,3)
+     *   stc_prev, stc_delta            — STC previous bar value + momentum delta
+     *   cci_20                         — CCI period 20 (Gate 3)
      */
     async insertIndicators(asset, timestamp, indicators) {
-        const keltner = indicators.keltner;
-        const bb = indicators.bollinger;
-        const schaff = indicators.schaffTrendCycle;
-
-        const sql = `INSERT OR REPLACE INTO indicators
-                     (asset, timestamp,
-                      ma1, ma2, ma3,
-                      rsi, rsi_5, rsi_8,
-                      bb_upper, bb_middle, bb_lower,
-                      stochastic_k, stochastic_d,
-                      stochastic_k_v2, stochastic_d_v2,
-                      keltner_upper, keltner_lower,
-                      schaff_value,
-                      cci_8,
-                      candle_id)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                             (SELECT id FROM candles WHERE asset = ? AND timestamp = ?))`;
+        const sql = `INSERT INTO indicators
+                     (asset, timestamp, candle_id,
+                      sma_10, sma_20, sma_50,
+                      rsi_14,
+                      stoch_k, stoch_d, stoch_prev_d,
+                      bb_upper, bb_middle, bb_lower, bb_width_bps,
+                      stc_value, stc_signal, stc_prev, stc_delta,
+                      cci_20)
+                     VALUES (?, ?,
+                             (SELECT id FROM candles WHERE asset = ? AND timestamp = ?),
+                             ?, ?, ?,
+                             ?,
+                             ?, ?, ?,
+                             ?, ?, ?, ?,
+                             ?, ?, ?, ?,
+                             ?)
+                     ON CONFLICT(asset, timestamp) DO UPDATE SET
+                         candle_id    = excluded.candle_id,
+                         sma_10       = excluded.sma_10,
+                         sma_20       = excluded.sma_20,
+                         sma_50       = excluded.sma_50,
+                         rsi_14       = excluded.rsi_14,
+                         stoch_k      = excluded.stoch_k,
+                         stoch_d      = excluded.stoch_d,
+                         stoch_prev_d = excluded.stoch_prev_d,
+                         bb_upper     = excluded.bb_upper,
+                         bb_middle    = excluded.bb_middle,
+                         bb_lower     = excluded.bb_lower,
+                         bb_width_bps = excluded.bb_width_bps,
+                         stc_value    = excluded.stc_value,
+                         stc_signal   = excluded.stc_signal,
+                         stc_prev     = excluded.stc_prev,
+                         stc_delta    = excluded.stc_delta,
+                         cci_20       = excluded.cci_20`;
 
         const params = [
-            asset,
-            timestamp,
-            //  : MA1, MA2, MA3 (6, 50, 14) — null when not yet available
-            indicators.ma1 ?? indicators.ma6,   // ma1 // ?? null
-            indicators.ma2 ?? indicators.ma50,  // ma2 // ?? null
-            indicators.ma3 ?? indicators.ma14,  // ma3 // ?? null
-            indicators.rsi,                     // rsi
-            indicators.rsi_5,                   // rsi_5
-            indicators.rsi_8,                   // rsi_8
-            //   & 3 bands — null when not available
-            bb?.upper ?? keltner?.upper,        // bb_upper // ?? null
-            bb?.middle ?? keltner?.middle,      // bb_middle // ?? null
-            bb?.lower ?? keltner?.lower,        // bb_lower // ?? null
-            //   stochastic v1 (13,3,3) — not computed; alias to v2 values so column is never null
-            indicators.stochastic_k ?? null,       // stochastic_k
-            indicators.stochastic_d ?? null,       // stochastic_d
-            //   stochastic v2 (5,3,3) — canonical values used by all live gates
-            indicators.stochastic_k ?? null,       // stochastic_k_v2
-            indicators.stochastic_d ?? null,       // stochastic_d_v2
-            // keltner/schaff — null when not available
-            keltner?.upper,   // ?? null
-            keltner?.lower,   // ?? null
-            schaff?.value,    // ?? null
-            indicators.cci_8 ?? null,              // cci_8 (CCI period 8 — Gate 3)
-            asset, timestamp  // ← subquery params for candle_id resolution
+            asset, timestamp,
+            asset, timestamp,           // candle_id subquery
+            indicators.sma_10       ?? null,
+            indicators.sma_20       ?? null,
+            indicators.sma_50       ?? null,
+            indicators.rsi_14       ?? null,
+            indicators.stoch_k      ?? null,
+            indicators.stoch_d      ?? null,
+            indicators.stoch_prev_d ?? null,
+            indicators.bb_upper     ?? null,
+            indicators.bb_middle    ?? null,
+            indicators.bb_lower     ?? null,
+            indicators.bb_width_bps ?? null,
+            indicators.stc_value    ?? null,
+            indicators.stc_signal   ?? null,
+            indicators.stc_prev     ?? null,
+            indicators.stc_delta    ?? null,
+            indicators.cci_20       ?? null,
         ];
 
         try {
@@ -864,7 +868,81 @@ class TradingDatabase {
     }
 
     /**
-     * Migration: drop legacy non-KT columns from indicators table using ALTER TABLE DROP COLUMN.
+     * Migration: rebuild indicators table from old schema (ma1/schaff_value) to new flat schema.
+     * Detects old schema by presence of 'ma1' or 'schaff_value' column.
+     * Maps old column values to new names, drops old table, renames rebuilt table.
+     * No-op if new schema (sma_10) already present.
+     */
+    async migrateIndicatorsRebuildSchema() {
+        const cols = await this.all('PRAGMA table_info(indicators)');
+        if (!cols || !Array.isArray(cols)) return;
+        const colNames = cols.map(c => c.name);
+
+        // Already on new schema — nothing to do
+        if (colNames.includes('sma_10')) return;
+        // Neither old nor new schema — fresh DB, CREATE TABLE already handled it
+        if (!colNames.includes('ma1') && !colNames.includes('schaff_value')) return;
+
+        console.log('🔄 indicators: old schema detected — rebuilding to new clean schema...');
+        await this.run('BEGIN TRANSACTION');
+        try {
+            await this.run(`CREATE TABLE indicators_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                candle_id INTEGER,
+                sma_10 REAL, sma_20 REAL, sma_50 REAL,
+                rsi_14 REAL,
+                stoch_k REAL, stoch_d REAL, stoch_prev_d REAL,
+                bb_upper REAL, bb_middle REAL, bb_lower REAL, bb_width_bps REAL,
+                stc_value REAL, stc_signal REAL, stc_prev REAL, stc_delta REAL,
+                cci_20 REAL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(asset, timestamp)
+            )`);
+
+            // Column mapping: old names → new names (rsi_5 stored rsi_14 values; cci_8 stored cci_20 values)
+            const srcRsi     = colNames.includes('rsi_5')            ? 'rsi_5'             : 'NULL';
+            const srcStochK  = colNames.includes('stochastic_k_v2') ? 'stochastic_k_v2'   : colNames.includes('stochastic_k') ? 'stochastic_k' : 'NULL';
+            const srcStochD  = colNames.includes('stochastic_d_v2') ? 'stochastic_d_v2'   : colNames.includes('stochastic_d') ? 'stochastic_d' : 'NULL';
+            const srcSchaff  = colNames.includes('schaff_value')    ? 'schaff_value'       : 'NULL';
+            const srcCci     = colNames.includes('cci_8')           ? 'cci_8'              : 'NULL';
+            const srcMa1     = colNames.includes('ma1')             ? 'ma1'                : 'NULL';
+            const srcMa2     = colNames.includes('ma2')             ? 'ma2'                : 'NULL';
+            const srcMa3     = colNames.includes('ma3')             ? 'ma3'                : 'NULL';
+            const srcCandleId = colNames.includes('candle_id')      ? 'candle_id'          : 'NULL';
+
+            await this.run(`INSERT INTO indicators_new
+                (id, asset, timestamp, candle_id,
+                 sma_10, sma_20, sma_50,
+                 rsi_14,
+                 stoch_k, stoch_d,
+                 bb_upper, bb_middle, bb_lower,
+                 stc_value,
+                 cci_20,
+                 created_at)
+                SELECT id, asset, timestamp, ${srcCandleId},
+                       ${srcMa1}, ${srcMa2}, ${srcMa3},
+                       ${srcRsi},
+                       ${srcStochK}, ${srcStochD},
+                       bb_upper, bb_middle, bb_lower,
+                       ${srcSchaff},
+                       ${srcCci},
+                       created_at
+                FROM indicators`);
+
+            await this.run('DROP TABLE indicators');
+            await this.run('ALTER TABLE indicators_new RENAME TO indicators');
+            await this.run('COMMIT');
+            console.log('✅ indicators table rebuilt with new schema');
+        } catch (err) {
+            await this.run('ROLLBACK').catch(() => {});
+            console.error('❌ indicators rebuild failed, rolling back:', err.message);
+            throw err;
+        }
+    }
+
+    /**
      * Safe to run multiple times; ignores errors when columns are already gone or DROP COLUMN is unsupported.
      */
     async migrateIndicatorsDropLegacyColumns() {
@@ -1371,13 +1449,13 @@ class TradingDatabase {
         const indicators = await this.getIndicators(asset, limit);
 
         if (indicators.length === 0) {
-            return 'timestamp,datetime,asset,ma1,ma2,ma3,rsi,rsi_5,rsi_8,bb_upper,bb_middle,bb_lower,stochastic_k,stochastic_d,strategy_used,keltner_upper,keltner_lower,schaff_value\n';
+            return 'timestamp,datetime,asset,sma_10,sma_20,sma_50,rsi_14,stoch_k,stoch_d,stoch_prev_d,bb_upper,bb_middle,bb_lower,bb_width_bps,stc_value,stc_signal,stc_prev,stc_delta,cci_20\n';
         }
 
-        const header = 'timestamp,datetime,asset,ma1,ma2,ma3,rsi,rsi_5,rsi_8,bb_upper,bb_middle,bb_lower,stochastic_k,stochastic_d,strategy_used,keltner_upper,keltner_lower,schaff_value\n';
+        const header = 'timestamp,datetime,asset,sma_10,sma_20,sma_50,rsi_14,stoch_k,stoch_d,stoch_prev_d,bb_upper,bb_middle,bb_lower,bb_width_bps,stc_value,stc_signal,stc_prev,stc_delta,cci_20\n';
         const rows = indicators.reverse().map(i => {
             const datetime = new Date(i.timestamp * 1000).toISOString();
-            return `${i.timestamp},${datetime},${i.asset},${i.ma1 || ''},${i.ma2 || ''},${i.ma3 || ''},${i.rsi || ''},${i.rsi_5 || ''},${i.rsi_8 || ''},${i.bb_upper || ''},${i.bb_middle || ''},${i.bb_lower || ''},${i.stochastic_k || ''},${i.stochastic_d || ''},${i.strategy_used || ''},${i.keltner_upper || ''},${i.keltner_lower || ''},${i.schaff_value || ''}`;
+            return `${i.timestamp},${datetime},${i.asset},${i.sma_10 || ''},${i.sma_20 || ''},${i.sma_50 || ''},${i.rsi_14 || ''},${i.stoch_k || ''},${i.stoch_d || ''},${i.stoch_prev_d || ''},${i.bb_upper || ''},${i.bb_middle || ''},${i.bb_lower || ''},${i.bb_width_bps || ''},${i.stc_value || ''},${i.stc_signal || ''},${i.stc_prev || ''},${i.stc_delta || ''},${i.cci_20 || ''}`;
         }).join('\n');
 
         return header + rows;

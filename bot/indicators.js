@@ -1,13 +1,12 @@
 // Technical Indicators Module
 
 const INDICATOR_CONFIG = {
-    ma1: 6,    // MA6  — fast trend (Green)
-    ma2: 50,   // MA50 — slow reference (Red, not in   gates)
-    ma3: 14,   // MA14 — slow trend (White)
-    rsi: 5,
-    stoch: { kPeriod: 5, dPeriod: 3, smoothPeriod: 3 },
-    bb: { period: 20, stdDev: 2 },
-    schaff: { emaFast: 10, emaSlow: 20, cycle: 5, smooth1: 3, smooth2: 3 },
+    sma:   [10, 20, 50],                                        // SMA periods — ma1=10 (fast), ma2=20 (mid), ma3=50 (slow)
+    rsi:   14,                                                  // RSI period
+    stoch: { kPeriod: 5, dPeriod: 3, smoothPeriod: 3 },        // Full/Slow Stochastic
+    bb:    { period: 20, stdDev: 2 },                           // Bollinger Bands
+    schaff:{ emaFast: 23, emaSlow: 50, cycle: 10, smooth1: 3, smooth2: 3 }, // Schaff Trend Cycle
+    cci:   20,                                                  // CCI period
 };
 
 class Indicators {
@@ -16,8 +15,7 @@ class Indicators {
         this._v2LastTs = {};
         this._lastSchaffValues = {};
         this._stochHistory = {};  // last 4 [k,d] pairs per asset (cross detection)
-        this._cciHistory = {};    // last 25 CCI(8) values per asset (cross + depth detection)
-        this.macdHistory = {};
+        this._cciHistory = {};    // last 25 CCI(20) values per asset (cross + depth detection)
     }
 
     // ==================== BASIC INDICATORS ====================
@@ -88,62 +86,9 @@ class Indicators {
         return 100 - (100 / (1 + avgGain / avgLoss));
     }
 
-    // ==================== MACD (COMPLETE IMPLEMENTATION) ====================
-
-    // Complete MACD with signal line and histogram
-    calculateMACD(candles, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
-        if (!candles || candles.length < slowPeriod + signalPeriod) {
-            return null;
-        }
-
-        const fastEMA = this.calculateEMA(candles, fastPeriod);
-        const slowEMA = this.calculateEMA(candles, slowPeriod);
-
-        if (!fastEMA || !slowEMA) {
-            return null;
-        }
-
-        const macdLine = fastEMA - slowEMA;
-
-        // Calculate MACD history for signal line
-        const asset = candles.asset || 'default';
-        if (!this.macdHistory[asset]) {
-            this.macdHistory[asset] = [];
-        }
-
-        // Calculate MACD for all candles to build history
-        const macdValues = [];
-        for (let i = slowPeriod; i < candles.length; i++) {
-            const fastEMA_i = this.calculateEMA(candles.slice(0, i + 1), fastPeriod);
-            const slowEMA_i = this.calculateEMA(candles.slice(0, i + 1), slowPeriod);
-            if (fastEMA_i && slowEMA_i) {
-                macdValues.push(fastEMA_i - slowEMA_i);
-            }
-        }
-
-        // Calculate signal line (EMA of MACD values)
-        let signalLine = null;
-        if (macdValues.length >= signalPeriod) {
-            // Use EMA on MACD values
-            const multiplier = 2 / (signalPeriod + 1);
-            let signalEMA = macdValues.slice(0, signalPeriod).reduce((a, b) => a + b, 0) / signalPeriod;
-
-            for (let i = signalPeriod; i < macdValues.length; i++) {
-                signalEMA = (macdValues[i] - signalEMA) * multiplier + signalEMA;
-            }
-            signalLine = signalEMA;
-        }
-
-        const histogram = signalLine !== null ? macdLine - signalLine : null;
-
-        return {
-            macd: macdLine,
-            signal: signalLine,
-            histogram: histogram
-        };
-    }
-
-    // ==================== BOLLINGER BANDS ====================
+    // ==================== MACD — removed (not used in live gates) ====================
+    // ==================== KELTNER CHANNEL — removed (not used in live gates) ====================
+    // ==================== ZIG ZAG — removed (not used in live gates) ====================
 
     // Bollinger Bands
     calculateBollingerBands(candles, period = 20, stdDev = 2) {
@@ -161,11 +106,13 @@ class Indicators {
 
         const standardDeviation = Math.sqrt(variance);
 
+        const upper = sma + (standardDeviation * stdDev);
+        const lower = sma - (standardDeviation * stdDev);
         return {
-            upper: sma + (standardDeviation * stdDev),
+            upper,
             middle: sma,
-            lower: sma - (standardDeviation * stdDev),
-            width: (standardDeviation * stdDev * 2) / sma // Band width as percentage
+            lower,
+            bb_width_bps: sma > 0 ? ((upper - lower) / sma) * 10000 : null
         };
     }
 
@@ -214,94 +161,12 @@ class Indicators {
         return { k, d, prevD };
     }
 
-    // ==================== KELTNER CHANNEL (KT Strategy Tier) ====================
+    // ==================== SCHAFF TREND CYCLE ====================
 
-    /**
-     * Keltner Channel: middle = EMA(emaPeriod), upper/lower = middle ± multiplier * ATR(atrPeriod).
-     * Video 1: (18, 11, 2).
-     */
-    calculateKeltnerChannel(candles, emaPeriod = 18, atrPeriod = 11, multiplier = 2) {
-        if (!candles || candles.length < Math.max(emaPeriod, atrPeriod)) {
-            return null;
-        }
-        const middle = this.calculateEMA(candles, emaPeriod);
-        const atr = this.calculateATR(candles, atrPeriod);
-        if (middle == null || atr == null) return null;
-        return {
-            upper: middle + multiplier * atr,
-            middle,
-            lower: middle - multiplier * atr
-        };
-    }
+    calculateSchaffTrendCycle(candles, emaFast = 23, emaSlow = 50, cyclePeriod = 10, smooth1 = 3, smooth2 = 3) {
+        if (!candles || candles.length < emaSlow + cyclePeriod + Math.max(smooth1, smooth2)) return null;
 
-    // ==================== ZIG ZAG (KT Strategy Tier) ====================
-
-    /**
-     * Zig Zag: pivot when price moves by deviationPercent from last extreme.
-     * Video 1 uses periods 6 and 4: use first as lookback, second as min move % (e.g. 0.4%).
-     * Returns { direction: 'up'|'down', reversal: boolean, lastPivotPrice } for use in PUT/CALL.
-     */
-    calculateZigZag(candles, deviationPercent = 0.5, minBars = 4) {
-        if (!candles || candles.length < minBars + 2) return null;
-        const closes = candles.map(c => c[2]);
-        const n = closes.length;
-        let lastExtreme = closes[0];
-        let lastExtremeIdx = 0;
-        let direction = null; // 'up' | 'down'
-        const threshold = (deviationPercent / 100) * (lastExtreme || 1);
-
-        for (let i = 1; i < n; i++) {
-            const p = closes[i];
-            if (direction === null) {
-                if (p >= lastExtreme + threshold) direction = 'up';
-                else if (p <= lastExtreme - threshold) direction = 'down';
-                if (direction !== null) {
-                    lastExtreme = p;
-                    lastExtremeIdx = i;
-                }
-                continue;
-            }
-            if (direction === 'up') {
-                if (p > lastExtreme) {
-                    lastExtreme = p;
-                    lastExtremeIdx = i;
-                } else if (p <= lastExtreme - threshold) {
-                    direction = 'down';
-                    lastExtreme = p;
-                    lastExtremeIdx = i;
-                }
-            } else {
-                if (p < lastExtreme) {
-                    lastExtreme = p;
-                    lastExtremeIdx = i;
-                } else if (p >= lastExtreme + threshold) {
-                    direction = 'up';
-                    lastExtreme = p;
-                    lastExtremeIdx = i;
-                }
-            }
-        }
-        const reversal = lastExtremeIdx >= n - 2;
-        return {
-            direction,
-            reversal,
-            lastPivotPrice: lastExtreme,
-            lastPivotIdx: lastExtremeIdx
-        };
-    }
-
-    // ==================== SCHAFF TREND CYCLE (KT Strategy Tier) ====================
-
-    /**
-     * Schaff Trend Cycle: cycle = EMA(fast) - EMA(slow), then double-smoothed stochastic of cycle.
-     *  (30, 55, 8, 4, 3). Returns { value, signal } (main line = "pink", signal = "blue").
-     */
-    calculateSchaffTrendCycle(candles, emaFast = 10, emaSlow = 20, cyclePeriod = 5, smooth1 = 3, smooth2 = 3) {
-        if (!candles || candles.length < emaSlow + cyclePeriod + Math.max(smooth1, smooth2)) {
-            return null;
-        }
-        const closes = candles.map(c => c[2]);
-        const n = closes.length;
+        const n = candles.length;
         const cycleRaw = [];
         for (let i = emaSlow; i < n; i++) {
             const slice = candles.slice(0, i);
@@ -314,24 +179,26 @@ class Indicators {
         function stochK(arr, period, idx) {
             const start = Math.max(0, idx - period + 1);
             const window = arr.slice(start, idx + 1);
-            const low = Math.min(...window);
-            const high = Math.max(...window);
+            const low = Math.min(...window), high = Math.max(...window);
             if (high === low) return 50;
             return 100 * (arr[idx] - low) / (high - low);
         }
+
         const stochCycle = [];
         for (let i = cyclePeriod - 1; i < cycleRaw.length; i++) {
             stochCycle.push(stochK(cycleRaw, cyclePeriod, i));
         }
         if (stochCycle.length < smooth1) return null;
-        const k = 2 / (smooth1 + 1);
+
+        const k1 = 2 / (smooth1 + 1);
         let ema1 = stochCycle.slice(0, smooth1).reduce((a, b) => a + b, 0) / smooth1;
         const smoothed1 = [];
         for (let i = smooth1 - 1; i < stochCycle.length; i++) {
-            if (i >= smooth1) ema1 = (stochCycle[i] - ema1) * k + ema1;
+            if (i >= smooth1) ema1 = (stochCycle[i] - ema1) * k1 + ema1;
             smoothed1.push(ema1);
         }
         if (smoothed1.length < smooth2) return null;
+
         const k2 = 2 / (smooth2 + 1);
         let ema2 = smoothed1.slice(0, smooth2).reduce((a, b) => a + b, 0) / smooth2;
         for (let i = smooth2; i < smoothed1.length; i++) {
@@ -342,243 +209,20 @@ class Indicators {
         return { value, signal };
     }
 
-    // ==================== ADX (AVERAGE DIRECTIONAL INDEX) ====================
-
-    // ADX with +DI and -DI
-    calculateADX(candles, period = 14) {
-        if (!candles || candles.length < period + 1) {
-            return null;
-        }
-
-        // Calculate True Range (TR), +DM, -DM
-        const trValues = [];
-        const plusDM = [];
-        const minusDM = [];
-
-        for (let i = 1; i < candles.length; i++) {
-            const high = candles[i][3];
-            const low = candles[i][4];
-            const prevClose = candles[i - 1][2];
-
-            const tr = Math.max(
-                high - low,
-                Math.abs(high - prevClose),
-                Math.abs(low - prevClose)
-            );
-            trValues.push(tr);
-
-            const upMove = high - candles[i - 1][3];
-            const downMove = candles[i - 1][4] - low;
-
-            if (upMove > downMove && upMove > 0) {
-                plusDM.push(upMove);
-                minusDM.push(0);
-            } else if (downMove > upMove && downMove > 0) {
-                plusDM.push(0);
-                minusDM.push(downMove);
-            } else {
-                plusDM.push(0);
-                minusDM.push(0);
-            }
-        }
-
-        if (trValues.length < period) {
-            return null;
-        }
-
-        // Smooth TR, +DM, -DM using Wilder's smoothing
-        const atr = this.calculateATR(candles, period);
-        if (!atr) return null;
-
-        const recentTR = trValues.slice(-period);
-        const recentPlusDM = plusDM.slice(-period);
-        const recentMinusDM = minusDM.slice(-period);
-
-        const smoothedTR = recentTR.reduce((a, b) => a + b, 0) / period;
-        const smoothedPlusDM = recentPlusDM.reduce((a, b) => a + b, 0) / period;
-        const smoothedMinusDM = recentMinusDM.reduce((a, b) => a + b, 0) / period;
-
-        const plusDI = smoothedTR > 0 ? 100 * (smoothedPlusDM / smoothedTR) : 0;
-        const minusDI = smoothedTR > 0 ? 100 * (smoothedMinusDM / smoothedTR) : 0;
-
-        // Calculate DX
-        const diSum = plusDI + minusDI;
-        const dx = diSum > 0 ? 100 * Math.abs(plusDI - minusDI) / diSum : 0;
-
-        // ADX is smoothed DX (simplified - would need full history for proper smoothing)
-        const adx = dx; // In production, this would be smoothed over period
-
-        return {
-            adx: adx,
-            plusDI: plusDI,
-            minusDI: minusDI
-        };
-    }
-
     // ==================== CCI (COMMODITY CHANNEL INDEX) ====================
 
-    // Commodity Channel Index
     calculateCCI(candles, period = 20) {
-        if (!candles || candles.length < period) {
-            return null;
-        }
+        if (!candles || candles.length < period) return null;
 
         const recentCandles = candles.slice(-period);
-        const typicalPrices = recentCandles.map(c => (c[3] + c[4] + c[2]) / 3); // (High + Low + Close) / 3
-
+        const typicalPrices = recentCandles.map(c => (c[3] + c[4] + c[2]) / 3);
         const sma = typicalPrices.reduce((a, b) => a + b, 0) / period;
+        const meanDeviation = typicalPrices.reduce((sum, tp) => sum + Math.abs(tp - sma), 0) / period;
 
-        const meanDeviation = typicalPrices.reduce((sum, tp) => {
-            return sum + Math.abs(tp - sma);
-        }, 0) / period;
-
-        if (meanDeviation === 0) {
-            return 0;
-        }
+        if (meanDeviation === 0) return 0;
 
         const currentTP = typicalPrices[typicalPrices.length - 1];
-        const cci = (currentTP - sma) / (0.015 * meanDeviation);
-
-        return cci;
-    }
-
-    // ==================== WILLIAMS %R ====================
-
-    // Williams %R
-    calculateWilliamsR(candles, period = 14) {
-        if (!candles || candles.length < period) {
-            return null;
-        }
-
-        const recentCandles = candles.slice(-period);
-        const highs = recentCandles.map(c => c[3]);
-        const lows = recentCandles.map(c => c[4]);
-        const currentClose = candles[candles.length - 1][2];
-
-        const highestHigh = Math.max(...highs);
-        const lowestLow = Math.min(...lows);
-
-        if (highestHigh === lowestLow) {
-            return -50; // Neutral
-        }
-
-        const williamsR = -100 * ((highestHigh - currentClose) / (highestHigh - lowestLow));
-
-        return williamsR;
-    }
-
-    // ==================== ATR (AVERAGE TRUE RANGE) ====================
-
-    // Average True Range
-    calculateATR(candles, period = 14) {
-        if (!candles || candles.length < period + 1) {
-            return null;
-        }
-
-        const trValues = [];
-
-        for (let i = 1; i < candles.length; i++) {
-            const high = candles[i][3];
-            const low = candles[i][4];
-            const prevClose = candles[i - 1][2];
-
-            const tr = Math.max(
-                high - low,
-                Math.abs(high - prevClose),
-                Math.abs(low - prevClose)
-            );
-            trValues.push(tr);
-        }
-
-        if (trValues.length < period) {
-            return null;
-        }
-
-        // Use SMA of TR (simplified - Wilder's smoothing would be better)
-        const recentTR = trValues.slice(-period);
-        const atr = recentTR.reduce((a, b) => a + b, 0) / period;
-
-        return atr;
-    }
-
-    // ==================== PARABOLIC SAR ====================
-
-    // Parabolic SAR
-    calculateParabolicSAR(candles, acceleration = 0.02, maximum = 0.2) {
-        if (!candles || candles.length < 2) {
-            return null;
-        }
-
-        // Simplified Parabolic SAR calculation
-        // Full implementation would require tracking EP (Extreme Point) and AF (Acceleration Factor)
-
-        let trend = null; // 1 for uptrend, -1 for downtrend
-        let sar = null;
-        let ep = null; // Extreme Point
-        let af = acceleration; // Acceleration Factor
-
-        // Initialize
-        if (candles.length >= 2) {
-            const firstHigh = candles[0][3];
-            const firstLow = candles[0][4];
-            const secondHigh = candles[1][3];
-            const secondLow = candles[1][4];
-
-            if (secondHigh > firstHigh) {
-                trend = 1; // Uptrend
-                sar = firstLow;
-                ep = secondHigh;
-            } else {
-                trend = -1; // Downtrend
-                sar = firstHigh;
-                ep = secondLow;
-            }
-        }
-
-        // Calculate SAR for remaining candles
-        for (let i = 2; i < candles.length; i++) {
-            const high = candles[i][3];
-            const low = candles[i][4];
-
-            if (trend === 1) { // Uptrend
-                sar = sar + af * (ep - sar);
-
-                if (low < sar) {
-                    trend = -1;
-                    sar = ep;
-                    ep = low;
-                    af = acceleration;
-                } else {
-                    if (high > ep) {
-                        ep = high;
-                        af = Math.min(af + acceleration, maximum);
-                    }
-                }
-            } else { // Downtrend
-                sar = sar + af * (ep - sar);
-
-                if (high > sar) {
-                    trend = 1;
-                    sar = ep;
-                    ep = high;
-                    af = acceleration;
-                } else {
-                    if (low < ep) {
-                        ep = low;
-                        af = Math.min(af + acceleration, maximum);
-                    }
-                }
-            }
-        }
-
-        const currentPrice = candles[candles.length - 1][2];
-        const isBullish = trend === 1 && currentPrice > sar;
-
-        return {
-            sar: sar,
-            trend: trend === 1 ? 'bullish' : 'bearish',
-            isBullish: isBullish
-        };
+        return (currentTP - sma) / (0.015 * meanDeviation);
     }
 
     // ==================== CALCULATE ALL INDICATORS ====================
@@ -586,47 +230,54 @@ class Indicators {
     calculateAll(asset, candles, settings = {}, pushHistory = true) {
         if (!candles || candles.length === 0) return null;
 
-        const indicators = {
-            asset,
-            timestamp: Date.now(),
-        };
+        const indicators = { asset, timestamp: Date.now() };
 
-        indicators.ma1 = indicators.ma6 = this.calculateSMA(candles, INDICATOR_CONFIG.ma1);
-        indicators.ma2 = indicators.ma50 = this.calculateSMA(candles, INDICATOR_CONFIG.ma2);
-        indicators.ma3 = indicators.ma14 = this.calculateSMA(candles, INDICATOR_CONFIG.ma3);
+        // SMAs — flat names matching indicators.cjs reference
+        indicators.sma_10 = this.calculateSMA(candles, INDICATOR_CONFIG.sma[0]);
+        indicators.sma_20 = this.calculateSMA(candles, INDICATOR_CONFIG.sma[1]);
+        indicators.sma_50 = this.calculateSMA(candles, INDICATOR_CONFIG.sma[2]);
 
-        indicators.rsi_5 = this.calculateRSI(candles, INDICATOR_CONFIG.rsi);
+        indicators.rsi_14 = this.calculateRSI(candles, INDICATOR_CONFIG.rsi);
 
         const stoch = this.calculateStochastic(candles, INDICATOR_CONFIG.stoch.kPeriod, INDICATOR_CONFIG.stoch.dPeriod, INDICATOR_CONFIG.stoch.smoothPeriod);
-        indicators.stochastic_k = stoch ? stoch.k : null;
-        indicators.stochastic_d = stoch ? stoch.d : null;
-        indicators.stochastic_prevD = stoch ? stoch.prevD : null;
+        indicators.stoch_k      = stoch?.k     ?? null;
+        indicators.stoch_d      = stoch?.d     ?? null;
+        indicators.stoch_prev_d = stoch?.prevD ?? null;
 
         // 4-bar stoch history for cross-age detection — only advance on bar close
         if (!this._stochHistory[asset]) this._stochHistory[asset] = [];
         if (pushHistory) {
-            this._stochHistory[asset].push({ k: indicators.stochastic_k, d: indicators.stochastic_d });
+            this._stochHistory[asset].push({ k: indicators.stoch_k, d: indicators.stoch_d });
             if (this._stochHistory[asset].length > 4) this._stochHistory[asset].shift();
         }
 
-        indicators.bollinger = this.calculateBollingerBands(candles, INDICATOR_CONFIG.bb.period, INDICATOR_CONFIG.bb.stdDev);
-        indicators.schaffTrendCycle = this.calculateSchaffTrendCycle(
+        const bb = this.calculateBollingerBands(candles, INDICATOR_CONFIG.bb.period, INDICATOR_CONFIG.bb.stdDev);
+        indicators.bb_upper     = bb?.upper        ?? null;
+        indicators.bb_middle    = bb?.middle       ?? null;
+        indicators.bb_lower     = bb?.lower        ?? null;
+        indicators.bb_width_bps = bb?.bb_width_bps ?? null;
+
+        const stcResult = this.calculateSchaffTrendCycle(
             candles,
             INDICATOR_CONFIG.schaff.emaFast, INDICATOR_CONFIG.schaff.emaSlow,
             INDICATOR_CONFIG.schaff.cycle, INDICATOR_CONFIG.schaff.smooth1, INDICATOR_CONFIG.schaff.smooth2
         );
+        indicators.stc_value  = stcResult?.value  ?? null;
+        indicators.stc_signal = stcResult?.signal ?? null;
 
-        // Previous STC value — only advance on bar close
-        indicators.prevSchaffValue = this._lastSchaffValues[asset] ?? null;
+        // stc_prev — last bar's stc_value; stc_delta — momentum of STC cycle
+        indicators.stc_prev  = this._lastSchaffValues[asset] ?? null;
+        indicators.stc_delta = (indicators.stc_value != null && indicators.stc_prev != null)
+            ? indicators.stc_value - indicators.stc_prev : null;
         if (pushHistory) {
-            this._lastSchaffValues[asset] = indicators.schaffTrendCycle ? indicators.schaffTrendCycle.value : null;
+            this._lastSchaffValues[asset] = indicators.stc_value;
         }
 
-        // CCI(8) + rolling history for cross+depth detection — only advance on bar close
-        indicators.cci_8 = this.calculateCCI(candles, 8);
+        // CCI(20) + rolling history for cross+depth detection — only advance on bar close
+        indicators.cci_20 = this.calculateCCI(candles, INDICATOR_CONFIG.cci);
         if (!this._cciHistory[asset]) this._cciHistory[asset] = [];
         if (pushHistory) {
-            this._cciHistory[asset].push(indicators.cci_8);
+            this._cciHistory[asset].push(indicators.cci_20);
             if (this._cciHistory[asset].length > 25) this._cciHistory[asset].shift();
         }
 
@@ -655,10 +306,10 @@ class Indicators {
     // ==================== SIGNAL TRADE GENERATION ====================
 
     signalstrade(indicators, settings, signals) {
-        const stc     = indicators.schaffTrendCycle ? indicators.schaffTrendCycle.value : null;
-        const stcPrev = indicators.prevSchaffValue;
-        const k       = indicators.stochastic_k;
-        const d       = indicators.stochastic_d;
+        const stc     = indicators.stc_value;
+        const stcPrev = indicators.stc_prev;
+        const k       = indicators.stoch_k;
+        const d       = indicators.stoch_d;
 
         if (stc == null || stcPrev == null || k == null || d == null) return false;
 
@@ -709,7 +360,7 @@ class Indicators {
                 if (crossed) {
                     const _depthSlice = _cciH.slice(Math.max(0, _x - 10), Math.max(0, _x - 1)).filter(v => v != null);
                     const _depth = _depthSlice.length > 0 ? (isBuy ? Math.min(..._depthSlice) : Math.max(..._depthSlice)) : null;
-                    if (_depth != null && (isBuy ? _depth < -150 : _depth > 175)) g3_ok = true;
+                    if (_depth != null && (isBuy ? _depth < -150 : _depth > 150)) g3_ok = true;
                     break;
                 }
             }
@@ -749,7 +400,7 @@ class Indicators {
         if (!indicators.currentPrice) return signals;
 
         const fired =
-            indicators.schaffTrendCycle != null && indicators.prevSchaffValue != null && indicators.stochastic_k != null && indicators.lastCandle
+            indicators.stc_value != null && indicators.stc_prev != null && indicators.stoch_k != null && indicators.lastCandle
                 ? this.signalstrade(indicators, settings, signals)
                 : false;
 
@@ -767,14 +418,13 @@ class Indicators {
         try {
             const parts = [];
             if (indicators.currentPrice != null) parts.push(`Price: ${indicators.currentPrice.toFixed(5)}`);
-            if (indicators.ma6 != null) parts.push(`MA6: ${indicators.ma6.toFixed(5)}`);
-            if (indicators.ma14 != null) parts.push(`MA14: ${indicators.ma14.toFixed(5)}`);
-            if (indicators.ma50 != null) parts.push(`MA50: ${indicators.ma50.toFixed(5)}`);
-            if (indicators.rsi_5 != null) parts.push(`RSI(5): ${indicators.rsi_5.toFixed(1)}`);
-            if (indicators.stochastic_k != null) parts.push(`Stoch K: ${indicators.stochastic_k.toFixed(1)} D: ${(indicators.stochastic_d ?? 0).toFixed(1)}`);
-            const bb = indicators.bollinger;
-            if (bb) parts.push(`BB(20,2): U ${(bb.upper || 0).toFixed(5)} M ${(bb.middle || 0).toFixed(5)} L ${(bb.lower || 0).toFixed(5)}`);
-            if (indicators.schaffTrendCycle) parts.push(`Schaff: ${indicators.schaffTrendCycle.value.toFixed(2)}`);
+            if (indicators.sma_10 != null) parts.push(`MA10: ${indicators.sma_10.toFixed(5)}`);
+            if (indicators.sma_20 != null) parts.push(`MA20: ${indicators.sma_20.toFixed(5)}`);
+            if (indicators.sma_50 != null) parts.push(`MA50: ${indicators.sma_50.toFixed(5)}`);
+            if (indicators.rsi_14 != null) parts.push(`RSI(14): ${indicators.rsi_14.toFixed(1)}`);
+            if (indicators.stoch_k != null) parts.push(`Stoch K: ${indicators.stoch_k.toFixed(1)} D: ${(indicators.stoch_d ?? 0).toFixed(1)}`);
+            if (indicators.bb_upper != null) parts.push(`BB(20,2): U ${indicators.bb_upper.toFixed(5)} M ${(indicators.bb_middle ?? 0).toFixed(5)} L ${(indicators.bb_lower ?? 0).toFixed(5)}`);
+            if (indicators.stc_value != null) parts.push(`STC: ${indicators.stc_value.toFixed(2)}`);
 
             return parts.length > 0 ? parts.join(' | ') : 'Calculating...';
         } catch (error) {
@@ -784,10 +434,10 @@ class Indicators {
     }
 
     static getMinCandlesForKT(settings = {}) {
-        const buffer = 5;
-        const maMin = Math.max(INDICATOR_CONFIG.ma1, INDICATOR_CONFIG.ma2, INDICATOR_CONFIG.ma3);
-        const schaffMin = INDICATOR_CONFIG.schaff.emaSlow + INDICATOR_CONFIG.schaff.cycle + Math.max(INDICATOR_CONFIG.schaff.smooth1, INDICATOR_CONFIG.schaff.smooth2);
-        return Math.max(maMin, schaffMin) + buffer;
+        const buffer   = 5;
+        const maMin    = Math.max(...INDICATOR_CONFIG.sma);
+        const stcMin   = INDICATOR_CONFIG.schaff.emaSlow + INDICATOR_CONFIG.schaff.cycle + Math.max(INDICATOR_CONFIG.schaff.smooth1, INDICATOR_CONFIG.schaff.smooth2);
+        return Math.max(maMin, stcMin) + buffer;
     }
 }
 

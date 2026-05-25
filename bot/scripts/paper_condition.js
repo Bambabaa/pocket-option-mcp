@@ -27,16 +27,16 @@ const rows = db.prepare(`
   SELECT
     i.asset, i.timestamp,
     c.open, c.high, c.low, c.close,
-    i.rsi_5, i.stochastic_k_v2, i.stochastic_d_v2,
+    i.rsi_14, i.stoch_k, i.stoch_d,
     i.bb_upper, i.bb_middle, i.bb_lower,
-    i.ma1, i.ma3,
-    i.schaff_value
+    i.sma_10, i.sma_50,
+    i.stc_value
   FROM indicators i
   JOIN candles c ON c.asset = i.asset AND c.timestamp = i.timestamp
-  WHERE i.rsi_5 IS NOT NULL
-    AND i.stochastic_k_v2 IS NOT NULL
+  WHERE i.rsi_14 IS NOT NULL
+    AND i.stoch_k IS NOT NULL
     AND i.bb_upper IS NOT NULL
-    AND i.schaff_value IS NOT NULL
+    AND i.stc_value IS NOT NULL
   ORDER BY i.asset, i.timestamp ASC
 `).all();
 
@@ -63,13 +63,13 @@ function computeFeatures(assetRows, idx) {
   const history = assetRows.slice(Math.max(0, idx - 10), idx);
 
   // Basic indicators
-  const stc = curr.schaff_value;
-  const stcPrev = prev.schaff_value;
-  const rsi = curr.rsi_5;
-  const k = curr.stochastic_k_v2;
-  const d = curr.stochastic_d_v2;
-  const kPrev = prev.stochastic_k_v2;
-  const dPrev = prev.stochastic_d_v2;
+  const stc = curr.stc_value;
+  const stcPrev = prev.stc_value;
+  const rsi = curr.rsi_14;
+  const k = curr.stoch_k;
+  const d = curr.stoch_d;
+  const kPrev = prev.stoch_k;
+  const dPrev = prev.stoch_d;
 
   if (!stc || !stcPrev || !rsi || !k || !d) return null;
 
@@ -80,11 +80,11 @@ function computeFeatures(assetRows, idx) {
   if (!bbWidthBps || bbWidthBps < BB_WIDTH_MIN) return null;
 
   // STC lookback features
-  const stcMin8 = Math.min(...history.slice(-8).map(h => h.schaff_value).filter(v => v != null));
-  const stcMax8 = Math.max(...history.slice(-8).map(h => h.schaff_value).filter(v => v != null));
+  const stcMin8 = Math.min(...history.slice(-8).map(h => h.stc_value).filter(v => v != null));
+  const stcMax8 = Math.max(...history.slice(-8).map(h => h.stc_value).filter(v => v != null));
 
   // RSI lookback features (critical for condition.txt)
-  const rsiVals5 = history.slice(-5).map(h => h.rsi_5).filter(v => v != null);
+  const rsiVals5 = history.slice(-5).map(h => h.rsi_14).filter(v => v != null);
   const rsiMin5 = rsiVals5.length > 0 ? Math.min(...rsiVals5) : null;
   const rsiMax5 = rsiVals5.length > 0 ? Math.max(...rsiVals5) : null;
 
@@ -94,10 +94,10 @@ function computeFeatures(assetRows, idx) {
   for (let offset = 0; offset < 3; offset++) {
     const cIdx = idx - offset;
     const pIdx = cIdx - 1;
-    const kC = assetRows[cIdx].stochastic_k_v2;
-    const dC = assetRows[cIdx].stochastic_d_v2;
-    const kP = assetRows[pIdx].stochastic_k_v2;
-    const dP = assetRows[pIdx].stochastic_d_v2;
+    const kC = assetRows[cIdx].stoch_k;
+    const dC = assetRows[cIdx].stoch_d;
+    const kP = assetRows[pIdx].stoch_k;
+    const dP = assetRows[pIdx].stoch_d;
     if (kC != null && dC != null && kP != null && dP != null) {
       if (kP <= dP && kC > dC) bullCross = true;
       if (kP >= dP && kC < dC) bearCross = true;
@@ -130,8 +130,8 @@ function computeFeatures(assetRows, idx) {
     open: curr.open,
     high: curr.high,
     low: curr.low,
-    ma6: curr.ma1,
-    ma14: curr.ma3,
+    ma10: curr.sma_10,
+    ma50: curr.sma_50,
   };
 }
 
@@ -190,11 +190,11 @@ function checkPutReversal(f) {
 const header = [
   'timestamp_utc', 'asset',
   'open', 'high', 'low', 'close',
-  'rsi_5', 'rsi_min_5', 'rsi_max_5',
+  'rsi_14', 'rsi_min_5', 'rsi_max_5',
   'stoch_k', 'stoch_d', 'bull_cross', 'bear_cross',
   'stc', 'stc_prev', 'stc_min_8', 'stc_max_8',
   'bb_width_bps', 'bb_upper', 'bb_middle', 'bb_lower',
-  'ma6', 'ma14',
+  'sma_10', 'sma_50',
   'signal', 'direction',
 ];
 for (const e of EXPIRIES) header.push(`exit_${e}m`, `pnl_${e}m`, `win_${e}m`);
@@ -236,7 +236,7 @@ for (const [asset, assetRows] of Object.entries(byAsset)) {
       features.k, features.d, features.bullCross, features.bearCross,
       features.stc, features.stcPrev, features.stcMin8, features.stcMax8,
       features.bbWidthBps, features.bbUpper, features.bbMiddle, features.bbLower,
-      features.ma6, features.ma14,
+      features.ma10, features.ma50,
       'CONDITION_TXT',
       signal.direction,
     ];
