@@ -172,7 +172,7 @@ function createDirectWs({ log, pingTimeoutMs = 35_000, psIntervalMs = 15_000, on
         },
 
         /**
-         * Emit a Socket.IO event. Returns true on success, false if not READY.
+         * Emit a Socket.IO event with a single payload object.
          * Compatible with the `emitter` option in fetchAssetHistory.
          * @param {string} event
          * @param {unknown} payload
@@ -181,6 +181,20 @@ function createDirectWs({ log, pingTimeoutMs = 35_000, psIntervalMs = 15_000, on
         emit(event, payload) {
             if (state !== STATE.READY || !ws) return Promise.resolve(false);
             const msg = `42${JSON.stringify([event, payload])}`;
+            return new Promise((resolve) => {
+                ws.send(msg, (err) => resolve(!err));
+            });
+        },
+
+        /**
+         * Emit a Socket.IO event with multiple args (e.g. changeSymbol needs two separate args).
+         * @param {string} event
+         * @param {...unknown} args
+         * @returns {Promise<boolean>}
+         */
+        emitMulti(event, ...args) {
+            if (state !== STATE.READY || !ws) return Promise.resolve(false);
+            const msg = `42${JSON.stringify([event, ...args])}`;
             return new Promise((resolve) => {
                 ws.send(msg, (err) => resolve(!err));
             });

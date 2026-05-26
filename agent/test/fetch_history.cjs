@@ -1,14 +1,21 @@
 'use strict';
-// Fetch 24h OHLC via loadHistoryPeriod → agent.db
+// Fetch paginated OHLC history via loadHistoryPeriod → agent.db
+//
+// Protocol (ChipaDevTeam BinaryOptionsTools-v2 get_candles.rs):
+//   Step 1: 42["changeSymbol",{"asset":"X","period":300}]     — subscribe asset on this WS connection
+//   Step 2: 42["loadHistoryPeriod",{"asset":"X","period":300,"time":T,"index":N,"offset":O}]
+//   Reply:  42["loadHistoryPeriod",{"asset":"X","index":N,"data":[{time,open,close,high,low}],"period":300}]
+//        OR 42["loadHistoryPeriodFast", ...same...]
+//   Paginate by walking anchorTime backwards until targetBars collected.
 //
 //   node agent/test/fetch_history.cjs                   ← auto-detect assets from UI clicks
-//   node agent/test/fetch_history.cjs EURUSD_otc        ← explicit asset list
+//   node agent/test/fetch_history.cjs EURUSD_otc        ← explicit list
 //   node agent/test/fetch_history.cjs EURUSD_otc GBPUSD_otc
 
 const puppeteer = require('puppeteer');
-const readline = require('readline');
-const path = require('path');
-const fs = require('fs');
+const readline  = require('readline');
+const path      = require('path');
+const fs        = require('fs');
 
 const {
     extractHistoryPeriodResult,
@@ -26,9 +33,8 @@ const CFG = JSON.parse(
     fs.readFileSync(path.join(__dirname, '../websocket/config.json'), 'utf8')
 );
 const DB_PATH = path.join(__dirname, '../data/agent.db');
-const HIST = resolveHistoryOptions(CFG);
+const HIST    = resolveHistoryOptions(CFG);
 
-// CLI assets are optional — if not provided, auto-detect from UI clicks
 const cliAssets = process.argv
     .slice(2)
     .flatMap((a) => a.split(','))
@@ -40,17 +46,14 @@ const log = (m) => console.log(`[fetch_history] ${m}`);
 function pressEnter(msg) {
     return new Promise((resolve) => {
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-        rl.question(msg, () => {
-            rl.close();
-            resolve();
-        });
+        rl.question(msg, () => { rl.close(); resolve(); });
     });
 }
 
 async function main() {
-    const db = openAgentDb(DB_PATH);
+    const db      = openAgentDb(DB_PATH);
     const pending = new Map();
-    const store = createCandleStore();
+    const store   = createCandleStore();
 
     const browser = await puppeteer.launch({
         headless: false,
@@ -58,65 +61,46 @@ async function main() {
         defaultViewport: null,
     });
 
-    const page = await browser.newPage();
-    const cdp = await page.target().createCDPSession();
+    const page  = await browser.newPage();
+    const cdp   = await page.target().createCDPSession();
     const cdpWs = createCdpWsTransport(cdp);
-
     await cdp.send('Network.enable');
 
-    // Capture the WS URL and SSID from the browser's own outbound auth frame.
-    // PO's socket.io is unreachable via JS injection — we piggyback on the
-    // browser's existing auth to open our own direct Node.js WS connection.
     let capturedWsUrl = null;
-    let capturedSsid = null;
-    const detectedAssets = new Set(); // Assets clicked in the UI (via changeSymbol frames)
+    let capturedSsid  = null;
+    const detectedAssets = new Set();
 
     cdp.on('Network.webSocketCreated', (ev) => {
         cdpWs.onCreated(ev);
-        if (ev.url && /po\.market|socket\.io/i.test(ev.url)) {
-            capturedWsUrl = ev.url;
-        }
+        if (ev.url && /po\.market|socket\.io/i.test(ev.url)) capturedWsUrl = ev.url;
     });
 
     cdp.on('Network.webSocketFrameReceived', ({ requestId, response }) => {
         cdpWs.onFrame({ requestId });
+        // Also parse browser WS frames in case PO responds there too
         try {
-            // Parse base64-encoded browser WS frames for history responses
-            const raw = Buffer.from(response?.payloadData ?? '', 'base64').toString('utf8');
+            const raw     = Buffer.from(response?.payloadData ?? '', 'base64').toString('utf8');
             const jsonStr = raw.replace(/^\d+/, '');
             if (!jsonStr.startsWith('[') && !jsonStr.startsWith('{')) return;
-            const parsed = JSON.parse(jsonStr);
-            const result = extractHistoryPeriodResult(parsed);
+            const parsed  = JSON.parse(jsonStr);
+            const result  = extractHistoryPeriodResult(parsed);
             if (result) dispatchHistoryResult(pending, result);
         } catch (_) {}
     });
 
-    // Capture the auth SSID and UI-clicked assets from the browser's outbound WS frames.
-    // Per CDP spec: text frames (opcode=1) have payloadData as plain UTF-8, NOT base64.
     cdp.on('Network.webSocketFrameSent', ({ response }) => {
         try {
-            const payloadRaw = response?.payloadData ?? '';
-            if (!capturedSsid) {
-                log(`WS→ ${payloadRaw.slice(0, 120)}`);
-            }
-            // Text frames are plain UTF-8; try that first, fall back to base64
-            let raw = payloadRaw;
-            if (!raw.startsWith('4')) {
-                raw = Buffer.from(payloadRaw, 'base64').toString('utf8');
-            }
+            let raw = response?.payloadData ?? '';
+            if (!raw.startsWith('4')) raw = Buffer.from(raw, 'base64').toString('utf8');
             if (!raw.startsWith('42')) return;
             const parsed = JSON.parse(raw.slice(2));
             if (!Array.isArray(parsed)) return;
-
-            // Capture auth SSID (real account: session field; demo: token field)
             if (parsed[0] === 'auth' && parsed[1] && (parsed[1].session || parsed[1].token)) {
                 if (!capturedSsid) {
                     capturedSsid = parsed[1];
-                    log(`SSID captured: uid=${capturedSsid.uid ?? 'demo'} isDemo=${capturedSsid.isDemo ?? 1}`);
+                    log(`SSID captured: uid=${capturedSsid.uid ?? 'demo'}`);
                 }
             }
-
-            // Capture assets the user clicks in the PO UI (changeSymbol events)
             if (parsed[0] === 'changeSymbol' && parsed[1]?.asset) {
                 detectedAssets.add(parsed[1].asset);
             }
@@ -124,9 +108,10 @@ async function main() {
     });
 
     await page.goto(CFG.pocket_option_url, { waitUntil: 'load', timeout: 120000 });
+
     if (cliAssets.length > 0) {
-        log(`fetch: ${cliAssets.join(', ')} (${HIST.targetBars} bars)`);
-        log(`log in → open chart → press Enter`);
+        log(`fetch: ${cliAssets.join(', ')} (${HIST.targetBars} bars each)`);
+        log(`log in → open trading chart → press Enter`);
     } else {
         log(`No assets specified — click assets in the PO UI to detect them, then press Enter`);
     }
@@ -134,61 +119,46 @@ async function main() {
 
     const wsId = await cdpWs.waitReady(90000, log);
     if (!wsId) {
-        log('no chart WebSocket — open QT trading so prices tick, then run again');
+        log('no chart WebSocket — open Quick Trading so prices are ticking, then run again');
         await browser.close();
         db.close();
         process.exit(1);
     }
     log('chart WebSocket connected');
 
-    // Wait for SSID (browser sends auth frame within ~2s of WS open)
     const ssidDeadline = Date.now() + 15_000;
     while (!capturedSsid && Date.now() < ssidDeadline) {
         await new Promise((r) => setTimeout(r, 200));
     }
     if (!capturedSsid) {
-        // Fallback: open the guest demo page (no login required)
-        const DEMO_URL = 'https://pocketoption.com/en/cabinet/try-demo/';
-        log(`SSID not captured — opening guest demo: ${DEMO_URL}`);
-        try {
-            await page.goto(DEMO_URL, { waitUntil: 'load', timeout: 30000 });
-        } catch (_) {}
-        const demoDeadline = Date.now() + 20_000;
-        while (!capturedSsid && Date.now() < demoDeadline) {
-            await new Promise((r) => setTimeout(r, 200));
-        }
-    }
-
-    if (!capturedSsid) {
-        log('SSID not captured. Open PO trading chart (real or demo) and try again.');
+        log('SSID not captured — make sure you are logged in with the chart open');
         await browser.close();
         db.close();
         process.exit(1);
     }
 
-    // Resolve final asset list: CLI args override, otherwise use UI-detected assets
     const assets = cliAssets.length > 0 ? cliAssets : Array.from(detectedAssets);
     if (assets.length === 0) {
-        log('No assets to fetch. Pass asset names as CLI args or click assets in the PO UI before pressing Enter.');
+        log('No assets to fetch. Pass CLI args or click assets in the PO UI before pressing Enter.');
         await browser.close();
         db.close();
         process.exit(1);
     }
     log(`assets: ${assets.join(', ')} (${HIST.targetBars} bars each)`);
 
+    // directWs — routes loadHistoryPeriod/loadHistoryPeriodFast responses to pending resolver
     const directWs = createDirectWs({
         log,
-        // Route directWs responses (loadHistoryPeriod replies) to the pending resolver.
-        // PO sends history replies only on the connection that made the request.
         onFrame: (raw) => {
             try {
                 const jsonStr = raw.replace(/^\d+/, '');
-                const parsed = JSON.parse(jsonStr);
-                const result = extractHistoryPeriodResult(parsed);
+                const parsed  = JSON.parse(jsonStr);
+                const result  = extractHistoryPeriodResult(parsed);
                 if (result) dispatchHistoryResult(pending, result);
             } catch (_) {}
         },
     });
+
     try {
         await directWs.connect(capturedWsUrl, capturedSsid, 15_000);
     } catch (e) {
@@ -197,7 +167,11 @@ async function main() {
         db.close();
         process.exit(1);
     }
-    log('directWs ready');
+
+    // Emitter for fetchAssetHistory:
+    //   changeSymbol  → single object {"asset","period"} per PO protocol (get_candles.rs confirmed)
+    //   loadHistoryPeriod → single object with asset/period/time/index/offset
+    const emitter = (event, payload) => directWs.emit(event, payload);
 
     for (const asset of assets) {
         log(`${asset}...`);
@@ -207,7 +181,7 @@ async function main() {
                 pending,
                 cdpWs,
                 log,
-                emitter: (event, payload) => directWs.emit(event, payload),
+                emitter,
             });
             if (bars.length === 0) {
                 log(`${asset}: no data`);
