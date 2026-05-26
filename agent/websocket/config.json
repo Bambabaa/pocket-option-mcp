@@ -4,11 +4,11 @@
   "pocket_option_url": "https://pocketoption.com",
   "trading_url": "https://pocketoption.com/en/cabinet/",
   "history": {
-    "target_hours": 24,
+    "target_hours": 336,
     "batch_size": 288,
     "request_timeout_ms": 12000,
     "stall_limit": 6,
-    "inter_request_delay_ms": 800
+    "inter_request_delay_ms": 400
   },
   "indicators": {
     "sma_periods":     [10, 20, 50],
@@ -18,7 +18,7 @@
     "bb":              { "period": 20, "std_dev": 2 },
     "stoch":           { "k_period": 5, "d_period": 3, "smooth": 3 },
     "keltner":         { "ema": 20, "atr": 10, "mult": 2 },
-    "zigzag":          { "deviation_pct": 5, "min_bars": 4 },
+    "zigzag":          { "deviation_pct": 0.5, "min_bars": 4 },
     "stc":             { "ema_fast": 23, "ema_slow": 50, "cycle": 10, "smooth1": 3, "smooth2": 3 },
     "adx_period":      14,
     "cci_period":      20,

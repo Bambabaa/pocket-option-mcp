@@ -119,14 +119,26 @@ function prepareStmts(db) {
         for (const r of rows) insertIndicator.run(r);
     });
 
-    return { writeCandleBatch, writeIndicatorBatch };
+    const dropWarmup = db.transaction((asset) => {
+        const { changes } = db.prepare(
+            `DELETE FROM indicators WHERE asset = ? AND stc_value IS NULL`
+        ).run(asset);
+        db.prepare(
+            `DELETE FROM candles WHERE asset = ? AND timestamp NOT IN (
+                SELECT timestamp FROM indicators WHERE asset = ?
+            )`
+        ).run(asset, asset);
+        return changes;
+    });
+
+    return { writeCandleBatch, writeIndicatorBatch, dropWarmup };
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 function main() {
     // Open (or create) agent.db with full schema
     const db = openAgentDb(DB_PATH);
-    const { writeCandleBatch, writeIndicatorBatch } = prepareStmts(db);
+    const { writeCandleBatch, writeIndicatorBatch, dropWarmup } = prepareStmts(db);
 
     // Resolve which CSVs to process
     const allFiles = fs.readdirSync(CSV_DIR).filter(f => f.endsWith('_M5.csv'));
@@ -173,9 +185,12 @@ function main() {
         const indRows = computeIndicators(bars, asset);
         writeIndicatorBatch(indRows);
 
+        const warmupDropped = dropWarmup(asset);
+        if (warmupDropped > 0) log(`${asset}: dropped ${warmupDropped} warmup rows (stc_value IS NULL)`);
+
         const indCount = db.prepare('SELECT COUNT(*) AS n FROM indicators WHERE asset = ?').get(asset).n;
         const elapsed  = ((Date.now() - t0) / 1000).toFixed(1);
-        log(`${asset}: ${indCount} indicator rows in DB — ${elapsed}s`);
+        log(`${asset}: ${indCount} valid indicator rows in DB — ${elapsed}s`);
 
         totalBars += candleCount;
         totalInd  += indCount;

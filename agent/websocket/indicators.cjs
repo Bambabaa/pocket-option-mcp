@@ -135,33 +135,44 @@ function calculateKeltnerChannel(candles, emaPeriod = 20, atrPeriod = 10, multip
     };
 }
 
-// ── Zig Zag (deviation=5%, minBars=4) ────────────────────────────────────────
-function calculateZigZag(candles, deviationPercent = 5, minBars = 4) {
+// ── Zig Zag (deviation=0.5%, minBars=4) ─────────────────────────────────────
+// Uses H/L for pivot detection (matches bot/indicators.js pattern).
+// 0.5% default is appropriate for 5m bars; 5% (PO platform default) is too
+// large and produces nulls on almost every bar at 5m timeframe.
+function calculateZigZag(candles, deviationPercent = 0.5, minBars = 4) {
     if (!candles || candles.length < minBars + 2) return null;
-    const closes = candles.map(c => c[2]);
-    const n = closes.length;
-    let lastExtreme = closes[0], lastExtremeIdx = 0;
-    let direction = null;
-    const threshold = (deviationPercent / 100) * (lastExtreme || 1);
+    const n      = candles.length;
+    const highs  = candles.map(c => c[3]);
+    const lows   = candles.map(c => c[4]);
+
+    let trend      = 'UP';
+    let pivotPrice = lows[0];
+    let pivotIdx   = 0;
+    const pivots   = [];
+    const dev      = deviationPercent / 100;
+
     for (let i = 1; i < n; i++) {
-        const p = closes[i];
-        if (direction === null) {
-            if (p >= lastExtreme + threshold) { direction = 'up'; lastExtreme = p; lastExtremeIdx = i; }
-            else if (p <= lastExtreme - threshold) { direction = 'down'; lastExtreme = p; lastExtremeIdx = i; }
-            continue;
-        }
-        if (direction === 'up') {
-            if (p > lastExtreme) { lastExtreme = p; lastExtremeIdx = i; }
-            else if (p <= lastExtreme - threshold) { direction = 'down'; lastExtreme = p; lastExtremeIdx = i; }
+        if (trend === 'UP') {
+            if (highs[i] > pivotPrice) { pivotPrice = highs[i]; pivotIdx = i; }
+            else if ((pivotPrice - lows[i]) / pivotPrice >= dev && (i - pivotIdx) >= minBars) {
+                pivots.push({ type: 'HIGH', price: pivotPrice, idx: pivotIdx });
+                trend = 'DOWN'; pivotPrice = lows[i]; pivotIdx = i;
+            }
         } else {
-            if (p < lastExtreme) { lastExtreme = p; lastExtremeIdx = i; }
-            else if (p >= lastExtreme + threshold) { direction = 'up'; lastExtreme = p; lastExtremeIdx = i; }
+            if (lows[i] < pivotPrice) { pivotPrice = lows[i]; pivotIdx = i; }
+            else if ((highs[i] - pivotPrice) / pivotPrice >= dev && (i - pivotIdx) >= minBars) {
+                pivots.push({ type: 'LOW', price: pivotPrice, idx: pivotIdx });
+                trend = 'UP'; pivotPrice = highs[i]; pivotIdx = i;
+            }
         }
     }
+
+    if (pivots.length === 0) return null;
+    const last = pivots[pivots.length - 1];
     return {
-        zigzag_direction: direction === 'up' ? 1 : direction === 'down' ? -1 : null,
-        zigzag_reversal: lastExtremeIdx >= n - 2 ? 1 : 0,
-        zigzag_pivot: lastExtreme
+        zigzag_direction: last.type === 'HIGH' ? -1 : 1,  // after HIGH pivot → DOWN trend; after LOW → UP
+        zigzag_reversal:  last.idx >= n - 2 ? 1 : 0,       // 1 if last pivot is current or previous bar
+        zigzag_pivot:     last.price,
     };
 }
 
