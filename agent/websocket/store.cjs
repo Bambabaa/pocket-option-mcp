@@ -164,14 +164,17 @@ function storeBarsAndIndicators(db, asset, bars, indicatorCfg, log = () => {}) {
     writeCandleBatch(candleRows);
     log(`${asset}: ${bars.length} bars written to candles`);
 
+    // Sliding window O(n) — cap each computeAll slice at 300 bars (same as import_csv)
+    const WINDOW = 300;
     let prevStc = null;
     const indRows = [];
-    for (let i = 1; i <= bars.length; i++) {
-        const slice = bars.slice(0, i);
+    for (let i = 0; i < bars.length; i++) {
+        const start = Math.max(0, i - WINDOW + 1);
+        const slice = bars.slice(start, i + 1);
         const ind = computeAll(slice, indicatorCfg, prevStc);
         if (!ind) continue;
         prevStc = ind.stc_value;
-        indRows.push({ asset, timestamp: slice[slice.length - 1][0], ...ind });
+        indRows.push({ asset, timestamp: bars[i][0], ...ind });
     }
     writeIndicatorBatch(indRows);
     log(`${asset}: indicators computed for ${indRows.length} bars`);

@@ -168,10 +168,20 @@ async function main() {
         process.exit(1);
     }
 
-    // Emitter for fetchAssetHistory:
-    //   changeSymbol  → single object {"asset","period"} per PO protocol (get_candles.rs confirmed)
-    //   loadHistoryPeriod → single object with asset/period/time/index/offset
-    const emitter = (event, payload) => directWs.emit(event, payload);
+    // Emitter with auto-reconnect: if directWs drops, reconnect before retrying
+    async function emitter(event, payload) {
+        let ok = await directWs.emit(event, payload);
+        if (!ok) {
+            log(`directWs dropped — reconnecting...`);
+            try {
+                await directWs.connect(capturedWsUrl, capturedSsid, 15_000);
+                ok = await directWs.emit(event, payload);
+            } catch (e) {
+                log(`reconnect failed: ${e.message}`);
+            }
+        }
+        return ok;
+    }
 
     for (const asset of assets) {
         log(`${asset}...`);
