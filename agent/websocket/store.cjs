@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS candles (
     high       REAL    NOT NULL,
     low        REAL    NOT NULL,
     close      REAL    NOT NULL,
+    volume     REAL,
     PRIMARY KEY (asset, timestamp)
 );
 
@@ -85,6 +86,8 @@ function openAgentDb(dbPath) {
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     db.exec(SCHEMA_SQL);
+    // Add volume column to existing DBs that predate this field
+    try { db.exec('ALTER TABLE candles ADD COLUMN volume REAL'); } catch (_) {}
     return db;
 }
 

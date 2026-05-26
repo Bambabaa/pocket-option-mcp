@@ -26,11 +26,12 @@ const cliPairs = process.argv.slice(2).flatMap(a => a.split(',')).map(s => s.tri
 function parseLine(line) {
     const parts = line.split(',');
     if (parts.length < 5) return null;
-    const [datetime, openStr, highStr, lowStr, closeStr] = parts;
-    const open  = parseFloat(openStr);
-    const high  = parseFloat(highStr);
-    const low   = parseFloat(lowStr);
-    const close = parseFloat(closeStr);
+    const [datetime, openStr, highStr, lowStr, closeStr, volumeStr] = parts;
+    const open   = parseFloat(openStr);
+    const high   = parseFloat(highStr);
+    const low    = parseFloat(lowStr);
+    const close  = parseFloat(closeStr);
+    const volume = volumeStr !== undefined ? parseFloat(volumeStr) : null;
     if ([open, high, low, close].some(isNaN)) return null;
     if (high < low || open <= 0 || close <= 0) return null;
 
@@ -39,8 +40,8 @@ function parseLine(line) {
     const ts  = Math.floor(dt.getTime() / 1000) + TZ_OFFSET;
     if (!ts || ts <= 0) return null;
 
-    // [ts, open, close, high, low] — indicators.cjs format
-    return [ts, open, close, high, low];
+    // [ts, open, close, high, low, volume] — volume appended for storage
+    return [ts, open, close, high, low, isNaN(volume) ? null : volume];
 }
 
 // ── Load and parse a CSV file ─────────────────────────────────────────────────
@@ -78,8 +79,8 @@ function computeIndicators(bars, asset) {
 // ── DB writers ────────────────────────────────────────────────────────────────
 function prepareStmts(db) {
     const insertCandle = db.prepare(`
-        INSERT OR IGNORE INTO candles (asset, timestamp, open, high, low, close)
-        VALUES (@asset, @timestamp, @open, @high, @low, @close)
+        INSERT OR REPLACE INTO candles (asset, timestamp, open, high, low, close, volume)
+        VALUES (@asset, @timestamp, @open, @high, @low, @close, @volume)
     `);
 
     const insertIndicator = db.prepare(`
@@ -160,8 +161,8 @@ function main() {
         log(`${asset}: ${bars.length} bars parsed (${skipped} invalid, ${flatCount} flat kept)`);
 
         // Write candles
-        const candleRows = bars.map(([ts, open, close, high, low]) => ({
-            asset, timestamp: ts, open, high, low, close,
+        const candleRows = bars.map(([ts, open, close, high, low, volume]) => ({
+            asset, timestamp: ts, open, high, low, close, volume: volume ?? null,
         }));
         writeCandleBatch(candleRows);
 
