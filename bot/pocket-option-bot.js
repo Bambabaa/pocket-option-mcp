@@ -1101,7 +1101,7 @@ async function main() {
                     const { synced, ordersAwaited = 0 } = await syncLiveTradeResultsFromDOM(page, database, {
                         limit: 10,
                         tradeAmount: STATE.SETTINGS.tradeAmount || 1,
-                        expirySeconds: STATE.SETTINGS.execution?.expirationSec ?? 65,
+                        expirySeconds: STATE.SETTINGS.execution?.expirationSec ?? 900,
                         minConsecutiveWinsForTrading: 1,
                         checkPreempt: () => executionQueue.length > 0
                     });
