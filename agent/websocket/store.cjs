@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS candles (
     high       REAL    NOT NULL,
     low        REAL    NOT NULL,
     close      REAL    NOT NULL,
+    volume     REAL,
     PRIMARY KEY (asset, timestamp)
 );
 
@@ -85,6 +86,8 @@ function openAgentDb(dbPath) {
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     db.exec(SCHEMA_SQL);
+    // Add volume column to existing DBs that predate this field
+    try { db.exec('ALTER TABLE candles ADD COLUMN volume REAL'); } catch (_) {}
     return db;
 }
 
@@ -161,14 +164,17 @@ function storeBarsAndIndicators(db, asset, bars, indicatorCfg, log = () => {}) {
     writeCandleBatch(candleRows);
     log(`${asset}: ${bars.length} bars written to candles`);
 
+    // Sliding window O(n) — cap each computeAll slice at 300 bars (same as import_csv)
+    const WINDOW = 300;
     let prevStc = null;
     const indRows = [];
-    for (let i = 1; i <= bars.length; i++) {
-        const slice = bars.slice(0, i);
+    for (let i = 0; i < bars.length; i++) {
+        const start = Math.max(0, i - WINDOW + 1);
+        const slice = bars.slice(start, i + 1);
         const ind = computeAll(slice, indicatorCfg, prevStc);
         if (!ind) continue;
         prevStc = ind.stc_value;
-        indRows.push({ asset, timestamp: slice[slice.length - 1][0], ...ind });
+        indRows.push({ asset, timestamp: bars[i][0], ...ind });
     }
     writeIndicatorBatch(indRows);
     log(`${asset}: indicators computed for ${indRows.length} bars`);

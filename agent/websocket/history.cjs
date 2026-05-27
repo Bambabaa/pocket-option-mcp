@@ -453,8 +453,9 @@ async function fetchAssetHistory(page, asset, store, opts) {
         const index = makeRequestIndex();
         const before = store.get(asset)?.size ?? 0;
 
+        const offsetSeconds = batchSize * period;
         log(
-            `${asset}: request index=${index} time=${anchorTime} offset=${batchSize} ` +
+            `${asset}: request index=${index} time=${anchorTime} offset=${offsetSeconds}s (~${batchSize} bars) ` +
                 `(${before}/${targetBars} bars)`
         );
 
@@ -462,10 +463,10 @@ async function fetchAssetHistory(page, asset, store, opts) {
 
         try {
             if (emitter) {
-                const ok = await emitter('loadHistoryPeriod', { asset, period, time: anchorTime, index, offset: batchSize });
+                const ok = await emitter('loadHistoryPeriod', { asset, period, time: anchorTime, index, offset: offsetSeconds });
                 if (!ok) throw new Error('socket not available');
             } else {
-                await emitLoadHistoryPeriod(page, { asset, period, time: anchorTime, index, offset: batchSize }, cdpWs);
+                await emitLoadHistoryPeriod(page, { asset, period, time: anchorTime, index, offset: offsetSeconds }, cdpWs);
             }
         } catch (e) {
             cancelPending(pending, index);
