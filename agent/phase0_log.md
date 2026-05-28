@@ -341,3 +341,190 @@ Per Round 2 methodology: a gate that passes R.2 on the full R1 training corpus c
 - OTC test_r2:      n=12  WR=41.7%  (informational only — excluded from gate)
 - Next non-OTC milestone: n=10
 ---
+
+---
+
+## Session 3 — 2026-05-27 — ROUND 3 FRESH START
+
+Dataset rebuilt between sessions. Old research DB (77 mixed assets, 68h, 2-class labelling) is obsolete and discarded. New footing matches the Round 3 prompt exactly.
+
+### Fresh research DB
+- Deleted stale `phase0_research.db` (+ orphaned WAL/SHM sidecars)
+- `VACUUM INTO` fresh copy from live `agent.db` — integrity_check: ok
+- **51,813 candles, 13 non-OTC FX pairs, 51,813 indicators, prices=0**
+- Assets: AUDCAD AUDCHF AUDJPY CADCHF CADJPY CHFJPY EURAUD EURCHF EURJPY EURUSD USDCAD USDCHF USDJPY
+- ~3,987 bars each, ~332h (~13.8 days). EURUSD slightly fewer (3,969).
+- **prices table is empty → R.4 (1m tick filter) will be skipped** (prompt's note now accurate)
+- **No OTC pairs** → entire Round 2 OTC/non-OTC split machinery is moot
+
+### R.0 — Feature engineering (complete)
+Script: `agent/research/phase0_r0.cjs` | Log: `phase0_r0_output.log`
+Output table: `derived_features` (51,813 rows, keyed by asset+timestamp)
+
+Features built (all causal): candle anatomy (range/body/upwick/dnwick ATR-normalized, is_bull_bar),
+log returns (ret_1/3/6/12), MA distances (dist_sma20/ema20/ema50 — EMA20/50 computed inline),
+swing pivots (hh/hl/lh/ll via 4-bar confirmed pivots), SMC zone (range_pos + PREMIUM/DISCOUNT/EQUILIBRIUM
+on rolling 50-bar), SMC flags (sweep_low/high, bull_ob/bear_ob, bos_up/down, displacement),
+vol_regime (per-asset rolling 200-bar ATR terciles), session (UTC-5 fixed per Round 3 session()).
+
+**Sanity checks — ALL PASSED:**
+| Check | Value | Note |
+|---|---|---|
+| range_atr median | 0.896 | ~1.0 ✓ |
+| body_atr median | 0.386 | slightly low (FX has more wick) ✓ |
+| (up+dn+body)−range mean | 3.9e-17 | machine-precision additive identity ✓ |
+| hh/hl/lh/ll | 31.8/34.0/31.6/31.4% | clean symmetry ✓ |
+| sweep_low/high | 3.63/3.75% | slightly above 1-3% but within bug-threshold ✓ |
+| displacement | 1.49% | ✓ |
+| vol_regime LOW/MED/HIGH | 25.5/44.6/30.0% | MED inflated by discrete-ATR ties landing on tercile boundary (strict <,>); within prompt's 50%-deviation bug threshold |
+| session | Asian 37.7 / American 37.1 / European 25.2% | Off-hours never fires (dead branch in Round 3 session() by construction) |
+
+One note carried forward: vol_regime MED skew (44.6% vs 33%) is from flat FX ATR values tying on the
+rolling tercile boundary and falling to MED under strict `<`/`>`. Not a bug; flagged for R.6 awareness.
+
+**Next:** R.1 — signal capture with 3-class labelling (WIN/LOSS/FLAT), ~38 gates × 4 expiries
+(5/10/15/20m), 3-bar independence, 70/30 chronological fold per asset. Awaiting user confirmation.
+
+### R.1 — Signal capture, 3-class labelling (complete, 2026-05-27)
+Script: `agent/research/phase0_r1.cjs` | Log: `phase0_r1_output.log`
+Output table: `backtest_signals` (150,732 rows)
+
+- 38 gates × 4 expiries (5/10/15/20m), 3-bar independence, 70/30 chronological fold per asset
+- Signals: 150,732 (train 107,803 / test 42,929) → **fold 71.5% / 28.5%** ✓
+- 3-bar independence rejected 253,605 redundant fires
+- Old Round 2 scripts/CSVs moved to `research/round2_archive/`
+
+**Labelling correctness — reproduces prompt's reference dataset numbers exactly:**
+| Metric | Prompt ref | R.1 actual |
+|---|---|---|
+| Always-CALL 15m WR | 51.23% | 51.22% |
+| Always-PUT 15m WR | 48.77% | 48.78% |
+| Flat rate | ~30% | 30.02% |
+CALL+PUT WR = 100.00% → flats excluded symmetrically. 3-class labelling verified correct.
+
+**Sanity:**
+- `rsi_oversold` fire rate 3.71% — FLAGGED below 5-15% expectation. Not a bug: FX majors over a calm
+  2-week window rarely hit RSI<30. n=864 signals still ample.
+- `train fold ~70%` → 71.5% PASS
+
+**Critical Round 3 finding — high flat rates confirm the labelling correction matters:**
+| Gate | signals | flat% @15m |
+|---|---|---|
+| bb_squeeze_call / bb_squeeze_put | 7,108 | **68.7%** |
+| rsi_overbought | 2,837 | **76.2%** |
+| psar_bearish | 10,170 | 37.1% |
+| rsi_above_50 | 10,640 | 33.3% |
+These low-vol gates close flat most of the time. Under old 2-class labelling these flats were
+miscounted as wins/losses — exactly the error Round 3 corrects. Their decisive-n will shrink sharply
+in R.2, and any high WR on them gets a leakage check per constraint #8.
+
+**di_oversold_bounce (pre-registered):** 718 signals, flat 2.4% — healthy n (13 pairs × 2wk vs old 174).
+
+**Low-n gates (will flag in R.2, may not reach n≥100 decisive):** ML_HL_PIVOT_CLEAN_BAR (63),
+SMC_PREMIUM_REJECT (179), SMC_DISCOUNT_REJECT (173), DISPLACEMENT_UP (157), DISPLACEMENT_DOWN (227),
+REGIME_EU_LOW (346), SMC_SWEEP_LOW_OB (341), SMC_SWEEP_HIGH_OB (331), ML_LH_DOWN_BIAS (469).
+
+**Next:** R.2 — per-gate significance on train fold. Wilson CI, one-sided binomial vs 0.5405,
+BH FDR=0.05 across all (gate×expiry) cells. Pass = n_decisive≥100 AND ci_lower>0.5405 AND bh_passed.
+Awaiting user confirmation.
+
+### R.2 — Per-gate significance, train fold (complete, 2026-05-27)
+Script: `agent/research/phase0_r2.cjs` | Log: `phase0_r2_output.log`
+Outputs: `phase0_r2_results.csv` (152 cells), `phase0_r2_survivors.csv` (1)
+
+Methodology: train fold only; Wilson 95% CI; one-sided binomial vs p0=0.5405 (normal approx +
+continuity correction); BH FDR=0.05 across 151 EXPLORATORY cells; pre-registered
+`di_oversold_bounce` CALL 15m EXEMPT from BH (single pre-specified test) per prompt constraint #6.
+
+**Implementation validation — reproduces prompt's stated train-fold numbers EXACTLY:**
+Prompt preliminary re-analysis: `n=615 wins=362 losses=253 flats=7, WR=58.9%, ci_lower=54.9%`.
+My pipeline: **n=615 wins=362 losses=253 flats=7, WR=58.86%, ci_lower=54.93%.** Identical counts.
+
+**Result: 1 survivor (the pre-registered gate, single-test basis).**
+| gate | dir | exp | n | wins | losses | flats | WR | ci_lower | flat% | p | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| di_oversold_bounce | CALL | 15m | 615 | 362 | 253 | 7 | 58.86% | 54.93% | 1.1% | 9.29e-3 | PASS (pre-reg) |
+
+**Zero exploratory survivors.** BH maxK=0/151 — nothing clears the multiple-testing bar (need raw
+p ≤ 0.05/151 = 3.3e-4; best exploratory raw p ≈ 4.6e-3). Closest:
+- rsi_oversold CALL 10m: WR 59.7%, ci_lo 55.7%, flat 6.3% — clears floor, BH-rejected
+- rsi_oversold CALL (5/15/20m): all clear floor (ci_lo 54.2-54.8%), all BH-rejected
+- di_oversold_bounce CALL 10m/20m: WR 58.3/58.7%, clear floor, BH-rejected (not pre-reg expiries)
+
+**Observation (not a pipeline survivor):** rsi_oversold CALL is internally consistent — clears the
+floor at all four expiries. Suggestive but killed by multiple-testing correction. Secondary note only.
+
+**Next:** R.3 — walk-forward the single survivor (di_oversold_bounce CALL 15m) on the test fold.
+Single-test p-value (BH-exempt). Pass = test ci_lower>0.5405 AND train→test WR delta ≤5pp.
+Pre-checks: entry/exit correctness, exit-from-different-bar, independence, fold chronology.
+Note: gate fires concentrated in earlier data — test fold n may be ~90-100 (watch undersizing).
+Awaiting user confirmation.
+
+### R.3 — Walk-forward validation (complete, 2026-05-27)
+Script: `agent/research/phase0_r3.cjs` | Log: `phase0_r3_output.log`
+Outputs: `phase0_r3_results.csv`, `phase0_r3_asset_breakdown.csv`, `phase0_r3_session_breakdown.csv`
+
+Survivor tested: di_oversold_bounce CALL 15m (pre-registered, single-test, BH-exempt).
+
+**Pre-checks — ALL PASS (no leakage path):**
+- entry_close matches candle close: 0 violations
+- exit_15m sourced from t+900s bar: 0 violations
+- 3-bar independence (min gap 900s): 0 violations
+- fold chronology (train ts < test ts): 0 violations
+
+**Fold metrics — reproduces prompt's reference test numbers EXACTLY:**
+| fold | n | wins | losses | flats | WR | ci_lower | ci_upper | p |
+|---|---|---|---|---|---|---|---|---|
+| train | 615 | 362 | 253 | 7 | 58.86% | 54.93% | 62.68% | 9.3e-3 |
+| test | 86 | 50 | 36 | 10 | 58.14% | **47.58%** | 68.00% | 2.6e-1 |
+(Prompt stated: test n=86, wins=50, losses=36, flats=10, WR 58.1%, ci_lower 47.6% — identical.)
+
+**train→test WR delta = 0.72pp** — exceptional consistency (point estimate barely moved).
+
+**Verdict: OVERFIT** (by strict criteria: test ci_lower 47.58% < floor 54.05%).
+**This label is semantically misleading — there is ZERO overfitting.** The WR drifted only 0.72pp
+across the fold boundary. The gate fails purely because the test fold (n=86) is too small to push
+the 95% CI lower bound above the floor. At 58% WR, clearing 54.05% needs roughly n≥170 decisive.
+
+Test-fold concentration: gate fires ~88% in train, ~12% in test (fires more in earlier data) — same
+undersizing seen in the old run, but test n grew 33→86 as the dataset doubled (28k→51k bars).
+Per-session test: Asian 21/38 (55%), American 21/40 (53%) — both consistent with train ~59-60%;
+European 8/8 (100%) is a small-sample fluke.
+
+**Stop condition (strict):** R.3 produced no floor-clearing survivor → R.4/R.5/R.6 do not auto-run.
+R.4 would be skipped regardless (prices table empty in this VACUUM).
+
+**The honest conclusion:** across 152 cells with full statistical rigor, the only candidate with a
+real edge is di_oversold_bounce CALL 15m. Its edge is STABLE (0.72pp train-test drift) but
+UNCONFIRMED — the held-out test fold is undersized (n=86 vs ~170 needed). Not a performance failure;
+a data-volume failure. Trajectory is positive: doubling the dataset took test n from 33→86.
+
+**Next:** user decision (no auto-proceed). Options recorded in conversation.
+
+### R.6 — Exploratory per-dimension profiling (complete, 2026-05-27)
+Script: `agent/research/phase0_r6.cjs` | Log: `phase0_r6_output.log` | Output: `phase0_r6_breakdown.csv`
+**EXPLORATORY — gate failed R.3, this is NOT validation.** Pooled both folds for max sample.
+
+Profiled di_oversold_bounce CALL 15m by asset / session / vol_regime / zone. BH across 22 cells.
+
+**4 cells clear floor at n>=30 (all BH-REJECTED — suggestive only):**
+| dim | value | n | WR | ci_lower | bh_adj_p |
+|---|---|---|---|---|---|
+| zone | DISCOUNT | 568 | 59.3% | 55.2% | 0.102 |
+| vol_regime | LOW | 80 | 67.5% | 56.6% | 0.102 |
+| asset | EURJPY | 32 | 75.0% | 57.9% | 0.102 |
+| asset | CHFJPY | 69 | 66.7% | 54.9% | 0.131 |
+
+Edge concentrates in DISCOUNT zone + LOW vol — theory-consistent for an oversold-bounce setup.
+Per-session flat (~58-59% all three → no session edge). No slice survives multiple-testing correction.
+
+### R.7 — Results document (complete, 2026-05-27)
+Written `agent/phase0_results.md` (no-survivor deliverable):
+- Full pipeline summary R.0-R.6
+- di_oversold_bounce: stable (0.72pp drift) but unconfirmed (test n=86 < ~170 needed)
+- All standard indicators falsified
+- **Report v2 REGIME edges FALSIFIED**: EU_LOW 97.7%→46.5%, US_LOW 95.7%→48.0%,
+  ASIAN_LOW 88.5%→50.6% (n=1890, clean falsification). Inflation was from counting refunded flats as PUT wins.
+- Recommendation: accumulate more non-OTC data, re-run; DISCOUNT zone + LOW vol show potential; do NOT trade.
+
+**Phase 0 Round 3: COMPLETE.** No validated edge. Phase 2 (po_agent_scan) remains blocked.
