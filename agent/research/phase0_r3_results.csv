@@ -1,2 +1,2 @@
-gate,direction,expiry,train_n,train_k,train_wr,train_ci_lower,train_p_value,test_n,test_k,test_wr,test_ci_lower,test_p_value,train_minus_test_pp,test_clears_break_even,consistency_within_5pp,precheck_entry_close,precheck_exit_bar,precheck_independence,precheck_fold_chronology,top3_asset_concentration,r3_verdict
-di_oversold_bounce,CALL,15m,174,121,0.695402,0.623409,2.8621e-5,33,22,0.666667,0.496079,1.0033e-1,2.87,FALSE,TRUE,PASS,PASS,PASS,PASS,20.1%,OVERFIT
+gate,direction,expiry,train_n,train_wr,train_ci_lower,test_n,test_wr,test_ci_lower,test_p,delta_pp,verdict
+di_oversold_bounce,CALL,15,615,0.5886,0.5493,86,0.5814,0.4758,2.569e-1,0.72,OVERFIT (consistent WR but test CI below floor)

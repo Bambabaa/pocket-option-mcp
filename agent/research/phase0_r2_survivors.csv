@@ -1,2 +1,2 @@
-gate,direction,expiry,n,k,wr,ci_lower,ci_upper,p_value,bh_adjusted_p,bh_passed,low_n,clears_break_even,passes_all_criteria,wr_asian,n_asian,wr_european,n_european,wr_american,n_american,wr_offhours,n_offhours
-di_oversold_bounce,CALL,15m,174,121,0.695402,0.623409,0.758955,0.000029,0.002919,TRUE,FALSE,TRUE,TRUE,0.333333,9,0.638889,72,0.703125,64,0.931034,29
+gate,direction,expiry,n_decisive,wins,losses,flats,flat_pct,wr,ci_lower,ci_upper,p_value,bh_adj_p,bh_passed,pass,flags
+di_oversold_bounce,CALL,15,615,362,253,7,0.011254,0.588618,0.549293,0.626843,0.009287,,false,true,"prereg_single_test"

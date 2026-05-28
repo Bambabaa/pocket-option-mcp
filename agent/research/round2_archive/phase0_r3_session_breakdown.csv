@@ -1,0 +1,5 @@
+gate,direction,expiry,session,train_n,train_k,train_wr,test_n,test_k,test_wr
+di_oversold_bounce,CALL,15m,Asian,9,3,0.333333,1,1,1.000000
+di_oversold_bounce,CALL,15m,European,72,46,0.638889,0,0,
+di_oversold_bounce,CALL,15m,American,64,45,0.703125,29,21,0.724138
+di_oversold_bounce,CALL,15m,Off-hours,29,27,0.931034,3,0,0.000000
