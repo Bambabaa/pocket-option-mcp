@@ -13,6 +13,11 @@ function updateEMA(prev, close, period) {
     return close * k + prev * (1 - k);
 }
 
+function logRet(c1, c0) {
+    if (c0 == null || c1 == null || c0 <= 0 || c1 <= 0) return null;
+    return Math.log(c1 / c0);
+}
+
 function mean(arr) {
     if (!arr || !arr.length) return null;
     return arr.reduce((s, v) => s + v, 0) / arr.length;
@@ -80,9 +85,10 @@ function buildFeatures(ind, state) {
     const close = ind.close ?? ind.currentPrice;
     if (close == null) return null;
 
-    const open = ind.open  ?? close;
-    const high = ind.high  ?? close;
-    const low  = ind.low   ?? close;
+    const lc = ind.lastCandle ?? null;
+    const open = ind.open ?? (lc ? lc[1] : null) ?? close;
+    const high = ind.high ?? (lc ? lc[3] : null) ?? close;
+    const low  = ind.low  ?? (lc ? lc[4] : null) ?? close;
     const atr  = ind.atr_14        ?? null;
     const bb_w = ind.bb_width_bps  ?? null;
 
@@ -98,17 +104,18 @@ function buildFeatures(ind, state) {
     feat.is_bear_bar = close < open;
 
     // Pass-through indicator scalars used by regime classifier and strategies
-    feat.adx      = ind.adx       ?? null;
-    feat.plus_di  = ind.plus_di   ?? null;
-    feat.minus_di = ind.minus_di  ?? null;
+    feat.adx      = ind.adx_14      ?? ind.adx      ?? null;
+    feat.plus_di  = ind.adx_plus_di ?? ind.plus_di  ?? null;
+    feat.minus_di = ind.adx_minus_di ?? ind.minus_di ?? null;
 
     if (atr != null && atr > 0) {
         feat.body_atr  = body  / atr;
         feat.uwick_atr = uwick / atr;
         feat.lwick_atr = lwick / atr;
         feat.range_atr = range / atr;
+        feat.signed_body_atr = (close - open) / atr;
     } else {
-        feat.body_atr = feat.uwick_atr = feat.lwick_atr = feat.range_atr = null;
+        feat.body_atr = feat.uwick_atr = feat.lwick_atr = feat.range_atr = feat.signed_body_atr = null;
     }
 
     // ── EMA20 + z-score of (close − ema20) ────────────────────────────────────
@@ -187,6 +194,11 @@ function buildFeatures(ind, state) {
         feat.body_decay_rate = null;
     }
     ring(state.bodies, body, 20);
+
+    // ── Log returns (BEFORE pushing current close) ────────────────────────────
+    const prev = state.closes;
+    feat.ret_1 = prev.length >= 1 ? logRet(close, prev[prev.length - 1]) : null;
+    feat.ret_6 = prev.length >= 6 ? logRet(close, prev[prev.length - 6]) : null;
 
     // ── Directional efficiency (BEFORE pushing current close) ─────────────────
     // DE = net displacement / total path over last 10 closes.
@@ -303,8 +315,10 @@ function buildFeatures(ind, state) {
     // Asian:    22:00–06:59 UTC (spans midnight — Tokyo/Sydney)
     // European: 07:00–12:59 UTC (London open)
     // American: 13:00–21:59 UTC (NY open through close)
-    if (ind.timestamp != null) {
-        const h = new Date(ind.timestamp * 1000).getUTCHours();
+    const ts = (lc && lc[0] != null) ? lc[0] : ind.timestamp;
+    if (ts != null) {
+        const tsSec = ts > 1e12 ? Math.floor(ts / 1000) : ts;
+        const h = new Date(tsSec * 1000).getUTCHours();
         if      (h >= 22 || h < 7)  feat.session = 'Asian';
         else if (h < 13)             feat.session = 'European';
         else                         feat.session = 'American';

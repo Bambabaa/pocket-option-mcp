@@ -129,11 +129,12 @@ const STRATEGIES = [
     // Gate: session tag + vol_regime = LOW (ATR-14 ≤ per-asset p33 from training window)
     // These were never JS-validated before — adding now.
 
+    // ── REGIME PUT (as labelled in research) ────────────────────────────────
     {
         name: 'REGIME_EUR_LOW', direction: 'PUT', horizon: '15m', barsAhead: 3,
         researchWR: 0.977, researchN: 3940,
         walkFwd: { trainWR: 0.970, testWR: 0.984, decay: +0.014 },
-        notes: 'ml_edge_report.md §5.3 #8. Fragility=0.002 (most invariant in study). SPREAD perturb improves +0.4pp.',
+        notes: 'DEAD — 77% flat-price outcomes in European+LOW (exit==entry). PUT 10.9%, CALL 12.1%, ties 77%. Python 97.7% counted flat as PUT win.',
         gates: [
             f => f.session === 'European',
             f => f.regime  === 'LOW',
@@ -143,7 +144,7 @@ const STRATEGIES = [
         name: 'REGIME_ASI_LOW', direction: 'PUT', horizon: '15m', barsAhead: 3,
         researchWR: 0.885, researchN: 7128,
         walkFwd: { trainWR: 0.854, testWR: 0.923, decay: +0.069 },
-        notes: 'ml_edge_report.md §5.3 #12. Largest N in full study. Test WR improves +0.069pp — strongest test-set gain.',
+        notes: 'DEAD — 55% flat-price outcomes in Asian+LOW. PUT 22.6%, CALL 22.3%. Same outcome-definition mismatch as EUR edge.',
         gates: [
             f => f.session === 'Asian',
             f => f.regime  === 'LOW',
@@ -153,7 +154,7 @@ const STRATEGIES = [
         name: 'REGIME_AME_LOW', direction: 'PUT', horizon: '15m', barsAhead: 3,
         researchWR: 0.957, researchN: 6039,
         walkFwd: { trainWR: 0.992, testWR: 0.924, decay: -0.068 },
-        notes: 'ml_edge_report.md §5.3 #13. Modest decay -0.068 → size T2 until N≥500 fresh bars confirm >88%.',
+        notes: 'DEAD — 78% flat-price outcomes in American+LOW. PUT 10.2%. Same outcome-definition mismatch as EUR/ASI.',
         gates: [
             f => f.session === 'American',
             f => f.regime  === 'LOW',

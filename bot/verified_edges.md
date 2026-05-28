@@ -315,6 +315,20 @@ BB_upper < Keltner_upper    (inside the squeeze)
 | `ML_EDGE_03` | Calendar overfit — hr_sin primary trigger (single UTC hour) | 52.1% N=514 |
 | `ML_EDGE_04` | Degenerate leaf — fires 56% of bars, regime fully inverted | 24.9% N=29,177 |
 | `ML_EDGE_05` | Calendar overfit — same hr_sin gate as EDGE_03 | 53.2% N=449 |
+| `REGIME::European+LOW` | **77% flat-price outcomes** — price doesn't move; PUT 10.9%, CALL 12.1% | PUT 10.9% N=4,890 |
+| `REGIME::Asian+LOW` | **55% flat-price outcomes** — same outcome-def mismatch; PUT 22.6% | PUT 22.6% N=10,086 |
+| `REGIME::American+LOW` | **78% flat-price outcomes** — price doesn't move; PUT 10.2% | PUT 10.2% N=6,978 |
+
+> **REGIME edge post-mortem:** Python research WR of 97.7%/88.5%/95.7% was an outcome-definition artefact.  
+> The research likely counted **flat outcomes (exit == entry) as PUT wins** — valid for their binary options model where ties count as the "down" outcome.  
+> In JS validation: PUT win = `exitClose < entryClose` strictly. Under that definition:  
+> - European+LOW: 77% of 15-minute windows close at exactly the same price as entry  
+> - Asian+LOW: 55% ties  
+> - American+LOW: 78% ties  
+>  
+> The remaining decisive 22-45% of windows are ~50/50 direction (PUT 10.9% + CALL 12.1% for EUR = 23% total, nearly random).  
+> **The LOW volatility regime is not exploitable with a strict close-vs-close price comparison over 15 minutes.**  
+> Validated: `validate_ml_strategies.js` REGIME_EUR/ASI/AME_LOW, N=4,890/10,086/6,978.
 
 ---
 
@@ -332,81 +346,11 @@ BB_upper < Keltner_upper    (inside the squeeze)
 
 ---
 
-## ⏳ Infrastructure-Blocked — Research-Validated, Pending ML Pipeline
+## ⏳ Infrastructure-Blocked — Pending LSTM Pipeline
 
-These edges passed **full 70/30 chronological walk-forward validation** inside `ml_edge_report.md` (v2 FX Rebuild, 51,813 bars, 13 pairs, May 12–26 2026) but cannot fire in the current JS-only bot — they require either:
-- ML **vol-regime classification** (LOW/MED/HIGH ATR-14 tercile per asset), or
-- **LSTM inference** at runtime
+These edges require **PyTorch/TensorFlow LSTM inference at runtime** and cannot be approximated with static indicators. The REGIME edges that were previously listed here have been **moved to Confirmed Dead** after JS validation revealed the outcome-definition mismatch.
 
-They are listed here as the highest-priority deployment targets once the ML pipeline is wired into the candle flow.
-
-> ⚠️ **NOT JS-validated** — WRs are from Python walk-forward in the research report. Not tested via `validate_ml_strategies.js`. Deploy only after JS integration + OOS validation.
-
----
-
-### 🔬 REGIME::European+LOW → PUT · 15m
-*Most invariant edge in the entire study — fragility 0.002*
-
-| Stat | Value |
-|------|-------|
-| **Win Rate** | **97.7%** |
-| **N** | **3,940** |
-| Beat PUT baseline by | +33.5pp above PUT null (64.2%) |
-| Wilson CI [lo, hi] | [97.2%, 98.1%] |
-| p-value | **< 0.0001** |
-| Walk-fwd Train WR | 97.0% (N=1,998) |
-| Walk-fwd Test WR | **98.4%** (N=1,942) ✅ improves on test |
-| Decay | **+0.014** — no decay |
-| Fragility | **0.002** — effectively invariant (lowest in full study) |
-| Confidence score | 0.835 (T1) |
-
-**Gate:** `session = European (02:00–08:00 UTC-5)` AND `vol_regime = LOW`  
-*LOW regime = ATR-14 in the lowest tercile for that asset over a rolling window. Proxy: `bb_width_bps < 33rd-percentile` per asset.*
-
-**Why it works:** In European session low-volatility bars the structural DOWN bias (64.2% baseline) is further reinforced by the compressed regime — squeeze dynamics and session-start mean-reversion both favor continuation of the flat/drift. Price has no momentum to break upward.
-
-**Spread robustness:** SPREAD perturbation actually **improves** WR to 98.1% (+0.4pp) — the edge tightens under slippage.  
-**Deployment blocker:** Requires per-asset rolling ATR-14 tercile classification (LOW/MED/HIGH) in bot candle flow.  
-**Suggested sizing:** T1 — 2.0% risk per trade once JS-validated.
-
----
-
-### 🔬 REGIME::Asian+LOW → PUT · 15m
-
-| Stat | Value |
-|------|-------|
-| **Win Rate** | **88.5%** |
-| **N** | **7,128** (largest N in the study) |
-| Wilson CI [lo, hi] | from p<.0001 table |
-| Walk-fwd Test WR | **92.3%** (N = 2,138, decay **+0.069** — improves on test) |
-| Fragility | **0.010** (low — invariant) |
-| Confidence score | 0.802 (T1) |
-
-**Gate:** `session = Asian (17:00–02:00 UTC-5)` AND `vol_regime = LOW`
-
-**Note:** largest sample in the study by count (N=7,128) — the Asian session has the most bars + LOW vol is most common there. WR improvement on test fold (+0.069) is the largest positive test-set improvement in the top 12 edges.
-
-**Deployment blocker:** same ATR-14 tercile classification as European+LOW.  
-**Suggested sizing:** T1 — 2.0% risk per trade once JS-validated.
-
----
-
-### 🔬 REGIME::American+LOW → PUT · 15m
-
-| Stat | Value |
-|------|-------|
-| **Win Rate** | **95.7%** |
-| **N** | **6,039** |
-| Walk-fwd Test WR | **92.4%** (decay **−0.068** — modest decay but still >90%) |
-| Fragility | **0.006** (low — invariant) |
-| Confidence score | 0.796 (T2 in report — moderate decay) |
-
-**Gate:** `session = American (08:00–17:00 UTC-5)` AND `vol_regime = LOW`
-
-**Note:** −0.068 test decay is the only caution here — the edge is real but the WR compresses on OOS. Use T2 sizing (1.0%) until N ≥ 500 fresh bars confirm > 88%.
-
-**Deployment blocker:** same ATR-14 tercile classification.  
-**Suggested sizing:** T2 — 1.0% risk per trade initially.
+> ⚠️ **NOT JS-validated** — WRs are from Python walk-forward in `ml_edge_report.md`. Deploy only after JS integration + OOS validation.
 
 ---
 

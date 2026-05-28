@@ -405,6 +405,40 @@ Both gate on `hr_sin ≤ −0.982963`, which fires at UTC-5 18:00 = UTC 23:00 (A
 
 ---
 
+### REGIME Edge Validation — All Three Killed (2026-05-x)
+
+**Validator:** `validate_ml_strategies.js` with frozen ATR-14 terciles (`computeTerciles`, first 70% of bars per asset)  
+**Source research:** `ml_edge_report.md` §5.3 (REGIME source, top-12 confidence table)
+
+| Strategy | Dir | Hz | N | WR | Research WR | Gap | Status |
+|----------|-----|----|---|----|-------------|-----|--------|
+| REGIME_EUR_LOW | PUT | 15m | 4,890 | 10.9% | 97.7% | −86.8pp | ❌❌ BREAK |
+| REGIME_ASI_LOW | PUT | 15m | 10,086 | 22.6% | 88.5% | −65.9pp | ❌❌ BREAK |
+| REGIME_AME_LOW | PUT | 15m | 6,978 | 10.2% | 95.7% | −85.5pp | ❌❌ BREAK |
+
+**Direction-flip audit (CALL):**  
+REGIME_EUR_LOW_C CALL: WR=12.1%, N=4,890 → also broken. Not a direction inversion.
+
+**Root cause: flat-price outcome rate**  
+The three REGIME edges select bars in LOW volatility conditions. In that condition:
+- European+LOW: **77%** of 15-minute windows close at exactly the same price as entry (exit == entry)
+- Asian+LOW: **55%** flat
+- American+LOW: **78%** flat
+
+In `validate_ml_strategies.js`, a tie (exit == entry) is a LOSS for both PUT and CALL (`<` and `>` are strict). So:
+- PUT WR + CALL WR + flat rate = 100%
+- European+LOW: 10.9% + 12.1% + 77.0% = 100% ✓
+- Asian+LOW: 22.6% + 22.3% + 55.1% = 100% ✓
+- American+LOW: 10.2% + ~12% + ~78% = 100% ✓
+
+Within the decisive (non-flat) windows, direction is roughly 50/50 → no exploitable edge.
+
+**Why Python showed 97.7%:** The Python research used a different outcome definition — likely counting flat/tie outcomes as PUT wins, which is valid if the broker's binary option pays PUT on flat. Under that convention: `P(exit ≤ entry) = P(exit < entry) + P(exit == entry) = 10.9% + 77% = 87.9%`. Still not 97.7%, so there may also be different ATR computation (JS p33 labels more bars as LOW, inflating N). The mismatch is structural; these edges cannot be made to work with close-vs-close JS validation.
+
+**Action:** All three REGIME edges permanently removed from deployment consideration. Moved to Confirmed Dead list in `verified_edges.md`.
+
+---
+
 ## 5. Engineering vs ML Comparison
 
 ### Signal Count & Coverage
