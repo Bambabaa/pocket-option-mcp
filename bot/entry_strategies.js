@@ -22,43 +22,9 @@
 
 const ENTRY_STRATEGIES = [
 
-  // ─── T1-CALL: Sweep-Low + Bullish OB (SMC confluence) ─────────────────────
-  // Train: 96.3% n=27  |  Test: too small (n=7) — flagged for live data growth
-  // 15m: WR=97.1% n=34  exp=+1.626 ATR  PF=179  p<0.0001
-  // Best: 5m WR=100%, 30m exp=+1.82 ATR — strong across all horizons
-  // SMC: PURE — liquidity grab below prior low followed by a bullish OB pattern
-  // ⚠️  Sample-limited (N=34). Size at T2 risk until N >= 100 live samples.
-  {
-    name:      'T1_SMC_SWEEP_LOW_BULL_OB',
-    direction: 'CALL',
-    thresholds: {},
-    gates: [
-      { label: 'sweep_low',  fn: (ind, feat) => feat.sweep_low === true },
-      { label: 'bull_ob',    fn: (ind, feat) => feat.bull_ob   === true },
-    ],
-    reason: (ind, feat) =>
-      `[T1-CALL] sweep_low=${feat.sweep_low} bull_ob=${feat.bull_ob}` +
-      ` sweep_dist_atr=${feat.sweep_dist_down_atr?.toFixed(2)}`,
-  },
-
-  // ─── T1-PUT: Sweep-High + Bearish OB ──────────────────────────────────────
-  // Train: 93.3% n=30  |  Test: too small (n=7)
-  // 15m: WR=86.5% n=37  exp=+1.693 ATR  PF=29.7  p<0.0001
-  // Best: 5m WR=100%, 30m exp=+2.07 ATR
-  // SMC: PURE — liquidity grab above prior high then bearish OB rejection
-  // ⚠️  Same sample caveat as the bullish twin.
-  {
-    name:      'T1_SMC_SWEEP_HIGH_BEAR_OB',
-    direction: 'PUT',
-    thresholds: {},
-    gates: [
-      { label: 'sweep_high', fn: (ind, feat) => feat.sweep_high === true },
-      { label: 'bear_ob',    fn: (ind, feat) => feat.bear_ob   === true },
-    ],
-    reason: (ind, feat) =>
-      `[T1-PUT] sweep_high=${feat.sweep_high} bear_ob=${feat.bear_ob}` +
-      ` sweep_dist_atr=${feat.sweep_dist_up_atr?.toFixed(2)}`,
-  },
+  // T1_SMC_SWEEP_LOW_BULL_OB  — DELETED: look-ahead artefact. Research bull_ob used close[t+1].
+  //   Validated WR=53.6% N=69 (CALL). See validation_report.md §8.
+  // T1_SMC_SWEEP_HIGH_BEAR_OB — DELETED: same look-ahead. Validated WR=45.7% N=81 (PUT). See §8.
 
   // ─── T1-CALL: Extreme Z-Score Reversion (-3σ below EMA20) ─────────────────
   // Train: 64.3% n=406  |  Test: 55.2% n=87   decay=-0.10 ATR ✅ stable
@@ -188,12 +154,12 @@ const ENTRY_STRATEGIES = [
       ` break_strength_up=${feat.break_strength_up?.toFixed(2)}`,
   },
 
-  // ─── T2-CALL: Fade Fresh Down-Breakout (persist == 1) ─────────────────────
-  // 15m: WR=56.5% n=377  exp=+0.200 ATR  PF=1.50  p<0.001
-  // Same logic as the up-fade; down-side reversion is structurally stronger
-  // (see report §4.2) but absolute expectancy is similar.
+  // ─── T3-CALL: Fade Fresh Down-Breakout (persist == 1)  [DEMOTED T2→T3] ───────
+  // 15m: WR=52.2% n=377  exp=+0.200 ATR  PF=1.50  p=0.28 (not significant)
+  // Demoted by v2 validation — edge does NOT mirror the up-break fade (WR 52% vs T2_UP WR 57%).
+  // Keep at T3 (0.5% risk) pending ≥ 300 fresh OOS samples. See validation_report.md §8.
   {
-    name:      'T2_FADE_FRESH_DOWN_BREAK',
+    name:      'T3_FADE_FRESH_DOWN_BREAK',
     direction: 'CALL',
     thresholds: {
       persist_match: 1,

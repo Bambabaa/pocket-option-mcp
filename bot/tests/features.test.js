@@ -264,9 +264,10 @@ test('regime — RANGING when bb_w and atr both well below their means', () => {
         const atr  = 0.001 + (i % 2 === 0 ? 0.0002 : -0.0002);
         buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: atr, bb_width_bps: bb_w }, s);
     }
-    // bb_w=10 → z=(10−20)/2=−5.0 < 0; atr=0.0003 → z=(0.0003−0.001)/0.0002=−3.5 < 0
-    // slope5 of last 5 bb_widths ≈ 0 (alternating) → not VOL_EXPANSION
-    const f = buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.0003, bb_width_bps: 10 }, s);
+    // bb_w=18 → z=(18−20)/2=−1.0; atr=0.0008 → z=(0.0008−0.001)/0.0002=−1.0
+    // Both z-scores < 0 but NOT both < -1.5 → DEAD_MARKET rule does not fire
+    // adx=null → COMPRESSION/TRENDING rules skip; falls through to RANGING default
+    const f = buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.0008, bb_width_bps: 18 }, s);
     assert.strictEqual(f.regime, 'RANGING', `expected RANGING, got ${f.regime}`);
 });
 
@@ -277,12 +278,12 @@ test('regime — VOL_EXPANSION when bb_w rising and well above mean', () => {
         const bb_w = 20 + (i % 2 === 0 ? 2 : -2);
         buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.001, bb_width_bps: bb_w }, s);
     }
-    // 5 monotonically rising bars → slope5 > 0
+    // 5 monotonically rising bars — bb_w AND atr both rise → slope5 > 0 for both
     for (let i = 0; i < 5; i++) {
-        buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.001, bb_width_bps: 22 + i }, s);
+        buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.001 + (i + 1) * 0.0003, bb_width_bps: 22 + i }, s);
     }
-    // bb_w=40 → z >> 0.5, slope5 = 1.0 > 0 → VOL_EXPANSION
-    const f = buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.001, bb_width_bps: 40 }, s);
+    // bb_w=40 → z >> 1.0; atr_slope5 > 0 (strictly rising ATR over last 5 bars) → VOL_EXPANSION
+    const f = buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.003, bb_width_bps: 40 }, s);
     assert.strictEqual(f.regime, 'VOL_EXPANSION', `expected VOL_EXPANSION, got ${f.regime}`);
 });
 
@@ -308,17 +309,18 @@ test('T1_TRANSITION — regime_prev=RANGING + regime=VOL_EXPANSION fires on same
         const atr  = 0.001 + (i % 2 === 0 ? 0.0002 : -0.0002);
         buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: atr, bb_width_bps: bb_w }, s);
     }
-    // Force state into RANGING on this bar (store it as regime_prev for the next)
-    const ranging = buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.0003, bb_width_bps: 10 }, s);
+    // Force state into RANGING on this bar: z-scores negative but not both < -1.5,
+    // adx=null → no COMPRESSION/TRENDING → falls through to RANGING default
+    const ranging = buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.0008, bb_width_bps: 18 }, s);
     assert.strictEqual(ranging.regime, 'RANGING', `RANGING bar: got ${ranging.regime}`);
 
-    // 5 rising bb_w bars to get positive slope5
+    // 5 rising bb_w AND atr bars so atr_slope5 > 0 for the VOL_EXPANSION bar
     for (let i = 0; i < 5; i++) {
-        buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.001, bb_width_bps: 22 + i }, s);
+        buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.001 + (i + 1) * 0.0003, bb_width_bps: 22 + i }, s);
     }
     // VOL_EXPANSION bar — whatever the most recent regime_prev was, the KEY assertion
     // is that the NEXT bar after a VOL_EXPANSION sees regime_prev=VOL_EXPANSION
-    const vol_exp = buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.001, bb_width_bps: 40 }, s);
+    const vol_exp = buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.003, bb_width_bps: 40 }, s);
     assert.strictEqual(vol_exp.regime, 'VOL_EXPANSION', `VOL_EXPANSION bar: got ${vol_exp.regime}`);
 
     // The T1_TRANSITION strategy fires when BOTH gates are true on the SAME bar.
@@ -330,11 +332,11 @@ test('T1_TRANSITION — regime_prev=RANGING + regime=VOL_EXPANSION fires on same
         const atr  = 0.001 + (i % 2 === 0 ? 0.0002 : -0.0002);
         buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: atr, bb_width_bps: bb_w }, s2);
     }
-    // Lock in RANGING as the previous regime
-    buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.0003, bb_width_bps: 10 }, s2);
-    // Now feed 5 rising bb bars (stored into ring only, don't care about their regime)
+    // Lock in RANGING as the previous regime (z-scores negative but not both < -1.5)
+    buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.0008, bb_width_bps: 18 }, s2);
+    // Now feed 5 rising bb_w AND atr bars so atr_slope5 > 0 for the VOL_EXPANSION bar
     for (let i = 0; i < 5; i++) {
-        buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.001, bb_width_bps: 22 + i }, s2);
+        buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.001 + (i + 1) * 0.0003, bb_width_bps: 22 + i }, s2);
     }
     // state.regime_prev is whatever the 5th rising bar produced.
     // To guarantee we land on a bar where regime_prev was set by the RANGING bar,
@@ -356,7 +358,7 @@ test('session — UTC hour to session mapping', () => {
     assert.strictEqual(b(4).session,  'Asian',    'UTC 04:00 → Asian');
     assert.strictEqual(b(9).session,  'European', 'UTC 09:00 → European');
     assert.strictEqual(b(15).session, 'American', 'UTC 15:00 → American');
-    assert.strictEqual(b(23).session, 'Off',      'UTC 23:00 → Off');
+    assert.strictEqual(b(23).session, 'Asian',    'UTC 23:00 → Asian');
 
     const bNull = buildFeatures({ open: 1.0, close: 1.0, high: 1.001, low: 0.999, atr_14: 0.002, bb_width_bps: 20 }, s);
     assert.strictEqual(bNull.session, null, 'no timestamp → null session');
