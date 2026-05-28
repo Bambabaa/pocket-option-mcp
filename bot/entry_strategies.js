@@ -20,7 +20,7 @@
 //  so it can safely render the firing values for the trade log.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const ENTRY_STRATEGIES = [
+const ENTRY_STRATEGIES = [
 
   // ─── T1-CALL: Sweep-Low + Bullish OB (SMC confluence) ─────────────────────
   // Train: 96.3% n=27  |  Test: too small (n=7) — flagged for live data growth
@@ -257,7 +257,7 @@ const TIER_RISK = {
   T3: 0.005,   // 0.5%
 };
 
-export function routeEntry(ind, feat) {
+function routeEntry(ind, feat) {
   for (const strat of ENTRY_STRATEGIES) {
     let allPassed = true;
     const failed = [];
@@ -284,6 +284,8 @@ export function routeEntry(ind, feat) {
   }
   return null;
 }
+
+module.exports = { ENTRY_STRATEGIES, routeEntry };
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  FEATURE BUILDER REFERENCE — what `feat` must contain
