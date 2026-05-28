@@ -8,8 +8,173 @@
 // Evaluated top-to-bottom — first strategy whose every gate returns true fires.
 // Gate fn signature: (ind, feat, t) => boolean
 //
+// Feature engineering is self-contained below — no external feature imports.
+//
 
-const { createAssetState, buildFeatures } = require('./features');
+// ── Math helpers ──────────────────────────────────────────────────────────────
+
+function ring(arr, val, maxLen) {
+    arr.push(val);
+    if (arr.length > maxLen) arr.shift();
+}
+
+function updateEMA(prev, close, period) {
+    if (prev == null) return close;
+    const k = 2 / (period + 1);
+    return close * k + prev * (1 - k);
+}
+
+function logRet(c1, c0) {
+    if (c0 == null || c1 == null || c0 <= 0 || c1 <= 0) return null;
+    return Math.log(c1 / c0);
+}
+
+function mean(arr) {
+    if (!arr || !arr.length) return null;
+    return arr.reduce((s, v) => s + v, 0) / arr.length;
+}
+
+function std(arr, mu) {
+    if (!arr || arr.length < 2) return null;
+    const m = (mu !== undefined) ? mu : mean(arr);
+    if (m == null) return null;
+    return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length);
+}
+
+// Least-squares slope of the last n values (Δvalue per bar)
+function slope(arr, n) {
+    const w = arr.slice(-n);
+    const L = w.length;
+    if (L < 2) return null;
+    let sx = 0, sy = 0, sxy = 0, sx2 = 0;
+    for (let i = 0; i < L; i++) {
+        sx  += i;  sy  += w[i];
+        sxy += i * w[i];  sx2 += i * i;
+    }
+    const denom = L * sx2 - sx * sx;
+    if (Math.abs(denom) < 1e-15) return 0;
+    return (L * sxy - sx * sy) / denom;
+}
+
+// ── Per-asset rolling state ───────────────────────────────────────────────────
+
+function createAssetState() {
+    return {
+        diffs:         [],   // (close − ema20) per bar, max 50  → z_close_ema20
+        bb_widths:     [],   // bb_width_bps per bar, max 50      → bb_w_z20/slope
+        ranges:        [],   // (high − low) per bar, max 20      → range_expansion
+        closes:        [],   // close prices, max 20              → ret_1 / ret_6
+        highs:         [],   // prior bar highs, max 20           → persist_above_break
+        ema20:         null, // running EMA(20) scalar
+        persist_above: 0,    // bars in a row with close > prior_high_20
+    };
+}
+
+// ── Feature builder ───────────────────────────────────────────────────────────
+//
+// Call once per closed bar, per asset. Mutates `state` in-place.
+// Returns a `feat` object with every field referenced by the 9 verified edges.
+//
+// Indicator field names follow the Indicators-standard (indicators.js canon):
+//   currentPrice / lastCandle[1/3/4], atr_14, bb_width_bps
+
+function buildFeatures(ind, state) {
+    const close = ind.close ?? ind.currentPrice;
+    if (close == null) return null;
+
+    const lc   = ind.lastCandle ?? null;
+    const open  = ind.open  ?? (lc ? lc[1] : null) ?? close;
+    const high  = ind.high  ?? (lc ? lc[3] : null) ?? close;
+    const low   = ind.low   ?? (lc ? lc[4] : null) ?? close;
+    const atr   = ind.atr_14       ?? null;
+    const bb_w  = ind.bb_width_bps ?? null;
+
+    const feat = {};
+
+    // ── Candle anatomy (current bar — no ring needed) ─────────────────────────
+    const body  = Math.abs(close - open);
+    const range = high - low;
+
+    feat.is_bear_bar = close < open;
+
+    if (atr != null && atr > 0) {
+        feat.body_atr        = body  / atr;
+        feat.range_atr       = range / atr;
+        feat.signed_body_atr = (close - open) / atr;
+    } else {
+        feat.body_atr = feat.range_atr = feat.signed_body_atr = null;
+    }
+
+    // ── EMA20 + z-score of (close − ema20) ────────────────────────────────────
+    state.ema20    = updateEMA(state.ema20, close, 20);
+    const diff     = close - state.ema20;
+
+    if (state.diffs.length >= 20) {
+        const mu    = mean(state.diffs);
+        const sigma = std(state.diffs, mu);
+        feat.z_close_ema20 = (sigma != null && sigma > 1e-10) ? (diff - mu) / sigma : 0;
+    } else {
+        feat.z_close_ema20 = null;
+    }
+    feat.dist_ema20_atr = (atr != null && atr > 0) ? diff / atr : null;
+    ring(state.diffs, diff, 50);
+
+    // ── BB width z-score + slope (computed BEFORE pushing current value) ───────
+    if (bb_w != null && state.bb_widths.length >= 20) {
+        const mu    = mean(state.bb_widths);
+        const sigma = std(state.bb_widths, mu);
+        feat.bb_w_z20    = (sigma != null && sigma > 1e-10) ? (bb_w - mu) / sigma : 0;
+        feat.bb_w_slope5 = slope(state.bb_widths, 5);
+    } else {
+        feat.bb_w_z20 = feat.bb_w_slope5 = null;
+    }
+    if (bb_w != null) ring(state.bb_widths, bb_w, 50);
+
+    // ── Range expansion vs prior 20-bar mean (BEFORE pushing current) ─────────
+    if (state.ranges.length >= 20) {
+        const mu = mean(state.ranges);
+        feat.range_expansion = (mu != null && mu > 1e-12) ? range / mu : null;
+    } else {
+        feat.range_expansion = null;
+    }
+    ring(state.ranges, range, 20);
+
+    // ── Log returns (BEFORE pushing current close) ────────────────────────────
+    const prev = state.closes;
+    feat.ret_1 = prev.length >= 1 ? logRet(close, prev[prev.length - 1]) : null;
+    feat.ret_6 = prev.length >= 6 ? logRet(close, prev[prev.length - 6]) : null;
+    ring(state.closes, close, 20);
+
+    // ── Breakout persistence (BEFORE pushing current high) ────────────────────
+    feat.persist_above_break = 0;
+    feat.break_strength_up   = 0;
+    if (state.highs.length >= 20) {
+        const prior_high = Math.max(...state.highs);
+        if (close > prior_high) {
+            state.persist_above++;
+        } else {
+            state.persist_above = 0;
+        }
+        feat.persist_above_break = state.persist_above;
+        feat.break_strength_up   = (close > prior_high && atr != null && atr > 0)
+            ? (close - prior_high) / atr : 0;
+    }
+    ring(state.highs, high, 20);
+
+    // ── Session tag (UTC windows) ─────────────────────────────────────────────
+    const ts = (lc && lc[0] != null) ? lc[0] : ind.timestamp;
+    if (ts != null) {
+        const tsSec = ts > 1e12 ? Math.floor(ts / 1000) : ts;
+        const h = new Date(tsSec * 1000).getUTCHours();
+        if      (h >= 22 || h < 7)  feat.session = 'Asian';
+        else if (h < 13)             feat.session = 'European';
+        else                         feat.session = 'American';
+    } else {
+        feat.session = null;
+    }
+
+    return feat;
+}
 
 const STRATEGIES = [
 
