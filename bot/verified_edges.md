@@ -59,10 +59,14 @@
 | Research WR | 74.7% — **exact match ✅** |
 | z-score | 12.05 |
 | p-value | **< 0.0001** |
-| Walk-fwd decay | −13.8pp (moderate — size at 60% initially) |
+| Walk-fwd Train WR | 77.0% |
+| Walk-fwd Test WR | 63.2% |
+| Walk-fwd decay | −13.8pp ⚠️ moderate — monitor; size at 60% initially |
 
 **Gates:** `range_atr > 0.043 AND signed_body_atr ≤ −1.302 AND atr_14 > 0.000127 AND range_atr > 2.794`  
-*Extreme bearish spike candle: body ≥ 1.3×ATR (negative/bearish) AND total range ≥ 2.79×ATR. Only true exhaustion reversal bars fire. `range_atr > 2.79` is the binding gate.*
+*Extreme bearish candle (body ≥ 1.3×ATR, strongly negative) with massive range (≥2.79×ATR) — exhaustion reversal. `range_atr > 2.79` is the binding gate — only true spike/momentum exhaustion bars fire.*
+
+**⚠️ Implementation note:** `feat.signed_body_atr = (close − open) / atr` must be computed with sign (negative = bearish). `features_ml.js` line 177. Without this fix the gate can never fire (unsigned `body_atr` is always ≥ 0).
 
 **Best conditions:**
 
@@ -75,9 +79,8 @@
 | MED vol regime | 75.4% | 65 |
 | LOW vol regime | 67.3% | 49 |
 
-**Best assets:** CADJPY 75.0% (N=20) · AUDJPY 75.0% (N=24) · USDJPY 66.7% (N=27)  
-**Works across all sessions and regimes** — most robust edge in the set.  
-**Note:** `signed_body_atr` fix was required (features_ml.js line 177). Unsigned body_atr would never fire this gate.
+**Best assets:** CADJPY 75.0% (N=20) · AUDJPY 75.0% (N=24) · EURCHF · USDJPY 66.7% (N=27) — JPY crosses + EURCHF  
+**Works across all sessions and regimes** — most robust session-agnostic edge in the set.
 
 **Risk sizing:** T1 — 2.0% per trade (reduce to 1.0% until N ≥ 300 fresh OOS)
 
@@ -264,6 +267,45 @@
 
 ---
 
+### T3 · STC_COMPRESSION_BREAKDOWN · PUT · 15m (20m also valid)
+
+| Stat | Value |
+|------|-------|
+| **Test Win Rate** | **93.6% @ 15m · 89.4% @ 20m · 87.2% @ 10m** |
+| **N (test fold)** | 47 |
+| N (combined) | 67 (train=20, test=47) |
+| Wilson CI lo95 | **77.4%** (test fold) |
+| p-value | **< 0.001** |
+| Validation method | **70/30 chronological walk-forward** — train WR=80.0%, test WR improved |
+| Fragility score | 0.672 (moderate — session concentrated) |
+| Dataset | `NON_OTC_ML__Report.md` — 21 FX pairs, 8,211 bars, May 20–23 2026 |
+
+**Gates:**
+```
+STC_value > 75              (Schaff cycle overbought — trend exhausted)
+PSAR_is_bullish = 0         (bearish PSAR — trend already turned)
+ATR_pct < 0.20              (volatility compressed)
+BB_upper < Keltner_upper    (inside the squeeze)
+```
+*Compression-breakdown trap: STC overbought creates false trend continuation signal while PSAR + vol compression indicate quiet reversal already underway. Breakdown resolves down.*
+
+**Best conditions:**
+
+| Condition | WR | N |
+|-----------|----|----|
+| **Asian session** | **100.0%** | 10 |
+| American session | 57.1% | 7 |
+| **15m horizon** | **93.6%** | 47 |
+| 20m horizon | 89.4% | 47 |
+
+**Best assets:** EURCHF · GBPCHF · CHF pairs generally (lower vol → stronger compression patterns)  
+**Deploy:** Asian session only. American session WR insufficient (57.1% not above 54.05% floor with confidence).  
+**Cross-horizon stability:** All 3 horizons above 87% — strongest cross-horizon consistency in the entire set.  
+**Note:** `keltner_upper` not yet computed in `indicators.js` — needs implementation before bot deployment.  
+**Risk sizing:** T3 — 0.5% per trade until N ≥ 200 fresh OOS signals
+
+---
+
 ## 🚫 Confirmed Dead — Do Not Deploy
 
 | Strategy | Reason | Validated WR |
@@ -286,10 +328,118 @@
 | `T3_FADE_FRESH_DOWN_BREAK` | Demoted T2→T3 — WR=52.2%, p=0.28 (not significant) | N ≥ 300 fresh, p < 0.05 |
 | `T2_ZSCORE_LOW_2SIG` | Marginal — WR=54.3%, p=2.16e-2 | Longer data window needed |
 | `T2_LOWER_WICK_GROWTH_2X` | Marginal — WR=54.7%, p=5.37e-2 | Longer data window needed |
+| `DI_SQUEEZE_BREAKDOWN` (PUT 10m) | Near-miss — Train 75.6% N=45, Test **75.0%** N=20, CI lo=53.1% (just below 54.05% floor) | N ≥ 50 test fold on fresh data — consistent train/test WR is promising |
 
 ---
 
-## 🏆 The Golden Hour
+## ⏳ Infrastructure-Blocked — Research-Validated, Pending ML Pipeline
+
+These edges passed **full 70/30 chronological walk-forward validation** inside `ml_edge_report.md` (v2 FX Rebuild, 51,813 bars, 13 pairs, May 12–26 2026) but cannot fire in the current JS-only bot — they require either:
+- ML **vol-regime classification** (LOW/MED/HIGH ATR-14 tercile per asset), or
+- **LSTM inference** at runtime
+
+They are listed here as the highest-priority deployment targets once the ML pipeline is wired into the candle flow.
+
+> ⚠️ **NOT JS-validated** — WRs are from Python walk-forward in the research report. Not tested via `validate_ml_strategies.js`. Deploy only after JS integration + OOS validation.
+
+---
+
+### 🔬 REGIME::European+LOW → PUT · 15m
+*Most invariant edge in the entire study — fragility 0.002*
+
+| Stat | Value |
+|------|-------|
+| **Win Rate** | **97.7%** |
+| **N** | **3,940** |
+| Beat PUT baseline by | +33.5pp above PUT null (64.2%) |
+| Wilson CI [lo, hi] | [97.2%, 98.1%] |
+| p-value | **< 0.0001** |
+| Walk-fwd Train WR | 97.0% (N=1,998) |
+| Walk-fwd Test WR | **98.4%** (N=1,942) ✅ improves on test |
+| Decay | **+0.014** — no decay |
+| Fragility | **0.002** — effectively invariant (lowest in full study) |
+| Confidence score | 0.835 (T1) |
+
+**Gate:** `session = European (02:00–08:00 UTC-5)` AND `vol_regime = LOW`  
+*LOW regime = ATR-14 in the lowest tercile for that asset over a rolling window. Proxy: `bb_width_bps < 33rd-percentile` per asset.*
+
+**Why it works:** In European session low-volatility bars the structural DOWN bias (64.2% baseline) is further reinforced by the compressed regime — squeeze dynamics and session-start mean-reversion both favor continuation of the flat/drift. Price has no momentum to break upward.
+
+**Spread robustness:** SPREAD perturbation actually **improves** WR to 98.1% (+0.4pp) — the edge tightens under slippage.  
+**Deployment blocker:** Requires per-asset rolling ATR-14 tercile classification (LOW/MED/HIGH) in bot candle flow.  
+**Suggested sizing:** T1 — 2.0% risk per trade once JS-validated.
+
+---
+
+### 🔬 REGIME::Asian+LOW → PUT · 15m
+
+| Stat | Value |
+|------|-------|
+| **Win Rate** | **88.5%** |
+| **N** | **7,128** (largest N in the study) |
+| Wilson CI [lo, hi] | from p<.0001 table |
+| Walk-fwd Test WR | **92.3%** (N = 2,138, decay **+0.069** — improves on test) |
+| Fragility | **0.010** (low — invariant) |
+| Confidence score | 0.802 (T1) |
+
+**Gate:** `session = Asian (17:00–02:00 UTC-5)` AND `vol_regime = LOW`
+
+**Note:** largest sample in the study by count (N=7,128) — the Asian session has the most bars + LOW vol is most common there. WR improvement on test fold (+0.069) is the largest positive test-set improvement in the top 12 edges.
+
+**Deployment blocker:** same ATR-14 tercile classification as European+LOW.  
+**Suggested sizing:** T1 — 2.0% risk per trade once JS-validated.
+
+---
+
+### 🔬 REGIME::American+LOW → PUT · 15m
+
+| Stat | Value |
+|------|-------|
+| **Win Rate** | **95.7%** |
+| **N** | **6,039** |
+| Walk-fwd Test WR | **92.4%** (decay **−0.068** — modest decay but still >90%) |
+| Fragility | **0.006** (low — invariant) |
+| Confidence score | 0.796 (T2 in report — moderate decay) |
+
+**Gate:** `session = American (08:00–17:00 UTC-5)` AND `vol_regime = LOW`
+
+**Note:** −0.068 test decay is the only caution here — the edge is real but the WR compresses on OOS. Use T2 sizing (1.0%) until N ≥ 500 fresh bars confirm > 88%.
+
+**Deployment blocker:** same ATR-14 tercile classification.  
+**Suggested sizing:** T2 — 1.0% risk per trade initially.
+
+---
+
+### 🔬 LSTM_LO(15m) → PUT · 15m
+*Highest-confidence edge in the study (conf 0.894)*
+
+| Stat | Value |
+|------|-------|
+| **Win Rate** | **99.0%** |
+| **N** | **2,313** |
+| Walk-fwd Test WR | 99.0% (by construction — LSTM-only test set) |
+| Fragility | **0.001** (effectively zero) |
+
+**Gate:** `LSTM UP-probability ≤ 0.15` → PUT  
+**Deployment blocker:** Requires PyTorch/TensorFlow LSTM inference pipeline at runtime. Not approximable with static indicators.  
+**Note:** CANDLE perturbation causes −0.003 decay (only perturbation that moves the needle at all).
+
+---
+
+### 🔬 HYBRID_DN(15m) → PUT · 15m
+
+| Stat | Value |
+|------|-------|
+| **Win Rate** | **93.6%** |
+| **N** | **282** |
+| Walk-fwd Test WR | 93.6% (by construction) |
+| Fragility | **0.143** ⚠️ brittle (CANDLE perturbation −33.7pp) |
+
+**Gate:** ML ensemble probability ≤ 0.40 AND LSTM probability ≤ 0.40 → PUT  
+**Deployment blocker:** Same LSTM requirement as LSTM_LO.  
+**Caution:** High fragility (0.143) — candle distortion collapses WR to 59.9%. Deploy as confirmation layer only (never standalone).
+
+---
 
 Every confirmed edge spikes at **04:00 UTC** (Tokyo mid-session):
 
@@ -300,6 +450,10 @@ Every confirmed edge spikes at **04:00 UTC** (Tokyo mid-session):
 | T1_ZSCORE_EXTREME_LOW | **78.0%** | 100 |
 | T3_ZSCORE_LOW_1_5SIG | 68.1% | 47 |
 | T2_RANGE_EXPAND_BEAR_BOUNCE | 65.9% | 88 |
+| ML_EDGE_07 ¹ | **72.5%** (Asian session avg) | 142 |
+| STC_COMPRESSION_BREAKDOWN ¹ | **100%** (Asian session avg) | 10 |
+
+¹ *ML edges: per-hour breakdown not computed by validator — Asian session WR shown (04:00 UTC is inside Asian window 22:00–07:00 UTC).*
 
 **If you can only trade one window — trade 04:00 UTC.**
 
@@ -319,4 +473,7 @@ Every confirmed edge spikes at **04:00 UTC** (Tokyo mid-session):
 
 *Source files: `bot/validate_strategies.js` · `bot/validate_ml_strategies.js` · `bot/validation_report.md`*  
 *Feature builders: `bot/features.js` · `bot/features_ml.js`*  
-*Strategy code: `bot/entry_strategies.js` · `bot/ml_only_router.js`*
+*Strategy code: `bot/entry_strategies.js` · `bot/ml_only_router.js`*  
+*Additional research: `bot/NON_OTC_ML__Report.md` (STC_COMPRESSION_BREAKDOWN source)*  
+*Infrastructure-blocked edges source: `bot/ml_edge_report.md` (v2 FX Rebuild — 70 edges, REGIME/LSTM/HYBRID)*  
+*Falsified edges reference: `bot/ML_Edge_Discovery_Report.md` (older OTC study — all edges falsified by NON_OTC_ML §11)*

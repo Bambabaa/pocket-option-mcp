@@ -119,8 +119,44 @@ const STRATEGIES = [
             f => f.macd_line       != null && f.macd_line       >  -9.27073e-05,
             f => f.rsi_14          != null && f.rsi_14          >   61.0254,
             f => f.macd_histogram  != null && f.macd_histogram  <= -2.84941e-06,
-            f => (f.regime === 'MED' || f.regime === 'HIGH'),       // remove LOW vol inversion
-            f => f.session !== 'Asian',                             // remove Asian session inversion
+            f => (f.regime === 'MED' || f.regime === 'HIGH'),
+            f => f.session !== 'Asian',
+        ],
+    },
+
+    // ── REGIME edges — session × vol-regime universals ─────────────────────
+    // Source: ml_edge_report.md §5.3 (REGIME source, confidence 0.835/0.802/0.796)
+    // Gate: session tag + vol_regime = LOW (ATR-14 ≤ per-asset p33 from training window)
+    // These were never JS-validated before — adding now.
+
+    {
+        name: 'REGIME_EUR_LOW', direction: 'PUT', horizon: '15m', barsAhead: 3,
+        researchWR: 0.977, researchN: 3940,
+        walkFwd: { trainWR: 0.970, testWR: 0.984, decay: +0.014 },
+        notes: 'ml_edge_report.md §5.3 #8. Fragility=0.002 (most invariant in study). SPREAD perturb improves +0.4pp.',
+        gates: [
+            f => f.session === 'European',
+            f => f.regime  === 'LOW',
+        ],
+    },
+    {
+        name: 'REGIME_ASI_LOW', direction: 'PUT', horizon: '15m', barsAhead: 3,
+        researchWR: 0.885, researchN: 7128,
+        walkFwd: { trainWR: 0.854, testWR: 0.923, decay: +0.069 },
+        notes: 'ml_edge_report.md §5.3 #12. Largest N in full study. Test WR improves +0.069pp — strongest test-set gain.',
+        gates: [
+            f => f.session === 'Asian',
+            f => f.regime  === 'LOW',
+        ],
+    },
+    {
+        name: 'REGIME_AME_LOW', direction: 'PUT', horizon: '15m', barsAhead: 3,
+        researchWR: 0.957, researchN: 6039,
+        walkFwd: { trainWR: 0.992, testWR: 0.924, decay: -0.068 },
+        notes: 'ml_edge_report.md §5.3 #13. Modest decay -0.068 → size T2 until N≥500 fresh bars confirm >88%.',
+        gates: [
+            f => f.session === 'American',
+            f => f.regime  === 'LOW',
         ],
     },
 ];
