@@ -15,19 +15,55 @@ import mlGate from '../ml-gate.js';
 const { evaluateGate, getStats, recordEvaluation } = mlGate;
 const sqlite3 = sqlite3Module.verbose();
 
-function convertToCSV(signals, model) {
+function determineDirection(sig) {
+  // Infer direction from price position in Bollinger Bands
+  // BB_Deviation < -0.25 (below lower band) → expect CALL (up reversal)
+  // BB_Deviation > 0.25 (above upper band) → expect PUT (down reversal)
+  // Otherwise default to price momentum
+  if (sig.features.BB_Deviation < -0.25) return 'CALL';
+  if (sig.features.BB_Deviation > 0.25) return 'PUT';
+  if (sig.features.STC_Momentum < -5) return 'CALL';
+  if (sig.features.STC_Momentum > 5) return 'PUT';
+  return 'CALL';  // default
+}
+
+function convertToCSV(signals, model, allRows) {
   if (!signals || signals.length === 0) {
-    return 'timestamp,asset,open,high,low,close,bb_upper,bb_lower,cci_20,stc_value,stoch_k,stoch_d,ml_score,stoch_divergence,bb_deviation,stc_momentum,cci_velocity\n';
+    return 'timestamp,asset,open,high,low,close,bb_upper,bb_lower,cci_20,stc_value,stoch_k,stoch_d,ml_score,stoch_divergence,bb_deviation,stc_momentum,cci_velocity,direction,price_5m,outcome_5m,price_10m,outcome_10m,price_15m,outcome_15m,wr_5m,wr_10m,wr_15m\n';
   }
+
+  // Build a map of timestamp → row for quick lookup
+  const rowByTimestamp = new Map();
+  allRows.forEach(r => rowByTimestamp.set(r.timestamp, r));
 
   const headers = [
     'timestamp', 'asset', 'open', 'high', 'low', 'close',
     'bb_upper', 'bb_lower', 'cci_20', 'stc_value', 'stoch_k', 'stoch_d',
-    'ml_score', 'stoch_divergence', 'bb_deviation', 'stc_momentum', 'cci_velocity'
+    'ml_score', 'stoch_divergence', 'bb_deviation', 'stc_momentum', 'cci_velocity',
+    'direction', 'price_5m', 'outcome_5m', 'price_10m', 'outcome_10m', 'price_15m', 'outcome_15m',
+    'wr_5m', 'wr_10m', 'wr_15m'
   ];
 
   const rows = signals.map(sig => {
     const score = model === 'tree' ? sig.tree_score : sig.logreg_score;
+    const direction = determineDirection(sig);
+
+    // Look ahead 1, 2, 3 candles (5m, 10m, 15m)
+    const candle5m = rowByTimestamp.get(sig.timestamp + 300);   // +5 min
+    const candle10m = rowByTimestamp.get(sig.timestamp + 600);  // +10 min
+    const candle15m = rowByTimestamp.get(sig.timestamp + 900);  // +15 min
+
+    // Determine outcomes: win if price moved in expected direction
+    const getOutcome = (futurePrice, dir) => {
+      if (!futurePrice) return 'N/A';
+      const moved = futurePrice > sig.close;
+      return (dir === 'CALL' && moved) || (dir === 'PUT' && !moved) ? 'WIN' : 'LOSS';
+    };
+
+    const outcome5m = getOutcome(candle5m?.close, direction);
+    const outcome10m = getOutcome(candle10m?.close, direction);
+    const outcome15m = getOutcome(candle15m?.close, direction);
+
     return [
       new Date(sig.timestamp * 1000).toISOString(),
       sig.asset,
@@ -46,6 +82,16 @@ function convertToCSV(signals, model) {
       sig.features.BB_Deviation.toFixed(4),
       sig.features.STC_Momentum.toFixed(4),
       sig.features.CCI_Velocity.toFixed(4),
+      direction,
+      candle5m?.close.toFixed(6) ?? 'N/A',
+      outcome5m,
+      candle10m?.close.toFixed(6) ?? 'N/A',
+      outcome10m,
+      candle15m?.close.toFixed(6) ?? 'N/A',
+      outcome15m,
+      (outcome5m === 'WIN' ? 1 : outcome5m === 'LOSS' ? 0 : ''),
+      (outcome10m === 'WIN' ? 1 : outcome10m === 'LOSS' ? 0 : ''),
+      (outcome15m === 'WIN' ? 1 : outcome15m === 'LOSS' ? 0 : ''),
     ];
   });
 
@@ -170,15 +216,29 @@ function runTest() {
 
       console.log('\n═══════════════════════════════════════════════════════════\n');
 
-      // Save approved signals to CSV
-      const treeCSV = convertToCSV(treeApproved, 'tree');
-      const lrCSV = convertToCSV(lrApproved, 'logreg');
+      // Save approved signals to CSV with outcomes
+      const treeCSV = convertToCSV(treeApproved, 'tree', rows);
+      const lrCSV = convertToCSV(lrApproved, 'logreg', rows);
 
       fs.writeFileSync('data/ml-gate-tree-approvals.csv', treeCSV, 'utf-8');
       fs.writeFileSync('data/ml-gate-logreg-approvals.csv', lrCSV, 'utf-8');
 
-      console.log(`✓ Saved ${treeApproved.length} tree approvals to data/ml-gate-tree-approvals.csv`);
-      console.log(`✓ Saved ${lrApproved.length} logreg approvals to data/ml-gate-logreg-approvals.csv\n`);
+      // Calculate win rates
+      const calcWR = (signals) => {
+        const outcomes5 = signals.map(s => {
+          const future = rows.find(r => r.timestamp === s.timestamp + 300);
+          if (!future) return null;
+          const dir = determineDirection(s);
+          return (dir === 'CALL' && future.close > s.close) || (dir === 'PUT' && future.close < s.close) ? 1 : 0;
+        }).filter(o => o !== null);
+        return outcomes5.length > 0 ? (outcomes5.reduce((a, b) => a + b, 0) / outcomes5.length * 100).toFixed(1) : 'N/A';
+      };
+
+      const treeWR5 = calcWR(treeApproved);
+      const lrWR5 = calcWR(lrApproved);
+
+      console.log(`✓ Saved ${treeApproved.length} tree approvals to data/ml-gate-tree-approvals.csv (5m WR: ${treeWR5}%)`);
+      console.log(`✓ Saved ${lrApproved.length} logreg approvals to data/ml-gate-logreg-approvals.csv (5m WR: ${lrWR5}%)\n`);
 
       db.close();
       process.exit(0);
