@@ -360,8 +360,31 @@ if __name__ == "__main__":
     res_real = run_validation(real_feat, "REAL merged-candles-indicators")
     print_report(res_real)
 
-    # ---- save ----
+    # ---- save results ----
     output_path = "data/reversal_gate_results.json"
     with open(output_path, "w") as f:
         json.dump({"synthetic": res_synth, "real": res_real}, f, indent=2, default=str)
-    print(f"\n\nSaved {output_path}")
+    print(f"Saved {output_path}")
+
+    # ---- export trained tree model for bot ----
+    # Re-train final tree on full real dataset for production
+    from sklearn.tree import DecisionTreeClassifier, export_text
+    tree_model = DecisionTreeClassifier(max_depth=5, min_samples_leaf=30,
+                                        class_weight="balanced", random_state=42)
+    X_final = real_feat[FEATURES].values
+    y_final = real_feat[TARGET].astype(int).values
+    tree_model.fit(X_final, y_final)
+
+    # Export tree structure as text rules
+    tree_rules = export_text(tree_model, feature_names=FEATURES)
+    with open("data/tree-model-rules.txt", "w") as f:
+        f.write(tree_rules)
+    print(f"Saved tree-model-rules.txt")
+
+    # Export feature importance
+    importance = {FEATURES[i]: float(tree_model.feature_importances_[i])
+                  for i in range(len(FEATURES))}
+    with open("data/tree-feature-importance.json", "w") as f:
+        json.dump(importance, f, indent=2)
+    print(f"Saved tree-feature-importance.json")
+    print(f"\nDecision Tree ready for bot integration")
