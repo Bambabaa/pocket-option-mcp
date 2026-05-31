@@ -5,14 +5,52 @@
  *
  * Loads EURUSD candles + indicators from agent.db
  * Feeds through ml-gate.evaluateGate()
- * Reports approval rate by model, score distribution, sample decisions
+ * Reports approval rate by model, saves approved signals to CSV
  */
 
 import sqlite3Module from 'sqlite3';
+import fs from 'fs';
 import mlGate from '../ml-gate.js';
 
 const { evaluateGate, getStats, recordEvaluation } = mlGate;
 const sqlite3 = sqlite3Module.verbose();
+
+function convertToCSV(signals, model) {
+  if (!signals || signals.length === 0) {
+    return 'timestamp,asset,open,high,low,close,bb_upper,bb_lower,cci_20,stc_value,stoch_k,stoch_d,ml_score,stoch_divergence,bb_deviation,stc_momentum,cci_velocity\n';
+  }
+
+  const headers = [
+    'timestamp', 'asset', 'open', 'high', 'low', 'close',
+    'bb_upper', 'bb_lower', 'cci_20', 'stc_value', 'stoch_k', 'stoch_d',
+    'ml_score', 'stoch_divergence', 'bb_deviation', 'stc_momentum', 'cci_velocity'
+  ];
+
+  const rows = signals.map(sig => {
+    const score = model === 'tree' ? sig.tree_score : sig.logreg_score;
+    return [
+      new Date(sig.timestamp * 1000).toISOString(),
+      sig.asset,
+      (sig.open ?? sig.close).toFixed(6),
+      (sig.high ?? sig.close).toFixed(6),
+      (sig.low ?? sig.close).toFixed(6),
+      sig.close.toFixed(6),
+      sig.bb_upper.toFixed(6),
+      sig.bb_lower.toFixed(6),
+      sig.cci_20.toFixed(2),
+      sig.stc_value.toFixed(2),
+      sig.stoch_k.toFixed(2),
+      sig.stoch_d.toFixed(2),
+      score.toFixed(6),
+      sig.features.Stoch_Divergence.toFixed(4),
+      sig.features.BB_Deviation.toFixed(4),
+      sig.features.STC_Momentum.toFixed(4),
+      sig.features.CCI_Velocity.toFixed(4),
+    ];
+  });
+
+  return [headers.join(','), ...rows.map(r => r.join(','))].join('\n') + '\n';
+}
 
 function runTest() {
   const db = new sqlite3.Database('data/agent.db', (err) => {
@@ -25,7 +63,11 @@ function runTest() {
       SELECT
         c.timestamp,
         c.asset,
+        c.open,
+        c.high,
+        c.low,
         c.close,
+        c.volume,
         i.bb_upper,
         i.bb_lower,
         i.cci_20,
@@ -83,15 +125,17 @@ function runTest() {
 
         if (result.tree.approved) {
           treeApproved.push({
-            timestamp: row.timestamp,
-            score: result.tree.score,
+            ...row,  // entire row data
+            tree_score: result.tree.score,
+            tree_approved: true,
             features: result.features,
           });
         }
         if (result.logreg.approved) {
           lrApproved.push({
-            timestamp: row.timestamp,
-            score: result.logreg.score,
+            ...row,  // entire row data
+            logreg_score: result.logreg.score,
+            logreg_approved: true,
             features: result.features,
           });
         }
@@ -125,7 +169,16 @@ function runTest() {
       }
 
       console.log('\n═══════════════════════════════════════════════════════════\n');
-      console.log('✓ Test complete. Both real trained models active.\n');
+
+      // Save approved signals to CSV
+      const treeCSV = convertToCSV(treeApproved, 'tree');
+      const lrCSV = convertToCSV(lrApproved, 'logreg');
+
+      fs.writeFileSync('data/ml-gate-tree-approvals.csv', treeCSV, 'utf-8');
+      fs.writeFileSync('data/ml-gate-logreg-approvals.csv', lrCSV, 'utf-8');
+
+      console.log(`✓ Saved ${treeApproved.length} tree approvals to data/ml-gate-tree-approvals.csv`);
+      console.log(`✓ Saved ${lrApproved.length} logreg approvals to data/ml-gate-logreg-approvals.csv\n`);
 
       db.close();
       process.exit(0);
