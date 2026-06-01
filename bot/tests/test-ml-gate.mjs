@@ -15,26 +15,28 @@ import mlGate from '../ml-gate.js';
 const { evaluateGate, getStats, recordEvaluation } = mlGate;
 const sqlite3 = sqlite3Module.verbose();
 
-function determineDirection(sig) {
-  // Infer direction from price position in Bollinger Bands
-  // BB_Deviation < -0.25 (below lower band) → expect CALL (up reversal)
-  // BB_Deviation > 0.25 (above upper band) → expect PUT (down reversal)
-  // Otherwise default to price momentum
-  if (sig.features.BB_Deviation < -0.25) return 'CALL';
-  if (sig.features.BB_Deviation > 0.25) return 'PUT';
-  if (sig.features.STC_Momentum < -5) return 'CALL';
-  if (sig.features.STC_Momentum > 5) return 'PUT';
-  return 'CALL';  // default
+function determineDirection(sig, orderedRows, idxByKey) {
+  // Pure price logic: fade the recent move
+  // recent up → expect down → PUT
+  // recent down → expect up → CALL
+
+  const i = idxByKey.get(`${sig.asset}|${sig.timestamp}`);
+  if (i == null || i < 3) return null;  // not enough history → skip
+
+  const recentMove = sig.close - orderedRows[i - 3].close;
+  if (recentMove === 0) return null;  // flat → ambiguous → skip
+
+  return recentMove > 0 ? 'PUT' : 'CALL';  // fade the recent move
 }
 
-function convertToCSV(signals, model, allRows) {
+function convertToCSV(signals, model, orderedRows, idxByKey) {
   if (!signals || signals.length === 0) {
     return 'timestamp,asset,open,high,low,close,bb_upper,bb_lower,cci_20,stc_value,stoch_k,stoch_d,ml_score,stoch_divergence,bb_deviation,stc_momentum,cci_velocity,direction,price_5m,outcome_5m,price_10m,outcome_10m,price_15m,outcome_15m,wr_5m,wr_10m,wr_15m\n';
   }
 
-  // Build a map of timestamp → row for quick lookup
+  // Build a map of timestamp → row for quick lookup (for future candles)
   const rowByTimestamp = new Map();
-  allRows.forEach(r => rowByTimestamp.set(r.timestamp, r));
+  orderedRows.forEach(r => rowByTimestamp.set(r.timestamp, r));
 
   const headers = [
     'timestamp', 'asset', 'open', 'high', 'low', 'close',
@@ -46,7 +48,7 @@ function convertToCSV(signals, model, allRows) {
 
   const rows = signals.map(sig => {
     const score = model === 'tree' ? sig.tree_score : sig.logreg_score;
-    const direction = determineDirection(sig);
+    const direction = determineDirection(sig, orderedRows, idxByKey);
 
     // Look ahead 1, 2, 3 candles (5m, 10m, 15m)
     const candle5m = rowByTimestamp.get(sig.timestamp + 300);   // +5 min
@@ -122,7 +124,7 @@ function runTest() {
         i.stoch_d
       FROM candles c
       LEFT JOIN indicators i ON c.asset = i.asset AND c.timestamp = i.timestamp
-      WHERE c.asset = 'EURUSD'
+      --WHERE c.asset = 'EURUSD'
       ORDER BY c.timestamp ASC
     `;
 
@@ -216,19 +218,24 @@ function runTest() {
 
       console.log('\n═══════════════════════════════════════════════════════════\n');
 
+      // Build index for robust direction detection
+      const idxByKey = new Map();
+      rows.forEach((r, i) => idxByKey.set(`${r.asset}|${r.timestamp}`, i));
+
       // Save approved signals to CSV with outcomes
-      const treeCSV = convertToCSV(treeApproved, 'tree', rows);
-      const lrCSV = convertToCSV(lrApproved, 'logreg', rows);
+      const treeCSV = convertToCSV(treeApproved, 'tree', rows, idxByKey);
+      const lrCSV = convertToCSV(lrApproved, 'logreg', rows, idxByKey);
 
       fs.writeFileSync('data/ml-gate-tree-approvals.csv', treeCSV, 'utf-8');
       fs.writeFileSync('data/ml-gate-logreg-approvals.csv', lrCSV, 'utf-8');
 
-      // Calculate win rates
+      // Calculate win rates with robust direction detection
       const calcWR = (signals) => {
         const outcomes5 = signals.map(s => {
           const future = rows.find(r => r.timestamp === s.timestamp + 300);
           if (!future) return null;
-          const dir = determineDirection(s);
+          const dir = determineDirection(s, rows, idxByKey);
+          if (!dir) return null;  // skip if direction ambiguous
           return (dir === 'CALL' && future.close > s.close) || (dir === 'PUT' && future.close < s.close) ? 1 : 0;
         }).filter(o => o !== null);
         return outcomes5.length > 0 ? (outcomes5.reduce((a, b) => a + b, 0) / outcomes5.length * 100).toFixed(1) : 'N/A';
