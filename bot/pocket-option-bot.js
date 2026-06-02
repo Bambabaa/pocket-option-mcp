@@ -9,9 +9,9 @@ const sqlite3 = require('sqlite3').verbose();
 const Indicators = require('./indicators');
 const { TradingDatabase, initMcpSchema } = require('./database');
 const { executeOneOrder, syncLiveTradeResultsFromDOM, resetSessionCalibration, getBalanceFromDOM } = require('./scripts/order-executor');
-const { validatePendingSignals } = require('./scripts/validate-signals');
+const { validatePendingSignals } = require('./scripts/validate_ml_signals');
 const CONFIG = require('./config');
-const strategy = require('./strategy');
+const mlGate = require('./ml-gate');
 
 // ============================================================================
 // MCP ORDERS WORKER
@@ -298,6 +298,61 @@ function log(msg, color = 'reset') {
 
     const timestamp = formatTimestamp();
     console.log(`${colors[color]}[${timestamp}] ${message}${colors.reset}`);
+}
+
+function computeDirectionFromRecentMove(asset, candles) {
+    if (!candles || candles.length < 4) return null;
+    // candles: [timestamp, open, close, high, low]
+    const current = candles[candles.length - 1];
+    const threeBack = candles[candles.length - 4];
+    const recentMove = current[2] - threeBack[2]; // close - close
+    if (recentMove === 0) return null; // flat → ambiguous
+    return recentMove > 0 ? 'PUT' : 'CALL'; // fade it
+}
+
+function evaluateMLGate(indicatorData, asset, candles, livePayout) {
+    if (!indicatorData || !indicatorData.close) return null;
+
+    const result = mlGate.evaluateGate(indicatorData, livePayout);
+    if (!result) return null;
+
+    const treeApproved = result.tree?.approved;
+    const lrApproved = result.logreg?.approved;
+
+    // CASCADE: Tree first, then LogReg fallback
+    // If tree approves → use tree (skip logreg)
+    // Else if logreg approves → use logreg
+    // Else → no signal
+    let modelUsed, score;
+
+    if (treeApproved) {
+        modelUsed = 'ML_REVERSAL_GATE_TREE';
+        score = result.tree.score;
+    } else if (lrApproved) {
+        modelUsed = 'ML_REVERSAL_GATE_LOGREG';
+        score = result.logreg.score;
+    } else {
+        return null; // Neither model approved
+    }
+
+    // Direction: fade recent 3-bar move
+    const direction = computeDirectionFromRecentMove(asset, candles);
+    if (!direction) return null; // Not enough history or flat move
+
+    const expectedWR = modelUsed.includes('TREE') ? '84.6%' : '60.7%';
+
+    return {
+        direction,
+        strategyUsed: modelUsed,
+        tier: 1,
+        ml_score: score,
+        ml_model: modelUsed.includes('TREE') ? 'tree' : 'logreg',
+        reasons: [
+            `[ML-GATE] ${modelUsed}`,
+            `Score: ${score.toFixed(4)}, Payout: ${(livePayout * 100).toFixed(1)}%`,
+            `Expected WR @ 15m: ${expectedWR}`,
+        ],
+    };
 }
 
 function shouldProcessAsset(asset) {
@@ -652,8 +707,8 @@ async function processWebSocketMessage(payload, page) {
                     indicators._lastSchaffValues[data.asset] = indicatorData.stc_value ?? null;
                     if (backfilled > 0) log(`   ↩️  Backfilled ${backfilled} historical indicator rows for ${data.asset}`, 'cyan');
 
-                    // Store signal in database if strategy fires
-                    const _signal0 = strategy.evaluate(indicatorData);
+                    // Store signal in database if ML gate approves
+                    const _signal0 = evaluateMLGate(indicatorData, data.asset, STATE.CANDLES[data.asset], 0.80);
                     if (_signal0) {
                         try {
                             await database.insertSignal(data.asset, lastCandle[0], _signal0);
@@ -812,8 +867,8 @@ async function processWebSocketMessage(payload, page) {
                                     }
                                 }
 
-                                // Only insert signals if strategy fires
-                                const _signal = strategy.evaluate(indicatorData);
+                                // Only insert signals if ML gate approves
+                                const _signal = evaluateMLGate(indicatorData, asset, STATE.CANDLES[asset], 0.80);
                                 if (_signal) {
                                     try {
                                         const finalSignals = _signal;
@@ -1036,8 +1091,8 @@ function displayStatus() {
                     // Silently skip if formatting fails
                 }
 
-                // Display signal if strategy fires on current indicator snapshot
-                const _dispSignal = strategy.evaluate(ind);
+                // Display signal if ML gate approves on current indicator snapshot
+                const _dispSignal = evaluateMLGate(ind, asset, STATE.CANDLES[asset], 0.80);
                 if (_dispSignal) {
                     const signalColor = _dispSignal.direction === 'CALL' ? 'green' : 'red';
                     log(`      Signal: ${_dispSignal.direction}`, signalColor);
@@ -1123,23 +1178,20 @@ async function main() {
             setInterval(runResultSync, resultSyncMs);
         }, STATE.SETTINGS.execution?.resultSyncFirstDelayMs ?? 25000);
 
-        // Validation loop: periodically validate signals past expiry → signal_outcomes
+        // Validation loop: periodically validate ML gate signals at 15m horizon
         if (STATE.SETTINGS.enableValidationLoop) {
-            const intervalMs = STATE.SETTINGS.validationLoopIntervalMs || 60000;
+            const intervalMs = STATE.SETTINGS.validationLoopIntervalMs || 300000; // 5 minutes
             const lookAhead = STATE.SETTINGS.lookAheadSeconds || 60;
             const amount = STATE.SETTINGS.tradeAmount || 1;
             const staleH = STATE.SETTINGS.execution?.resultSyncStaleHours ?? 0;
-            log(`   📋 Validation loop: every ${intervalMs / 1000}s, expiry=${lookAhead}s`, 'cyan');
+            log(`   📋 ML validation loop: every ${intervalMs / 1000}s, 15m horizon`, 'cyan');
 
             const runValidation = async () => {
                 try {
                     const options = {
-                        writeQualification: true,
-                        minConsecutiveWinsForTrading: 2,
                         logNoPending: false,
                         staleHours: staleH
                     };
-                    // When system clock is behind signal timestamps, use data time
                     if (typeof database.getMaxSignalTimestamp === 'function') {
                         const maxTs = await database.getMaxSignalTimestamp();
                         const nowSeconds = Math.floor(Date.now() / 1000);
@@ -1149,10 +1201,10 @@ async function main() {
                     }
                     const { validated, skipped, pendingCount } = await validatePendingSignals(database, lookAhead, amount, options);
                     if (validated > 0 || skipped > 0) {
-                        log(`   📊 Validation: ${validated} validated, ${skipped} skipped (pending=${pendingCount})`, 'cyan');
+                        log(`   📊 ML-Validation: ${validated} validated @ 15m, ${skipped} skipped (pending=${pendingCount})`, 'cyan');
                     }
                 } catch (e) {
-                    log(`   ⚠️  Validation loop error: ${e.message}`, 'yellow');
+                    log(`   ⚠️  ML validation error: ${e.message}`, 'yellow');
                 }
             };
             runValidation(); // run once at startup

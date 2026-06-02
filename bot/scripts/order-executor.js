@@ -63,7 +63,16 @@ let _executionLock = Promise.resolve();
 let _sessionCalibrated = { amount: null, expirationSec: null };
 
 /** Prevent double-syncing same DOM row across result-sync cycles (asset_direction_h:m_result). */
-const _syncedDealSignatures = new Set();
+/** Map<signature, insertedAtMs> — entries older than _SIGNATURE_TTL_MS are evicted automatically. */
+const _syncedDealSignatures = new Map();
+const _SIGNATURE_TTL_MS = 20 * 60 * 1000; // 20 min: covers expiry(900s) + grace(60s) + buffer
+
+function _evictExpiredSignatures() {
+    const cutoff = Date.now() - _SIGNATURE_TTL_MS;
+    for (const [sig, ts] of _syncedDealSignatures) {
+        if (ts < cutoff) _syncedDealSignatures.delete(sig);
+    }
+}
 
 async function calibrateTradingPanelIfNeeded(page, { tradeAmount = 1, expirationSec = 60, checkAbort = () => false }) {
     const amt = Math.round(tradeAmount);
@@ -382,7 +391,8 @@ async function placeOrderLive(page, order, execConfig) {
             // Accept pair-only match when UI omits OTC (e.g. "EUR/USD" for eurusd_otc)
             const pairOnlyMatch = (wantNorm.startsWith(gotNorm) && gotNorm.length >= 6) || (gotNorm.startsWith(wantNorm.slice(0, 6)) && wantNorm.length > 6);
             if (wantNorm && !pairOnlyMatch && wantNorm !== gotNorm && !gotNorm.includes(wantNorm) && !wantNorm.includes(gotNorm)) {
-                console.log(`   ⚠️ [EXECUTOR] Wanted ${order.asset}, got "${afterSelect}" - verify trade asset`);
+                console.log(`   ⚠️ [EXECUTOR] Wanted ${order.asset}, got "${afterSelect}" - aborting trade to prevent wrong-asset execution`);
+                return { success: false, error: `Asset mismatch: wanted ${order.asset} got ${afterSelect}` };
             }
 
             // Post-asset-selection wait: chart/trading panel needs time to settle before buttons are visible
@@ -1012,7 +1022,7 @@ async function openClosedTabAndGetDeals(page, limit = 20) {
  */
 async function syncLiveTradeResultsFromDOM(page, database, options = {}) {
     const limit = options.limit ?? 10;
-    const expirySeconds = options.expirySeconds ?? 65;
+    const expirySeconds = options.expirySeconds ?? 900;
     const defaultAmount = options.tradeAmount ?? 1;
     const checkPreempt = typeof options.checkPreempt === 'function' ? options.checkPreempt : () => false;
 
@@ -1074,7 +1084,7 @@ async function syncLiveTradeResultsFromDOM(page, database, options = {}) {
         if (!orderNorm) continue;
         let matchedDeal = null;
         let matchedIdx = -1;
-        const expirySec = options.expirySeconds ?? 65;
+        const expirySec = expirySeconds; // already resolved above — was ?? 65 (wrong for 15m)
         const expectedAmount = options.tradeAmount ?? defaultAmount;
         const orderSignalTs = order.signal_timestamp > 1e12 ? Math.floor(order.signal_timestamp / 1000) : order.signal_timestamp;
         const orderExpectedClose = orderSignalTs + expirySec;
@@ -1112,17 +1122,19 @@ async function syncLiveTradeResultsFromDOM(page, database, options = {}) {
             continue;
         }
         if (matchedDeal.direction && order.direction && matchedDeal.direction.toUpperCase() !== order.direction.toUpperCase()) {
-            console.warn(`   [RESULT-SYNC] ⚠️ Direction mismatch: order ${order.direction} vs deal ${matchedDeal.direction} (order ${order.id} ${order.asset})`);
+            console.warn(`   [RESULT-SYNC] ⚠️ Direction mismatch: order ${order.direction} vs deal ${matchedDeal.direction} (order ${order.id} ${order.asset}) — skipping commit`);
+            continue;
         }
         const dir = (matchedDeal.direction || order.direction || '?').toUpperCase();
         const h = matchedDeal.closeTimeHHMM?.h ?? '?';
         const m = matchedDeal.closeTimeHHMM?.m ?? '?';
         const sig = `${matchedDeal.asset}_${dir}_${h}:${m}_${matchedDeal.result || 'UNKNOWN'}`;
+        _evictExpiredSignatures();
         if (_syncedDealSignatures.has(sig)) {
             console.warn(`   [RESULT-SYNC] ⚠️ Deal already synced in a previous cycle. Waiting for new row to appear.`);
             continue;
         }
-        _syncedDealSignatures.add(sig);
+        _syncedDealSignatures.set(sig, Date.now());
         try {
             usedDealIndices.add(matchedIdx);
             const parsed = matchedDeal;
