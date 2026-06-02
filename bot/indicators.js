@@ -527,6 +527,7 @@ class Indicators {
 
         indicators.lastCandle   = candles[candles.length - 1];
         indicators.currentPrice = indicators.lastCandle[2];
+        indicators.close        = indicators.lastCandle[2];
         indicators.atr_pct      = (indicators.atr_14 != null && indicators.currentPrice)
             ? (indicators.atr_14 / indicators.currentPrice) * 100 : null;
 

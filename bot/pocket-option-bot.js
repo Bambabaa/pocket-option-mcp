@@ -1093,13 +1093,13 @@ function displayStatus() {
             log(`   ${asset}: ${price.price.toFixed(5)} (${price.time})`, 'green');
         });
 
-        log(`\n📊 Indicators:`, 'bright');
+        // log(`\n📊 Indicators:`, 'bright');
         const indicatorAssets = Object.keys(STATE.INDICATORS);
         if (indicatorAssets.length > 0) {
             indicatorAssets.forEach(asset => {
                 const ind = STATE.INDICATORS[asset];
                 if (!ind) return; // Skip if no indicator data
-                log(`   ${asset}:`, 'cyan');
+                // log(`   ${asset}:`, 'cyan');
                 try {
                     const indicatorStr = indicators.formatIndicators(ind);
                     // Ensure indicatorStr is a valid string before logging
@@ -1109,7 +1109,7 @@ function displayStatus() {
                         indicatorStr !== 'Calculating...' &&
                         indicatorStr.trim() !== '' &&
                         !indicatorStr.includes('undefined')) {
-                        console.log(`${colors.reset}[${formatTimestamp()}]       ${indicatorStr}`);
+                        // console.log(`${colors.reset}[${formatTimestamp()}]       ${indicatorStr}`);
                     }
                 } catch (error) {
                     // Silently skip if formatting fails
