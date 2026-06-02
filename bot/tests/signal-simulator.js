@@ -15,8 +15,8 @@ const path = require('path');
 const mlGate = require('../ml-gate');
 const { TradingDatabase } = require('../database');
 
-const AGENT_DB_PATH = path.join(__dirname, '../../agent/data/agent_hist.db');
-const TRADING_DB_PATH = path.join(__dirname, '../../data/trading_data.db');
+const AGENT_DB_PATH = path.join(__dirname, '../../data/trading_data.db');
+const TRADING_DB_PATH = path.join(__dirname, '../../data/test_trading_data.db');
 
 function log(m) { console.log(m); }
 function dbAll(db, sql, params = []) {
