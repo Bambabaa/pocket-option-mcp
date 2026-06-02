@@ -14,6 +14,19 @@ const CONFIG = require('./config');
 const mlGate = require('./ml-gate');
 
 // ============================================================================
+// OTC ASSET BLOCKING
+// Automatically reject any asset with _otc suffix (exotic/emerging pairs)
+// OTC pairs have: wider spreads, lower volume, poorer predictability
+// Test data shows: OTC 46.6% WR vs Major 73.8% WR
+// ============================================================================
+
+function isOtcAsset(asset) {
+    // Defensive: ensure asset is a string before calling .includes()
+    if (!asset || typeof asset !== 'string') return false;
+    return asset.includes('_otc');
+}
+
+// ============================================================================
 // MCP ORDERS WORKER
 // Polls ../data/mcp.db for PENDING manual orders placed via `po trade` and
 // executes them through the same execution path as bot-generated signals.
@@ -313,6 +326,11 @@ function computeDirectionFromRecentMove(asset, candles) {
 function evaluateMLGate(indicatorData, asset, candles, livePayout) {
     if (!indicatorData || !indicatorData.close) return null;
 
+    // Block OTC assets — poor performance (46.6% WR vs 73.8% for majors)
+    if (isOtcAsset(asset)) {
+        return null;
+    }
+
     const result = mlGate.evaluateGate(indicatorData, livePayout);
     if (!result) return null;
 
@@ -357,6 +375,12 @@ function evaluateMLGate(indicatorData, asset, candles, livePayout) {
 
 function shouldProcessAsset(asset) {
     if (!asset) return false;
+
+    // Skip OTC assets entirely
+    if (isOtcAsset(asset)) {
+        return false;
+    }
+
     if (!STATE.SELECTED_ASSETS || STATE.SELECTED_ASSETS.size === 0) return true;
     return STATE.SELECTED_ASSETS.has(asset);
 }
