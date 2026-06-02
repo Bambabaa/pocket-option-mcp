@@ -15,7 +15,7 @@ const path = require('path');
 const mlGate = require('../ml-gate');
 const { TradingDatabase } = require('../database');
 
-const AGENT_DB_PATH = path.join(__dirname, '../../data/agent.db');
+const AGENT_DB_PATH = path.join(__dirname, '../../agent/data/agent_hist.db');
 const TRADING_DB_PATH = path.join(__dirname, '../../data/trading_data.db');
 
 function log(m) { console.log(m); }
@@ -47,7 +47,7 @@ async function main() {
     // PHASE 1: Load all candles + indicators from agent.db
     log('✅ Loading candles + indicators from agent.db...');
     const rows = await dbAll(agentDb, `
-        SELECT c.timestamp, c.asset, c.open, c.high, c.low, c.close, c.volume,
+        SELECT c.timestamp, c.asset, c.open, c.high, c.low, c.close,
                i.bb_upper, i.bb_lower, i.cci_20, i.stc_value, i.stoch_k, i.stoch_d
         FROM candles c
         LEFT JOIN indicators i ON c.asset=i.asset AND c.timestamp=i.timestamp
