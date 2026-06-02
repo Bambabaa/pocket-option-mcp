@@ -34,22 +34,27 @@ What's solid and should be preserved:
 
 ## Why signals may not be firing
 
-### C0 — `indicatorData.close` is never set → 100% of signals blocked
+### C0 — `indicatorData.close` is never set → 100% of signals blocked ✅ FIXED
 
-**Files:** `bot/indicators.js:528-533`, `bot/pocket-option-bot.js:327`, `bot/ml-gate.js:61-62`
+**Files:** `bot/indicators.js:528-534`, `bot/pocket-option-bot.js:327`, `bot/ml-gate.js:61-62`
 
-`calculateAll` sets `indicators.currentPrice = lastCandle[2]` but **never sets
+**Status:** Fixed 2026-06-02. `calculateAll` now sets `indicators.close` at
+`bot/indicators.js:530` (right after `currentPrice`). Verified: 21 unit tests
+pass, and a runtime check confirms `calculateAll(...).close === currentPrice ===
+lastCandle[2]`.
+
+`calculateAll` set `indicators.currentPrice = lastCandle[2]` but **never set
 `indicators.close`**. The entire ML-gate path keys off `.close`:
 
 1. `evaluateMLGate` bails on its first line — `if (!indicatorData || !indicatorData.close) return null;`
 2. `computeKineticFeatures` does the same — `if (!ind || ind.close == null) return null;`,
    and `BB_Deviation = (close - bb_lower) / (bb_upper - bb_lower)` needs it.
 
-So every bar-close / history / display evaluation returns `null`, `insertSignal`
-is never reached, the `signals` table stays empty, and nothing enqueues or
-executes. **This blocks all signal generation.**
+So every bar-close / history / display evaluation returned `null`, `insertSignal`
+was never reached, the `signals` table stayed empty, and nothing enqueued or
+executed. **This blocked all signal generation.**
 
-**Fix (one line) — add after `currentPrice` in `calculateAll`:**
+**Fix applied (one line) — added after `currentPrice` in `calculateAll`:**
 
 ```js
 indicators.close = indicators.lastCandle[2];
@@ -222,6 +227,7 @@ update the conflicting memory; otherwise gate it dynamically.
 
 ## Suggested fix order
 
+0. **C0** — ✅ done (2026-06-02). Unblocks signal generation; nothing else matters until this is in.
 1. **C1** — silently degrading every live signal; highest impact.
 2. **C2** and **C3** — small, contained, clearly wrong.
 3. **M1 / M2** — data-quality of `trades_ordered` (exit price, timestamps).
