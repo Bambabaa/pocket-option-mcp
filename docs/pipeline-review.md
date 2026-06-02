@@ -32,6 +32,45 @@ What's solid and should be preserved:
 
 ---
 
+## Why signals may not be firing
+
+### C0 — `indicatorData.close` is never set → 100% of signals blocked
+
+**Files:** `bot/indicators.js:528-533`, `bot/pocket-option-bot.js:327`, `bot/ml-gate.js:61-62`
+
+`calculateAll` sets `indicators.currentPrice = lastCandle[2]` but **never sets
+`indicators.close`**. The entire ML-gate path keys off `.close`:
+
+1. `evaluateMLGate` bails on its first line — `if (!indicatorData || !indicatorData.close) return null;`
+2. `computeKineticFeatures` does the same — `if (!ind || ind.close == null) return null;`,
+   and `BB_Deviation = (close - bb_lower) / (bb_upper - bb_lower)` needs it.
+
+So every bar-close / history / display evaluation returns `null`, `insertSignal`
+is never reached, the `signals` table stays empty, and nothing enqueues or
+executes. **This blocks all signal generation.**
+
+**Fix (one line) — add after `currentPrice` in `calculateAll`:**
+
+```js
+indicators.close = indicators.lastCandle[2];
+```
+
+`lastCandle[2]` is the close in the `[ts, open, close, high, low]` layout — the
+same value `currentPrice` already uses, and what `BB_Deviation` expects.
+
+#### Secondary blockers (still gate signals even after C0 is fixed)
+
+| # | Cause | Where | Effect |
+|---|---|---|---|
+| S1 | Chart not on 5m → history filtered by `c[0] % 300 === 0` | `:632`, `:647` | <68 candles, `calculateAll` skipped, no signal. **Chart must be 5m.** |
+| S2 | Selected-asset label ≠ WS feed symbol | `:399-405`, `:384-385` | Non-empty `SELECTED_ASSETS` matches nothing → all assets filtered. Empty set (no selection) is safer. |
+| S3 | OTC hard-block (`isOtcAsset`) | `:330`, `:380` | Weekends are mostly OTC → zero signals. (See M3.) |
+| S4 | 68-bar + gate feature warmup (3× CCI, 2× STC) | `indicators.js:572`, `ml-gate.js:82-103` | ~5.7h silent cold start. |
+| S5 | `shouldStore` drops 1-tick flat candles | `:821-826` | Illiquid assets finalize bars/signals late or never. |
+| S6 | 0.85 gate threshold + C1 corruption | `ml-gate.js:33`, see C1 | Suppresses approvals — "few" rather than "none". |
+
+---
+
 ## Critical
 
 ### C1 — ML-gate feature state is corrupted by the 30s display loop
