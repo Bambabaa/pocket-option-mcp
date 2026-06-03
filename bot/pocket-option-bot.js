@@ -439,6 +439,7 @@ const STATE = {
     PRICES: {},
     AUTHENTICATED: false,
     INDICATORS: {},
+    LAST_SIGNAL: {},                // per-asset gate result, computed once at close (display reads this)
     lastIndicatorUpdate: {},        // per-asset intra-bar refresh timestamps
     // ============================================================================
     // BOT SETTINGS —  STRATEGY ONLY (Katie Tutorials / YouTube videos)
@@ -733,6 +734,7 @@ async function processWebSocketMessage(payload, page) {
 
                     // Store signal in database if ML gate approves
                     const _signal0 = evaluateMLGate(indicatorData, data.asset, STATE.CANDLES[data.asset], 0.80);
+                    STATE.LAST_SIGNAL[data.asset] = _signal0 || null;   // cache close-time evaluation (display reads this)
                     if (_signal0) {
                         try {
                             await database.insertSignal(data.asset, lastCandle[0], _signal0);
@@ -893,6 +895,7 @@ async function processWebSocketMessage(payload, page) {
 
                                 // Only insert signals if ML gate approves
                                 const _signal = evaluateMLGate(indicatorData, asset, STATE.CANDLES[asset], 0.80);
+                                STATE.LAST_SIGNAL[asset] = _signal || null;   // cache the one true close-time evaluation (display reads this)
                                 if (_signal) {
                                     try {
                                         const finalSignals = _signal;
@@ -1002,10 +1005,10 @@ async function processWebSocketMessage(payload, page) {
                 }
             }
 
-            // Update indicators periodically (every 30 seconds, tracked per asset)
+            // Update indicators periodically (dynamic: half the candle period, tracked per asset)
             // pushHistory=false: intra-bar refresh must not advance _lastSchaffValues
             if (STATE.CANDLES[asset] && STATE.CANDLES[asset].length >= Indicators.getMinCandles()) {
-                if (!STATE.lastIndicatorUpdate[asset] || Date.now() - STATE.lastIndicatorUpdate[asset] > 30000) {
+                if (!STATE.lastIndicatorUpdate[asset] || Date.now() - STATE.lastIndicatorUpdate[asset] > (STATE.PERIOD * 1000) / 2) {
                     const indicatorData = indicators.calculateAll(asset, STATE.CANDLES[asset], false);
                     if (indicatorData) {
                         STATE.INDICATORS[asset] = indicatorData;
@@ -1115,8 +1118,10 @@ function displayStatus() {
                     // Silently skip if formatting fails
                 }
 
-                // Display signal if ML gate approves on current indicator snapshot
-                const _dispSignal = evaluateMLGate(ind, asset, STATE.CANDLES[asset], 0.80);
+                // Display the cached close-time signal — NEVER re-evaluate the gate here.
+                // Re-evaluating would advance the ml-gate ring buffers (~9x/bar) and corrupt
+                // CCI_Velocity's 2-bar lookback. The gate is computed once per bar at close.
+                const _dispSignal = STATE.LAST_SIGNAL[asset] || null;
                 if (_dispSignal) {
                     const signalColor = _dispSignal.direction === 'CALL' ? 'green' : 'red';
                     log(`      Signal: ${_dispSignal.direction}`, signalColor);
