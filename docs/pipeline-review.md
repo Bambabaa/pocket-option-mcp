@@ -72,44 +72,74 @@ same value `currentPrice` already uses, and what `BB_Deviation` expects.
 | S3 | OTC hard-block (`isOtcAsset`) | `:330`, `:380` | Weekends are mostly OTC → zero signals. (See M3.) |
 | S4 | 68-bar + gate feature warmup (3× CCI, 2× STC) | `indicators.js:572`, `ml-gate.js:82-103` | ~5.7h silent cold start. |
 | S5 | `shouldStore` drops 1-tick flat candles | `:821-826` | Illiquid assets finalize bars/signals late or never. |
-| S6 | 0.85 gate threshold + C1 corruption | `ml-gate.js:33`, see C1 | Suppresses approvals — "few" rather than "none". |
+| S6 | 0.85 gate threshold (C1 corruption now fixed) | `ml-gate.js:33`, see C1 | Suppresses approvals — "few" rather than "none". |
 
 ---
 
 ## Critical
 
-### C1 — ML-gate feature state is corrupted by the 30s display loop
+### C1 — ML-gate feature state is corrupted by the 30s display loop ✅ FIXED
 
-**Files:** `bot/ml-gate.js:82-103`, `bot/pocket-option-bot.js:895`, `:735`, `:1119`
+**Files:** `bot/ml-gate.js:82-103`, `bot/pocket-option-bot.js:897`, `:736`, `:1124`
+
+**Status:** Fixed 2026-06-02 via **Option 1** (cache at close — see below).
+`ml-gate.js` left **untouched**: the corruption was removed at the source by
+making the display stop calling the gate. Verified: `node --check` passes, 21 unit
+tests pass, and `evaluateMLGate` now has exactly **two** callers (close `:897`,
+history `:736`), both legitimately once-per-bar.
 
 `ml-gate.js` keeps **stateful per-asset ring buffers** for the diff features —
 `cci_history` (needs `cci[t-2]`) and `stc_history` (needs `stc[t-1]`) — and
-advances them on *every* `evaluateGate` call.
+advances them (`push`/`shift`) on *every* `evaluateGate` call. The function is
+correct **only if called exactly once per closed bar**; the mutation is a side
+effect with no guard.
 
-But `evaluateMLGate` is called from three unsynchronized places for the same asset:
+`evaluateMLGate` *was* called from three unsynchronized places for the same asset:
 
-| Caller | Cadence | Purpose |
-|---|---|---|
-| finalize / bar-close (`:895`) | once per closed bar | the real signal path that trades |
-| history load (`:735`) | once per history frame | backfill |
-| `displayStatus` loop (`:1119`) | **every 30s** | console display only |
+| Caller | Cadence | Purpose | After fix |
+|---|---|---|---|
+| finalize / bar-close (`:897`) | once per closed bar | the real signal path that trades | still calls gate (correct) |
+| history load (`:736`) | once per history frame | backfill | still calls gate (correct) |
+| `displayStatus` loop (`:1124`) | every 30s | console display only | **now reads `STATE.LAST_SIGNAL` — never calls gate** |
 
-With 300s candles, the display loop pushes ~10 *intra-bar* STC/CCI values into the
-ring between two real closes. So when the next bar closes and fires a trade:
+`STATE.INDICATORS[asset]` is recomputed on `STATE.CANDLES` (finalized candles only,
+`:1009` `pushHistory=false`), so it holds the **current bar's constant value**
+between closes. The display loop therefore pushed that **same value ~9×/bar** into
+the ring, saturating the 3-slot CCI buffer within ~90s of a close:
 
-- `STC_Momentum = stc[t] − h[last]` reads an intra-bar value from ~30s ago, **not** the previous bar's STC.
-- `CCI_Velocity = (cci[t] − cci[t-2]) / 2` — `cci[t-2]` is "2 pushes ago" = seconds ago, not 2 bars ago, so velocity collapses toward ~0.
+- `CCI_Velocity = (cci[t] − cci[t-2]) / 2` — **the real casualty.** It's a 2-bar
+  lookback; the duplicate pushes evict the genuine `cci[t-2]`, collapsing it to a
+  ~1-bar diff (e.g. true `17.5` reads as `10`). CCI_Velocity has the lowest tree
+  importance (0.001), so live impact is real but small.
+- `STC_Momentum = stc[t] − h[last]` — **survives** in steady state: it's a 1-bar
+  lookback, and duplicate pushes leave the ring tail equal to the current bar's
+  STC, which *is* the correct previous reference. (The original review had this
+  backwards — STC was claimed corrupted, CCI claimed to survive.)
+- `Stoch_Divergence` (0.988 tree importance) and `BB_Deviation` are
+  contemporaneous (no history) and are unaffected.
 
-The traded signal is therefore evaluated on **contaminated momentum/velocity**.
 This is the same bug class already recorded for `indicators.js` in memory
-(`feedback_30s_refresh_bug`), reappearing in `ml-gate.js`.
-`Stoch_Divergence` (0.988 tree importance) is contemporaneous and survives, but
-the tree branches on `STC_Momentum` and `CCI_Velocity` at multiple nodes.
+(`feedback_30s_refresh_bug`) — which `indicators.calculateAll` already guards with
+its `pushHistory` flag (`:483`). The ml-gate path simply never received the
+equivalent guard.
 
-**Fix options:**
-1. Compute the gate once at bar-close, cache the result object, and have `displayStatus` reuse it instead of re-evaluating.
+**Fix applied (Option 1 — cache at close, `ml-gate.js` untouched):**
+- `STATE.LAST_SIGNAL` cache added (`:442`).
+- Bar-close (`:898`) and history (`:737`) cache their gate result:
+  `STATE.LAST_SIGNAL[asset] = _signal || null`.
+- Display (`:1124`) reads the cache instead of re-evaluating:
+  `const _dispSignal = STATE.LAST_SIGNAL[asset] || null`.
+- Bonus cleanup: the intra-bar indicator refresh (`:1008`) interval is now dynamic
+  `(STATE.PERIOD * 1000) / 2` instead of a hardcoded `30000` — scales with the
+  candle period (150s at 5m; still 30s at the legacy 60s period). Churn reduction,
+  not correctness — `:1009` recomputes on unchanged candles between closes.
+
+Result: the ring advances **exactly once per bar**, restoring CCI_Velocity's
+2-bar lookback. The displayed signal is now the exact value evaluated at close.
+
+**Alternatives considered (not used):**
 2. Make `computeKineticFeatures` stateless — derive `cci[t-2]` / `stc[t-1]` from the last 3 indicator rows in `STATE.INDICATORS` / DB rather than a mutable module ring.
-3. Add a `pushHistory`-style flag (mirroring `indicators.calculateAll`) and pass `false` from the display and history callers so only bar-close advances the ring.
+3. Add a `pushHistory`-style flag to `evaluateGate` and pass `false` from the display caller. (Works, but touches `ml-gate.js` and leaves the display doing redundant read-only gate math.)
 
 ---
 
@@ -146,9 +176,10 @@ hit it today, but it will throw if ever reached.
 
 ### C3 — ML-gate payout kill-switch never sees the real payout
 
-**Files:** `bot/ml-gate.js:24-27`, `bot/pocket-option-bot.js:735`, `:895`, `:1119`
+**Files:** `bot/ml-gate.js:24-27`, `bot/pocket-option-bot.js:736`, `:897`
 
-All three `evaluateMLGate` calls pass a hardcoded `0.80` as `livePayout`.
+Both `evaluateMLGate` calls (close `:897`, history `:736`) pass a hardcoded `0.80`
+as `livePayout`. (The display loop no longer calls the gate after the C1 fix.)
 Since `0.80 ≥ tree floor 0.70` and `≥ logreg floor 0.78`, the payout-aware EV
 gate documented in `ml-gate.js` is **always a pass** — effectively disabled.
 The only real payout check is `minPayout = 70` at click time in `placeOrderLive`.
@@ -228,7 +259,7 @@ update the conflicting memory; otherwise gate it dynamically.
 ## Suggested fix order
 
 0. **C0** — ✅ done (2026-06-02). Unblocks signal generation; nothing else matters until this is in.
-1. **C1** — silently degrading every live signal; highest impact.
+1. **C1** — ✅ done (2026-06-02). Ring now advances exactly once per bar; CCI_Velocity restored.
 2. **C2** and **C3** — small, contained, clearly wrong.
 3. **M1 / M2** — data-quality of `trades_ordered` (exit price, timestamps).
 4. **M3** — confirm strategy intent.
