@@ -1,0 +1,1 @@
+bot/trading_data.db.local filter=lfs diff=lfs merge=lfs -text
