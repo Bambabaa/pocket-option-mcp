@@ -5,7 +5,8 @@ aggregation → indicator/feature transform → SQLite load → outcome validati
 Companion to `pipeline-review.md` (which covers signal/execution logic).
 Scope: bot pipeline only; MCP server out of scope.
 
-_Reviewed: 2026-06-03 (branch `main`)._
+_Reviewed: 2026-06-03 (branch `main`). Findings marked ✔ verified against the
+live `data/trading_data.db` while the bot was running._
 
 ```
 EXTRACT                         TRANSFORM                         LOAD                       VALIDATE
@@ -34,22 +35,57 @@ What's correct and should be preserved:
 
 ---
 
+## Verified against the live DB (2026-06-03)
+
+Queried the running `data/trading_data.db` directly:
+
+- **Feed is seconds, not milliseconds.** ✔ Raw `prices.timestamp` is 10-digit
+  Unix seconds (`1780499725`), candle spacing is exactly `300`. The earlier
+  "if PO sends ms" worry does **not** apply — aggregation math is sound.
+- **Feed runs +2h ahead of UTC (broker UTC+2), stable.** ✔ Comparing each row's
+  `timestamp` (broker clock) to its `created_at` (SQLite real-UTC write time)
+  gives a constant `timestamp − created ≈ 6900s = offset(7200) − bar(300)` on
+  every candle and signal. So the offset is a fixed **+2h**, derivable from the
+  data itself (no live clock needed).
+- **`created_at` is trustworthy.** ✔ `datetime(created_at,'localtime')` matches
+  the real wall clock; only `timestamp` carries the broker offset.
+- **Prices are a clean 1 Hz series.** ✔ Every asset: `min_gap=1s`, `max_gap=2s`,
+  `avg≈1.008s`, zero gaps > 2s. Sub-second ticks are floored to whole seconds and
+  de-duped by `UNIQUE(asset,timestamp)` → at most 1 row/asset/sec, last-wins.
+  Consequence: ~300 ticks per 5-min bar (robust OHLC; `shouldStore` never drops
+  liquid pairs), and entry/exit price lookups within the 5s tolerance always hit.
+
+---
+
 ## EXTRACT (WebSocket ingestion)
 
-### X1 — Timestamps assume seconds with no normalization guard  *(medium)*
+### X1 — Feed timestamps carry a +2h broker offset that's never normalized  *(medium)* ✔
 
-**Files:** `bot/pocket-option-bot.js:637`, `:762-768`, `:807`
+**Files:** `bot/pocket-option-bot.js:762`, `:637`, `:630`, `:807`, `:768`
 
-The history path stores `parseInt(parseFloat(tstamp))` and the tick path uses
-`timestamp = parseFloat(data[0][1])` directly, then derives
-`periodStart = Math.floor(timestamp / STATE.PERIOD) * STATE.PERIOD` and the prices
-key from it. All of this **assumes the feed is in seconds**. Unlike
-`convertToUTC6` (which multiplies when `< 1e12`), neither hot path normalizes
-ms→s. If Pocket Option ever emits millisecond timestamps on the price/history
-feed, every period boundary, candle key, and price key is silently wrong.
+The feed timestamp enters at two raw points — tick `parseFloat(data[0][1])`
+(`:762`) and history `parseInt(parseFloat(tstamp))` / `data.candles[c][0]`
+(`:637`/`:630`) — and is used as-is for `periodStart`, the candle key, and the
+price key. It is **seconds** (confirmed, not ms), but it's in **broker time
+(UTC+2)**, ~2h ahead of true UTC, and nothing normalizes it.
 
-**Fix:** normalize once at ingestion (`if (ts > 1e12) ts /= 1000`) before any
-floor/modulo, mirroring `convertToUTC6`.
+Because every market timestamp inherits this offset, the chain is internally
+consistent (5-min spacing, `signal_ts + expiry`, indicator lookbacks all hold).
+The bug is **clock-mixing**: real-UTC values (`Date.now()`-based
+`trades_ordered.entry/exit_timestamp`, `last_update_at`, the validation loop)
+sit in the same system as feed-time market timestamps. Proof from `trades_ordered`:
+within one row, `signal_timestamp` (feed) and `entry_timestamp` (real-UTC from
+`inferEntryTimestamp`) differ by ~6900s ≈ the offset — not a real holding period.
+
+This is the **trunk** behind D2 and pipeline-review M1; the executor-side `+21600`
+patch (D2) is a leaf symptom.
+
+**Fix (decision pending):** pick **one** clock for market-event timestamps.
+Option A (minimal, no migration) — keep feed-time canonical and derive
+trade entry/exit from `signal_timestamp` (offset-agnostic, DST-proof).
+Option B (source normalize) — convert feed→UTC at ingestion
+(`ts_utc = feed_ts − offset`, offset = 7200, derivable from `created_at`), then
+real-UTC writers align for free; needs a one-time migration of existing +2h rows.
 
 ### X2 — History `value` is not numeric-parsed  *(low)*
 
@@ -184,12 +220,17 @@ silent gap creation.
 **Fix:** `await flushPriceBatch(database)` in the SIGINT handler before
 `database.close()`; optionally finalize the current candle on shutdown.
 
-### D2 — Timestamp convention is inconsistent / undocumented  *(medium — see pipeline-review M1)*
+### D2 — Result-sync `+21600` offset is the wrong magnitude  *(medium — leaf of X1)* ✔
 
-Comments claim "DB layer handles timezone conversion" but no conversion exists;
-result-sync carries a magic `+ 21600` (6h) dual-match for entry/exit candle
-lookups (`order-executor.js:1162-1168`). Pin down one convention for stored
-timestamps and delete the stale comments / unexplained offset.
+**File:** `bot/scripts/order-executor.js:1162-1168`
+
+The entry/exit price fallback tries to bridge clocks with `ABS(timestamp - (? +
+21600))` — a **6h** offset. But the measured feed-vs-UTC offset is **+2h
+(7200s)**, so this looks in the wrong window and won't match the candle → null
+`entry_price`/`exit_price` on closed trades. Comments elsewhere also claim "DB
+layer handles timezone conversion" though no conversion exists. Once X1 is
+resolved (one canonical clock), this dual-match offset should be deleted, not
+re-tuned — entry/exit and candles will already share a clock.
 
 ---
 
@@ -197,7 +238,7 @@ timestamps and delete the stale comments / unexplained offset.
 
 | ID | Stage | Severity | One-liner |
 |----|-------|----------|-----------|
-| X1 | Extract | Medium | ms/s timestamp assumed, not normalized |
+| X1 | Extract | Medium ✔ | feed is seconds but +2h broker offset → clock-mixing (not ms) |
 | X2 | Extract | Low | history `value` not numeric-parsed |
 | X3 | Extract | Low | unbounded message queue |
 | T1 | Transform | Medium | history flats: `candles` ≠ `indicators` |
@@ -206,12 +247,12 @@ timestamps and delete the stale comments / unexplained offset.
 | L1 | Load | Medium | `PRAGMA foreign_keys` never ON |
 | L2 | Load | Critical | stub `insertOrderedTradeClosed` arg order (C2) |
 | V1 | Validate | Low | expiry gate looser than 3-bar horizon |
-| V2 | Validate | Low | dropped flats stretch `p+3` window |
+| V2 | Validate | Low | dropped flats stretch `p+3` window (rare: 1 Hz feed ✔) |
 | D1 | Cross | Medium | shutdown loses buffered prices + open candle |
-| D2 | Cross | Medium | timestamp convention inconsistent (M1) |
+| D2 | Cross | Medium ✔ | result-sync `+21600` is wrong offset (should be 7200 / removed) — leaf of X1 |
 
 ### Suggested order
-1. **X1** + **D2** — timestamp correctness underpins every key in the store.
+1. **X1** (+ its leaf **D2**) — one canonical clock; underpins every key and fixes null entry/exit prices.
 2. **T1** + **L1** — table divergence / orphan rows (enable FKs or align flats).
 3. **D1** — stop silent price-gap creation on shutdown.
 4. **T3** — reconnect latency.
