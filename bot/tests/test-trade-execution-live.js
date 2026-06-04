@@ -22,7 +22,6 @@ const puppeteer = require('puppeteer');
 const {
     placeOrderLive,
     resetSessionCalibration,
-    openClosedTabAndGetDeals,
     getBalanceFromDOM,
 } = require('../scripts/order-executor');
 
@@ -206,21 +205,216 @@ async function listVisibleAssets(page, limit = 250) {
     }, Math.max(1, limit));
 }
 
+function parseNumberLoose(v) {
+    if (v == null) return null;
+    const s = String(v).replace(/,/g, '').replace(/[^\d.+-]/g, '');
+    if (!s) return null;
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : null;
+}
+
+function normalizeAssetLabel(label) {
+    if (!label) return null;
+    const txt = String(label).trim().toUpperCase();
+    const isOtc = /\bOTC\b/.test(txt);
+    const m = txt.match(/([A-Z]{3})\s*\/\s*([A-Z]{3})/);
+    if (!m) return null;
+    return (m[1] + m[2]).toLowerCase() + (isOtc ? '_otc' : '');
+}
+
+async function openClosedDealsTabBestEffort(page) {
+    const selectors = [
+        '#bar-chart .widget-slot__header .divider ul li:nth-child(2) a',
+        '.widget-slot__header a[href*="history"]',
+        '.deals-tab',
+        '[data-tab="history"]',
+        '.tabs a:nth-child(2)',
+        '.divider ul li a'
+    ];
+
+    for (const sel of selectors) {
+        try {
+            const el = await page.$(sel);
+            if (!el) continue;
+            await el.click();
+            await new Promise(r => setTimeout(r, 1200));
+            const hasRows = await page.$('.deals-list__item');
+            if (hasRows) return true;
+        } catch (_) {
+            // try next selector
+        }
+    }
+
+    return false;
+}
+
+async function expandClosedDealRowsBestEffort(page, limit = 5) {
+    try {
+        const rows = await page.$$('.deals-list__item .deals-list__item-short, .deals-list__item .open-full-info');
+        const n = Math.min(limit, rows.length);
+        for (let i = 0; i < n; i++) {
+            try {
+                await rows[i].click();
+                await new Promise(r => setTimeout(r, 120));
+            } catch (_) {
+                // ignore per-row click failures
+            }
+        }
+    } catch (_) {
+        // best-effort only
+    }
+}
+
+async function getClosedDealsRich(page, limit = 20) {
+    await openClosedDealsTabBestEffort(page);
+    await expandClosedDealRowsBestEffort(page, Math.max(3, Math.min(8, limit)));
+    await new Promise(r => setTimeout(r, 800));
+
+    return page.evaluate((maxItems) => {
+        const rows = Array.from(document.querySelectorAll('.deals-list__item'));
+        const out = [];
+
+        const parseMoney = (text) => {
+            if (!text) return null;
+            const cleaned = String(text).replace(/,/g, '').replace(/[^\d.+-]/g, '');
+            if (!cleaned) return null;
+            const n = parseFloat(cleaned);
+            return Number.isFinite(n) ? n : null;
+        };
+
+        const parsePercent = (text) => {
+            if (!text) return null;
+            const m = String(text).match(/([+-]?\d+(?:\.\d+)?)\s*%/);
+            return m ? parseFloat(m[1]) : null;
+        };
+
+        const normalizeAsset = (label) => {
+            if (!label) return null;
+            const txt = String(label).trim().toUpperCase();
+            const isOtc = /\bOTC\b/.test(txt);
+            const m = txt.match(/([A-Z]{3})\s*\/\s*([A-Z]{3})/);
+            if (!m) return null;
+            return (m[1] + m[2]).toLowerCase() + (isOtc ? '_otc' : '');
+        };
+
+        for (const row of rows) {
+            if (out.length >= maxItems) break;
+
+            const full = row.querySelector('.deals-list__item-full') || row;
+
+            const priceItems = Array.from(full.querySelectorAll('.price-info__prices-item, [class*="price-info__prices-item"]'))
+                .map(node => (node.textContent || '').replace(/\s+/g, ' ').trim());
+
+            const openText = priceItems.find(t => /open\s*price\s*:/i.test(t));
+            const closeText = priceItems.find(t => /clos(?:e|ing)\s*price\s*:/i.test(t));
+
+            const entryPrice = openText ? parseMoney(openText.split(':').slice(1).join(':')) : null;
+            const exitPrice = closeText ? parseMoney(closeText.split(':').slice(1).join(':')) : null;
+            const hasRichPrices = entryPrice != null && exitPrice != null;
+
+            const short = row.querySelector('.deals-list__item-short');
+            const row1 = short ? short.querySelector('.item-row:nth-child(1)') : null;
+            const row2 = short ? short.querySelector('.item-row:nth-child(2)') : null;
+
+            const assetAnchor = row1
+                ? Array.from(row1.querySelectorAll('a')).find(a => /\//.test((a.textContent || '').trim()))
+                : null;
+            const assetLabel = assetAnchor ? (assetAnchor.textContent || '').trim() : '';
+            const asset = normalizeAsset(assetLabel);
+
+            const payoutText = row1 ? (row1.querySelector('.price-up')?.textContent || '') : '';
+            const payout = parsePercent(payoutText);
+
+            const closeClockText = row1 ? (row1.lastElementChild?.textContent || '') : '';
+            let closeTimeHHMM = null;
+            const tm = closeClockText.match(/(\d{1,2}):(\d{2})/);
+            if (tm) closeTimeHHMM = { h: parseInt(tm[1], 10), m: parseInt(tm[2], 10) };
+
+            const forecastText = (full.querySelector('.forecast .act')?.textContent || '').trim().toUpperCase();
+            let direction = null;
+            if (forecastText === 'SELL' || forecastText === 'PUT') direction = 'PUT';
+            if (forecastText === 'BUY' || forecastText === 'CALL') direction = 'CALL';
+            if (!direction) {
+                const iconText = row2 ? (row2.querySelector('i')?.className || '') : '';
+                if (/arrow-down|put|sell/i.test(iconText)) direction = 'PUT';
+                if (/arrow-up|call|buy/i.test(iconText)) direction = 'CALL';
+            }
+
+            const amountText = row2 ? (row2.querySelector('div:nth-child(1)')?.textContent || '') : '';
+            const inferredAmount = parseMoney(amountText);
+
+            const profitText = row2 ? (row2.querySelector('div:nth-child(3)')?.textContent || '') : '';
+            let profitLoss = parseMoney(profitText);
+            if (profitLoss != null && /^\s*-/.test(profitText)) profitLoss = -Math.abs(profitLoss);
+            if (profitLoss != null && /^\s*\+/.test(profitText)) profitLoss = Math.abs(profitLoss);
+
+            let result = 'UNKNOWN';
+            if (profitLoss != null) result = profitLoss > 0 ? 'WIN' : (profitLoss < 0 ? 'LOSS' : 'DRAW');
+
+            // If P/L is ambiguous (0 or missing), infer outcome from direction and price movement.
+            if ((profitLoss == null || profitLoss === 0) && direction && entryPrice != null && exitPrice != null) {
+                const delta = exitPrice - entryPrice;
+                const eps = 1e-10;
+                if (Math.abs(delta) <= eps) {
+                    result = 'DRAW';
+                    if (profitLoss == null) profitLoss = 0;
+                } else if (direction === 'CALL') {
+                    result = delta > 0 ? 'WIN' : 'LOSS';
+                    if (profitLoss == null && inferredAmount != null) {
+                        profitLoss = result === 'WIN'
+                            ? inferredAmount * ((payout != null ? payout : 0) / 100)
+                            : -inferredAmount;
+                    }
+                } else if (direction === 'PUT') {
+                    result = delta < 0 ? 'WIN' : 'LOSS';
+                    if (profitLoss == null && inferredAmount != null) {
+                        profitLoss = result === 'WIN'
+                            ? inferredAmount * ((payout != null ? payout : 0) / 100)
+                            : -inferredAmount;
+                    }
+                }
+            }
+
+            const rawText = (row.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+
+            // Keep actionable rows even if this specific row has no expanded price block yet.
+            if (!asset && !direction && profitLoss == null && !hasRichPrices) continue;
+
+            out.push({
+                asset,
+                direction,
+                result,
+                profitLoss,
+                payout,
+                inferredAmount,
+                closeTimeHHMM,
+                entryPrice,
+                exitPrice,
+                hasRichPrices,
+                rawText
+            });
+        }
+
+        return out;
+    }, Math.max(1, limit));
+}
+
 async function showClosedDeals(page, expectedCount = 1, options = {}) {
     const fallbackDirection = options.fallbackDirection || null;
     const fallbackAmount = Number.isFinite(options.fallbackAmount) ? options.fallbackAmount : null;
     const debugDeals = options.debugDeals === true;
 
-    const deals = await openClosedTabAndGetDeals(page, Math.max(10, expectedCount + 3));
+    const deals = await getClosedDealsRich(page, Math.max(10, expectedCount + 3));
     if (!deals || deals.length === 0) {
-        log('No closed deals parsed from UI.', '\x1b[33m');
+        log('No closed deals parsed from rich UI rows (.price-info__prices).', '\x1b[33m');
         return;
     }
     log('Closed deals snapshot:', '\x1b[35m');
+    const richCount = deals.filter(d => d.hasRichPrices).length;
+    log(`Rich price rows: ${richCount}/${deals.length}`, richCount > 0 ? '\x1b[36m' : '\x1b[33m');
     deals.slice(0, expectedCount).forEach((d, i) => {
         // Compact rows like "$1$0$0" often omit explicit loss amount; recover stake if possible.
-        const rawStakeMatch = d.rawText ? d.rawText.match(/\$(\d+(?:\.\d+)?)\$0(?:\$0)?/) : null;
-        const rawStake = rawStakeMatch ? parseFloat(rawStakeMatch[1]) : null;
+        const rawStake = parseNumberLoose(d.inferredAmount);
 
         const inferredAmount = (d.inferredAmount != null && d.inferredAmount > 0)
             ? d.inferredAmount
@@ -244,10 +438,11 @@ async function showClosedDeals(page, expectedCount = 1, options = {}) {
             : '';
         const entry = d.entryPrice != null ? ` entry=${d.entryPrice}` : ' entry=N/A';
         const exit = d.exitPrice != null ? ` exit=${d.exitPrice}` : ' exit=N/A';
+        const richTag = d.hasRichPrices ? ' prices=RICH' : ' prices=PARTIAL';
         const raw = (debugDeals || d.result === 'UNKNOWN') && d.rawText ? ` raw="${d.rawText}"` : '';
         const direction = d.direction || fallbackDirection || '?';
         const color = d.result === 'WIN' ? '\x1b[32m' : d.result === 'LOSS' ? '\x1b[31m' : '\x1b[33m';
-        log(`  ${i + 1}. ${d.asset || '?'} ${direction} ${d.result}${pl}${payout}${inferred}${hhmm}${entry}${exit}${raw}`, color);
+        log(`  ${i + 1}. ${d.asset || normalizeAssetLabel(options.fallbackAssetLabel) || '?'} ${direction} ${d.result}${pl}${payout}${inferred}${hhmm}${entry}${exit}${richTag}${raw}`, color);
     });
 }
 
@@ -349,7 +544,7 @@ async function run() {
             }
 
             log('DB sync disabled by design (no DB writes). Showing DOM closed deals only.', '\x1b[33m');
-            log('Note: this PO compact DOM format often omits market entry/exit prices, so entry/exit may show as N/A.', '\x1b[33m');
+            log('Using rich closed-deal DOM parser (.price-info__prices) for entry/exit prices.', '\x1b[36m');
 
             const balance = await getBalanceFromDOM(page);
             if (balance) log(`Account balance: ${balance}`, '\x1b[36m');
@@ -357,6 +552,7 @@ async function run() {
             await showClosedDeals(page, Math.max(1, placed), {
                 fallbackDirection: args.direction,
                 fallbackAmount: args.tradeAmount,
+                fallbackAssetLabel: args.assets[0] || null,
                 debugDeals: args.debugDeals,
             });
         }
