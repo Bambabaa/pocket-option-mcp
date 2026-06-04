@@ -1,0 +1,374 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * Live/manual execution harness for order-executor.js
+ *
+ * Supports:
+ * - Direct placement via placeOrderLive (dry or real)
+ * - Optional DB queue execution via executeOrderById
+ * - Optional result sync via syncLiveTradeResultsFromDOM
+ *
+ * Usage:
+ *   node bot/tests/test-trade-execution-live.js --help
+ *   node bot/tests/test-trade-execution-live.js --dry --asset "EURUSD_otc,USDJPY_otc" --direction CALL
+ *   node bot/tests/test-trade-execution-live.js --real-trade --asset "EURUSD_otc" --direction PUT --sync-results
+ *   node bot/tests/test-trade-execution-live.js --with-db --from-queue --real-trade --sync-results
+ */
+
+const readline = require('readline');
+const puppeteer = require('puppeteer');
+
+const {
+    placeOrderLive,
+    resetSessionCalibration,
+    openClosedTabAndGetDeals,
+    getBalanceFromDOM,
+} = require('../scripts/order-executor');
+
+const DEMO_URL = 'https://pocketoption.com/en/cabinet/demo-quick-high-low/';
+
+function log(msg, color = '\x1b[0m') {
+    const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
+    console.log(`${color}[${ts}] ${msg}\x1b[0m`);
+}
+
+function toInt(v, fallback) {
+    const n = parseInt(String(v), 10);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function parseArgs(argv) {
+    const args = {
+        dryRun: true,
+        realTrade: false,
+        withDb: false,
+        fromQueue: false,
+        listAssets: false,
+        debugDeals: false,
+        syncResults: false,
+        direction: 'CALL',
+        assets: ['EURUSD_otc'],
+        tradeAmount: 1,
+        expirationSec: 60,
+        minPayout: 70,
+        tradeDelayMs: 0,
+        headless: false,
+        slowMo: 0,
+        protocolTimeout: 180000,
+        defaultTimeoutMs: 45000,
+        navTimeoutMs: 120000,
+        limitAssets: 250,
+        buttonWaitTimeoutMs: 4000,
+        postAssetSelectWaitMs: 400,
+        uiSettleWaitMs: 0,
+        placeOrderTimeoutMs: 12000,
+        resultWaitSec: null,
+    };
+
+    for (let i = 2; i < argv.length; i++) {
+        const a = argv[i];
+        if (a === '--help' || a === '-h') return { ...args, help: true };
+        if (a === '--dry') { args.dryRun = true; args.realTrade = false; continue; }
+        if (a === '--real-trade') { args.realTrade = true; args.dryRun = false; continue; }
+        if (a === '--with-db') { args.withDb = true; continue; }
+        if (a === '--from-queue') { args.fromQueue = true; args.withDb = true; continue; }
+        if (a === '--list-assets') { args.listAssets = true; continue; }
+        if (a === '--debug-deals') { args.debugDeals = true; continue; }
+        if (a === '--sync-results') { args.syncResults = true; continue; }
+        if (a === '--headless') { args.headless = true; continue; }
+        if (a === '--no-headless') { args.headless = false; continue; }
+
+        const next = () => (i + 1 < argv.length ? argv[++i] : undefined);
+
+        if (a === '--asset' || a === '--assets') {
+            const v = next();
+            if (v) args.assets = v.split(',').map(s => s.trim()).filter(Boolean);
+            continue;
+        }
+        if (a === '--direction') {
+            const v = String(next() || '').toUpperCase();
+            if (v === 'CALL' || v === 'PUT') args.direction = v;
+            continue;
+        }
+        if (a === '--amount') { args.tradeAmount = toInt(next(), args.tradeAmount); continue; }
+        if (a === '--expiry' || a === '--expiration') { args.expirationSec = toInt(next(), args.expirationSec); continue; }
+        if (a === '--min-payout') { args.minPayout = parseFloat(next() || '0') || 0; continue; }
+        if (a === '--delay') { args.tradeDelayMs = toInt(next(), args.tradeDelayMs); continue; }
+        if (a === '--slowmo') { args.slowMo = toInt(next(), args.slowMo); continue; }
+        if (a === '--protocol-timeout') { args.protocolTimeout = toInt(next(), args.protocolTimeout); continue; }
+        if (a === '--timeout') { args.defaultTimeoutMs = toInt(next(), args.defaultTimeoutMs); continue; }
+        if (a === '--nav-timeout') { args.navTimeoutMs = toInt(next(), args.navTimeoutMs); continue; }
+        if (a === '--limit-assets') { args.limitAssets = toInt(next(), args.limitAssets); continue; }
+        if (a === '--button-wait') { args.buttonWaitTimeoutMs = toInt(next(), args.buttonWaitTimeoutMs); continue; }
+        if (a === '--post-select-wait') { args.postAssetSelectWaitMs = toInt(next(), args.postAssetSelectWaitMs); continue; }
+        if (a === '--ui-settle-wait') { args.uiSettleWaitMs = toInt(next(), args.uiSettleWaitMs); continue; }
+        if (a === '--place-order-timeout') { args.placeOrderTimeoutMs = toInt(next(), args.placeOrderTimeoutMs); continue; }
+        if (a === '--result-wait') { args.resultWaitSec = toInt(next(), 0); continue; }
+    }
+
+    return args;
+}
+
+function printHelp() {
+    console.log(`
+Live Trade Execution Harness (bot/tests/test-trade-execution-live.js)
+
+Options:
+  --dry                    Dry-run mode (default)
+  --real-trade             Place real demo clicks
+    --with-db                Ignored in this harness (DB writes disabled)
+    --from-queue             Ignored in this harness (DB writes disabled)
+    --list-assets            Print visible asset rows from the UI
+    --debug-deals            Include raw deal row text in result output
+    --sync-results           Wait for expiry and print DOM closed-deal snapshot
+
+  --asset "A,B"            Assets list (default: EURUSD_otc)
+  --direction CALL|PUT     Direction (default: CALL)
+  --amount N               Trade amount (default: 1)
+    --expiry N               Expiration sec (default: 60, i.e. 1m)
+  --min-payout N           Minimum payout gate (default: 70)
+
+  --headless | --no-headless
+  --slowmo MS
+  --protocol-timeout MS
+  --timeout MS
+  --nav-timeout MS
+    --limit-assets N         Max rows for --list-assets (default: 250)
+  --button-wait MS
+  --post-select-wait MS
+    --ui-settle-wait MS      Extra wait after UI ready before actions
+  --place-order-timeout MS
+  --result-wait SEC        Override post-place wait before result sync
+
+Examples:
+    node bot/tests/test-trade-execution-live.js --list-assets
+  node bot/tests/test-trade-execution-live.js --dry --asset "EURUSD_otc,USDJPY_otc"
+  node bot/tests/test-trade-execution-live.js --real-trade --asset "EURUSD_otc" --direction PUT --sync-results
+    node bot/tests/test-trade-execution-live.js --real-trade --sync-results --asset "EURUSD_otc" --debug-deals
+`);
+}
+
+function promptEnter(message) {
+    return new Promise((resolve) => {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        rl.question(message, () => {
+            rl.close();
+            resolve();
+        });
+    });
+}
+
+async function waitForTradingUi(page) {
+    await page.waitForSelector('.current-symbol, #put-call-buttons-chart-1, .btn-call, .btn-put', { timeout: 45000 }).catch(() => null);
+}
+
+async function openAssetsPanelBestEffort(page) {
+    try {
+        const symbol = await page.$('.current-symbol');
+        if (symbol) {
+            await symbol.click();
+            await new Promise(r => setTimeout(r, 600));
+        }
+    } catch (_) {
+        // best-effort only
+    }
+}
+
+async function listVisibleAssets(page, limit = 250) {
+    await openAssetsPanelBestEffort(page);
+    return page.evaluate((maxRows) => {
+        const out = [];
+        const seen = new Set();
+        const isAssetLike = (text) => {
+            if (!text || text.length > 60) return false;
+            return /[A-Z]{2,4}\s*\/\s*[A-Z]{2,4}/i.test(text) || /OTC/i.test(text) || /\d{2,3}\s*%/.test(text);
+        };
+
+        let nodes = Array.from(document.querySelectorAll('.assets-list__item[data-id], .assets-list__item, span.alist__label, [class*="assets-list"] li'));
+        if (nodes.length === 0) {
+            nodes = Array.from(document.querySelectorAll('li, [role="option"], [class*="item"]'))
+                .filter(el => isAssetLike((el.textContent || '').trim()));
+        }
+
+        for (const el of nodes) {
+            const id = (el.getAttribute('data-id') || '').trim();
+            const text = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+            if (!id && !isAssetLike(text)) continue;
+            const key = (id || text).toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push({ id, text });
+            if (out.length >= maxRows) break;
+        }
+
+        return out;
+    }, Math.max(1, limit));
+}
+
+async function showClosedDeals(page, expectedCount = 1, options = {}) {
+    const fallbackDirection = options.fallbackDirection || null;
+    const fallbackAmount = Number.isFinite(options.fallbackAmount) ? options.fallbackAmount : null;
+    const debugDeals = options.debugDeals === true;
+
+    const deals = await openClosedTabAndGetDeals(page, Math.max(10, expectedCount + 3));
+    if (!deals || deals.length === 0) {
+        log('No closed deals parsed from UI.', '\x1b[33m');
+        return;
+    }
+    log('Closed deals snapshot:', '\x1b[35m');
+    deals.slice(0, expectedCount).forEach((d, i) => {
+        // Compact rows like "$1$0$0" often omit explicit loss amount; recover stake if possible.
+        const rawStakeMatch = d.rawText ? d.rawText.match(/\$(\d+(?:\.\d+)?)\$0(?:\$0)?/) : null;
+        const rawStake = rawStakeMatch ? parseFloat(rawStakeMatch[1]) : null;
+
+        const inferredAmount = (d.inferredAmount != null && d.inferredAmount > 0)
+            ? d.inferredAmount
+            : (rawStake != null && rawStake > 0)
+                ? rawStake
+                : (fallbackAmount != null && fallbackAmount > 0)
+                    ? fallbackAmount
+                    : null;
+
+        const normalizedProfitLoss = (d.result === 'LOSS' && (d.profitLoss == null || d.profitLoss === 0) && inferredAmount != null)
+            ? -inferredAmount
+            : d.profitLoss;
+
+        const pl = normalizedProfitLoss != null
+            ? ` $${normalizedProfitLoss >= 0 ? '+' : ''}${Number(normalizedProfitLoss).toFixed(2)}`
+            : '';
+        const payout = d.payout != null ? ` payout=${d.payout}%` : '';
+        const inferred = inferredAmount != null ? ` inferredAmount=${inferredAmount}` : '';
+        const hhmm = d.closeTimeHHMM && Number.isFinite(d.closeTimeHHMM.h) && Number.isFinite(d.closeTimeHHMM.m)
+            ? ` close=${String(d.closeTimeHHMM.h).padStart(2, '0')}:${String(d.closeTimeHHMM.m).padStart(2, '0')}`
+            : '';
+        const entry = d.entryPrice != null ? ` entry=${d.entryPrice}` : ' entry=N/A';
+        const exit = d.exitPrice != null ? ` exit=${d.exitPrice}` : ' exit=N/A';
+        const raw = (debugDeals || d.result === 'UNKNOWN') && d.rawText ? ` raw="${d.rawText}"` : '';
+        const direction = d.direction || fallbackDirection || '?';
+        const color = d.result === 'WIN' ? '\x1b[32m' : d.result === 'LOSS' ? '\x1b[31m' : '\x1b[33m';
+        log(`  ${i + 1}. ${d.asset || '?'} ${direction} ${d.result}${pl}${payout}${inferred}${hhmm}${entry}${exit}${raw}`, color);
+    });
+}
+
+function makeExecutionConfig(args) {
+    return {
+        enabled: true,
+        dryRun: args.dryRun,
+        minPayout: args.minPayout,
+        tradeDelayMs: args.tradeDelayMs,
+        expirationSec: args.expirationSec,
+        buttonWaitTimeoutMs: args.buttonWaitTimeoutMs,
+        postAssetSelectWaitMs: args.postAssetSelectWaitMs,
+        placeOrderTimeoutMs: args.placeOrderTimeoutMs,
+        useEvaluateClick: true,
+    };
+}
+
+async function executeDirect(page, args) {
+    const config = makeExecutionConfig(args);
+    const results = [];
+
+    for (const asset of args.assets) {
+        const order = { asset, direction: args.direction };
+        const r = await placeOrderLive(page, order, {
+            ...config,
+            tradeAmount: args.tradeAmount,
+        });
+        results.push({ asset, ...r });
+        const color = r.success ? '\x1b[32m' : '\x1b[31m';
+        const entry = r.entryPrice != null ? ` entry=${r.entryPrice}` : '';
+        log(`${asset} ${args.direction}: ${r.success ? 'OK' : 'FAIL'}${entry}${r.error ? ` - ${r.error}` : ''}`, color);
+    }
+
+    return results;
+}
+
+async function run() {
+    const args = parseArgs(process.argv);
+    if (args.help) {
+        printHelp();
+        return;
+    }
+
+    if (args.realTrade) args.dryRun = false;
+
+    const browser = await puppeteer.launch({
+        headless: args.headless,
+        slowMo: args.slowMo,
+        protocolTimeout: args.protocolTimeout,
+        defaultViewport: null,
+        args: ['--start-maximized'],
+    });
+
+    try {
+        const page = await browser.newPage();
+        page.setDefaultTimeout(args.defaultTimeoutMs);
+        page.setDefaultNavigationTimeout(args.navTimeoutMs);
+
+        log('Navigating to Pocket Option demo page...', '\x1b[36m');
+        await page.goto(DEMO_URL, { waitUntil: 'networkidle0', timeout: args.navTimeoutMs });
+        await waitForTradingUi(page);
+
+        await promptEnter('Log in and confirm demo page is ready, then press Enter to continue...\n');
+
+        if (args.uiSettleWaitMs > 0) {
+            log(`UI settle wait: ${args.uiSettleWaitMs}ms`, '\x1b[36m');
+            await new Promise(r => setTimeout(r, args.uiSettleWaitMs));
+        }
+
+        if (args.listAssets) {
+            const rows = await listVisibleAssets(page, args.limitAssets);
+            log(`Visible assets found: ${rows.length}`, '\x1b[36m');
+            if (rows.length === 0) {
+                log('No assets discovered from current DOM selectors.', '\x1b[33m');
+            } else {
+                rows.forEach((r, i) => log(`  ${i + 1}. data-id="${r.id}" text="${r.text}"`, '\x1b[36m'));
+            }
+            log('Test run complete.', '\x1b[32m');
+            return;
+        }
+
+        resetSessionCalibration();
+
+        if (args.withDb || args.fromQueue) {
+            log('DB mode flags detected, but this harness is configured to NOT write DB. Ignoring --with-db/--from-queue.', '\x1b[33m');
+        }
+
+        log(`Mode: ${args.dryRun ? 'DRY' : 'REAL TRADE'} | assets=${args.assets.join(', ')} direction=${args.direction} amount=$${args.tradeAmount} expiry=${args.expirationSec}s`, '\x1b[35m');
+
+        const results = await executeDirect(page, args);
+
+        const placed = results.filter(r => r.success || r.status === 'EXECUTED').length;
+
+        if (args.syncResults && !args.dryRun) {
+            const waitSec = args.resultWaitSec != null ? args.resultWaitSec : (args.expirationSec + 5);
+            if (waitSec > 0) {
+                log(`Waiting ${waitSec}s before result sync...`, '\x1b[36m');
+                await new Promise(r => setTimeout(r, waitSec * 1000));
+            }
+
+            log('DB sync disabled by design (no DB writes). Showing DOM closed deals only.', '\x1b[33m');
+            log('Note: this PO compact DOM format often omits market entry/exit prices, so entry/exit may show as N/A.', '\x1b[33m');
+
+            const balance = await getBalanceFromDOM(page);
+            if (balance) log(`Account balance: ${balance}`, '\x1b[36m');
+
+            await showClosedDeals(page, Math.max(1, placed), {
+                fallbackDirection: args.direction,
+                fallbackAmount: args.tradeAmount,
+                debugDeals: args.debugDeals,
+            });
+        }
+
+        log('Test run complete.', '\x1b[32m');
+    } finally {
+        await browser.close();
+    }
+}
+
+run().catch((err) => {
+    log(`Fatal error: ${err.message}`, '\x1b[31m');
+    console.error(err);
+    process.exit(1);
+});
