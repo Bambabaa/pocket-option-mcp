@@ -213,6 +213,58 @@ function parseNumberLoose(v) {
     return Number.isFinite(n) ? n : null;
 }
 
+function parseClockParts(text) {
+    if (!text) return null;
+    const m = String(text).trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/);
+    if (!m) return null;
+    const h = parseInt(m[1], 10);
+    const min = parseInt(m[2], 10);
+    const sec = parseInt(m[3] || '0', 10);
+    const ms = parseInt((m[4] || '0').padEnd(3, '0'), 10);
+    if (h < 0 || h > 23 || min < 0 || min > 59 || sec < 0 || sec > 59 || ms < 0 || ms > 999) return null;
+    return { h, m: min, s: sec, ms };
+}
+
+function clockPartsToMs(parts) {
+    if (!parts) return null;
+    return (((parts.h * 60) + parts.m) * 60 + parts.s) * 1000 + parts.ms;
+}
+
+function formatClockParts(parts, includeMs = false) {
+    if (!parts) return null;
+    const base = `${String(parts.h).padStart(2, '0')}:${String(parts.m).padStart(2, '0')}:${String(parts.s).padStart(2, '0')}`;
+    return includeMs ? `${base}.${String(parts.ms).padStart(3, '0')}` : base;
+}
+
+function normalizeDayDeltaMs(deltaMs) {
+    let d = deltaMs;
+    if (d > 43200000) d -= 86400000;
+    if (d < -43200000) d += 86400000;
+    return d;
+}
+
+function addMsToClockParts(parts, deltaMs) {
+    const base = clockPartsToMs(parts);
+    if (base == null) return null;
+    const wrapped = ((base + deltaMs) % 86400000 + 86400000) % 86400000;
+    const h = Math.floor(wrapped / 3600000);
+    const remHour = wrapped % 3600000;
+    const m = Math.floor(remHour / 60000);
+    const remMin = remHour % 60000;
+    const s = Math.floor(remMin / 1000);
+    const ms = remMin % 1000;
+    return { h, m, s, ms };
+}
+
+function brokerCandleKeyFromParts(parts, timeframeMin = 1) {
+    if (!parts) return null;
+    const totalMinutes = (parts.h * 60) + parts.m;
+    const bucketMinutes = Math.floor(totalMinutes / timeframeMin) * timeframeMin;
+    const h = Math.floor(bucketMinutes / 60) % 24;
+    const m = bucketMinutes % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 function normalizeAssetLabel(label) {
     if (!label) return null;
     const txt = String(label).trim().toUpperCase();
@@ -263,6 +315,20 @@ async function expandClosedDealRowsBestEffort(page, limit = 5) {
     } catch (_) {
         // best-effort only
     }
+}
+
+async function readBrokerTimeContext(page) {
+    return page.evaluate(() => {
+        const txt = (sel) => {
+            const el = document.querySelector(sel);
+            return el ? (el.textContent || '').trim() : null;
+        };
+
+        return {
+            brokerNow: txt('.current-time__time'),
+            brokerZone: txt('.current-time__zone')
+        };
+    }).catch(() => ({ brokerNow: null, brokerZone: null }));
 }
 
 async function getClosedDealsRich(page, limit = 20) {
@@ -330,6 +396,13 @@ async function getClosedDealsRich(page, limit = 20) {
             const tm = closeClockText.match(/(\d{1,2}):(\d{2})/);
             if (tm) closeTimeHHMM = { h: parseInt(tm[1], 10), m: parseInt(tm[2], 10) };
 
+            const timerTexts = Array.from(full.querySelectorAll('.time-info .timer'))
+                .map(node => (node.textContent || '').replace(/\s+/g, ' ').trim());
+            const openTimerText = timerTexts.find(t => /^Open time:/i.test(t)) || null;
+            const closeTimerText = timerTexts.find(t => /^Closing time:/i.test(t)) || null;
+            const openTimeText = openTimerText ? openTimerText.replace(/^Open time:\s*/i, '') : null;
+            const closeTimeText = closeTimerText ? closeTimerText.replace(/^Closing time:\s*/i, '') : null;
+
             const forecastText = (full.querySelector('.forecast .act')?.textContent || '').trim().toUpperCase();
             let direction = null;
             if (forecastText === 'SELL' || forecastText === 'PUT') direction = 'PUT';
@@ -388,6 +461,8 @@ async function getClosedDealsRich(page, limit = 20) {
                 payout,
                 inferredAmount,
                 closeTimeHHMM,
+                openTimeText,
+                closeTimeText,
                 entryPrice,
                 exitPrice,
                 hasRichPrices,
@@ -403,6 +478,10 @@ async function showClosedDeals(page, expectedCount = 1, options = {}) {
     const fallbackDirection = options.fallbackDirection || null;
     const fallbackAmount = Number.isFinite(options.fallbackAmount) ? options.fallbackAmount : null;
     const debugDeals = options.debugDeals === true;
+    const expirationSec = Number.isFinite(options.expirationSec) ? options.expirationSec : 60;
+
+    const brokerTimeContext = await readBrokerTimeContext(page);
+    const brokerNowParts = parseClockParts(brokerTimeContext.brokerNow);
 
     const deals = await getClosedDealsRich(page, Math.max(10, expectedCount + 3));
     if (!deals || deals.length === 0) {
@@ -410,6 +489,9 @@ async function showClosedDeals(page, expectedCount = 1, options = {}) {
         return;
     }
     log('Closed deals snapshot:', '\x1b[35m');
+    if (brokerTimeContext.brokerNow || brokerTimeContext.brokerZone) {
+        log(`Broker time context: now=${brokerTimeContext.brokerNow || 'NA'} zone=${brokerTimeContext.brokerZone || 'NA'}`, '\x1b[36m');
+    }
     const richCount = deals.filter(d => d.hasRichPrices).length;
     log(`Rich price rows: ${richCount}/${deals.length}`, richCount > 0 ? '\x1b[36m' : '\x1b[33m');
     deals.slice(0, expectedCount).forEach((d, i) => {
@@ -436,13 +518,28 @@ async function showClosedDeals(page, expectedCount = 1, options = {}) {
         const hhmm = d.closeTimeHHMM && Number.isFinite(d.closeTimeHHMM.h) && Number.isFinite(d.closeTimeHHMM.m)
             ? ` close=${String(d.closeTimeHHMM.h).padStart(2, '0')}:${String(d.closeTimeHHMM.m).padStart(2, '0')}`
             : '';
+        const openParts = parseClockParts(d.openTimeText);
+        const closeParts = parseClockParts(d.closeTimeText);
+        const openBroker = openParts ? ` openBroker=${formatClockParts(openParts, true)}` : '';
+        const closeBroker = closeParts ? ` closeBroker=${formatClockParts(closeParts, true)}` : '';
+        const entryCandleKey = brokerCandleKeyFromParts(openParts || closeParts, 1);
+        const closeCandleKey = brokerCandleKeyFromParts(closeParts, 1);
+        const expectedCloseParts = openParts ? addMsToClockParts(openParts, expirationSec * 1000) : null;
+        const expectedCloseText = expectedCloseParts ? ` expectedClose=${formatClockParts(expectedCloseParts, true)}` : '';
+        const deltaSecFromExpected = (expectedCloseParts && closeParts)
+            ? normalizeDayDeltaMs(clockPartsToMs(closeParts) - clockPartsToMs(expectedCloseParts)) / 1000
+            : null;
+        const deltaSecText = deltaSecFromExpected != null ? ` deltaSec=${deltaSecFromExpected.toFixed(3)}` : '';
+        const brokerNowText = brokerNowParts ? ` brokerNow=${formatClockParts(brokerNowParts)}` : '';
+        const entryBucket = entryCandleKey ? ` entryCandle=${entryCandleKey}` : '';
+        const closeBucket = closeCandleKey ? ` closeCandle=${closeCandleKey}` : '';
         const entry = d.entryPrice != null ? ` entry=${d.entryPrice}` : ' entry=N/A';
         const exit = d.exitPrice != null ? ` exit=${d.exitPrice}` : ' exit=N/A';
         const richTag = d.hasRichPrices ? ' prices=RICH' : ' prices=PARTIAL';
         const raw = (debugDeals || d.result === 'UNKNOWN') && d.rawText ? ` raw="${d.rawText}"` : '';
         const direction = d.direction || fallbackDirection || '?';
         const color = d.result === 'WIN' ? '\x1b[32m' : d.result === 'LOSS' ? '\x1b[31m' : '\x1b[33m';
-        log(`  ${i + 1}. ${d.asset || normalizeAssetLabel(options.fallbackAssetLabel) || '?'} ${direction} ${d.result}${pl}${payout}${inferred}${hhmm}${entry}${exit}${richTag}${raw}`, color);
+        log(`  ${i + 1}. ${d.asset || normalizeAssetLabel(options.fallbackAssetLabel) || '?'} ${direction} ${d.result}${pl}${payout}${inferred}${hhmm}${openBroker}${closeBroker}${brokerNowText}${expectedCloseText}${deltaSecText}${entryBucket}${closeBucket}${entry}${exit}${richTag}${raw}`, color);
     });
 }
 
@@ -553,6 +650,7 @@ async function run() {
                 fallbackDirection: args.direction,
                 fallbackAmount: args.tradeAmount,
                 fallbackAssetLabel: args.assets[0] || null,
+                expirationSec: args.expirationSec,
                 debugDeals: args.debugDeals,
             });
         }
