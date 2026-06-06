@@ -271,7 +271,7 @@ function convertToUTC6(timestamp) {
         timestamp *= 1000;
     }
     // Offset set to 0 — DB handles timezone conversion
-    const OFFSET_SECONDS = 0;
+    const OFFSET_SECONDS = 7200; // 2 hours in seconds (UTC-2) to align with Pocket Option server time, but DB stores in UTC-6
     const offsetMs = OFFSET_SECONDS * 1000;
     const corrected = new Date(timestamp + offsetMs);
     return Math.floor(corrected.getTime() / 1000);
@@ -313,14 +313,18 @@ function log(msg, color = 'reset') {
     console.log(`${colors[color]}[${timestamp}] ${message}${colors.reset}`);
 }
 
-function computeDirectionFromRecentMove(asset, candles) {
+// mode='fade'   → bet AGAINST the recent 3-bar move (reversal): up→PUT, down→CALL
+// mode='follow' → bet WITH the recent 3-bar move (continuation): up→CALL, down→PUT
+function computeDirectionFromRecentMove(asset, candles, mode = 'fade') {
     if (!candles || candles.length < 4) return null;
     // candles: [timestamp, open, close, high, low]
     const current = candles[candles.length - 1];
     const threeBack = candles[candles.length - 4];
     const recentMove = current[2] - threeBack[2]; // close - close
     if (recentMove === 0) return null; // flat → ambiguous
-    return recentMove > 0 ? 'PUT' : 'CALL'; // fade it
+    const fade = recentMove > 0 ? 'PUT' : 'CALL';
+    if (mode === 'follow') return fade === 'PUT' ? 'CALL' : 'PUT'; // continuation
+    return fade;
 }
 
 function evaluateMLGate(indicatorData, asset, candles, livePayout) {
@@ -353,20 +357,26 @@ function evaluateMLGate(indicatorData, asset, candles, livePayout) {
         return null; // Neither model approved
     }
 
-    // Direction: fade recent 3-bar move
-    const direction = computeDirectionFromRecentMove(asset, candles);
+    // Direction is model-aware:
+    //   TREE   → 'follow' (continuation). TREE only fires on band-break momentum bars;
+    //            fading them lost (~30% live). Following the breakout validated ~70%
+    //            across 3 snapshots (2026-06-05). See memory: tree_leg_broken_live.
+    //   LOGREG → 'fade' (reversal), its original validated behavior (~70% live).
+    const isTree = modelUsed.includes('TREE');
+    const dirMode = isTree ? 'follow' : 'fade';
+    const direction = computeDirectionFromRecentMove(asset, candles, dirMode);
     if (!direction) return null; // Not enough history or flat move
 
-    const expectedWR = modelUsed.includes('TREE') ? '84.6%' : '60.7%';
+    const expectedWR = isTree ? '~64% (continuation)' : '60.7%';
 
     return {
         direction,
         strategyUsed: modelUsed,
         tier: 1,
         ml_score: score,
-        ml_model: modelUsed.includes('TREE') ? 'tree' : 'logreg',
+        ml_model: isTree ? 'tree' : 'logreg',
         reasons: [
-            `[ML-GATE] ${modelUsed}`,
+            `[ML-GATE] ${modelUsed} (${dirMode})`,
             `Score: ${score.toFixed(4)}, Payout: ${(livePayout * 100).toFixed(1)}%`,
             `Expected WR @ 15m: ${expectedWR}`,
         ],

@@ -46,6 +46,9 @@ const SEL = {
         '.divider ul li a'
     ],
     dealsListItem: '.deals-list__item',
+    dealItemFull: '.deals-list__item-full',
+    dealExpandToggle: '.deals-list__item .deals-list__item-short, .deals-list__item .open-full-info',
+    dealPriceItem: '.price-info__prices-item, [class*="price-info__prices-item"]',
     // Virtual keyboard digit mapping (nth-child index per digit)
     NUMBERS: { '0': '11', '1': '7', '2': '8', '3': '9', '4': '4', '5': '5', '6': '6', '7': '1', '8': '2', '9': '3' }
 };
@@ -816,6 +819,25 @@ async function getBalanceFromDOM(page) {
 }
 
 /**
+ * Expand closed-deal rows so the detailed view renders. Pocket Option's compact
+ * row omits market entry/exit prices; only the expanded .deals-list__item-full
+ * (with labeled .price-info__prices-item Open/Closing prices) exposes them.
+ * Best-effort: clicks each row's toggle; waits briefly only if rows were clicked.
+ * @param {object} page - Puppeteer page
+ * @param {number} limit - Max rows to expand
+ */
+async function expandClosedDealRowsBestEffort(page, limit = 8) {
+    try {
+        const rows = await page.$$(SEL.dealExpandToggle || '.deals-list__item .deals-list__item-short, .deals-list__item .open-full-info');
+        const n = Math.min(limit, rows.length);
+        for (let i = 0; i < n; i++) {
+            try { await rows[i].click(); await new Promise(r => setTimeout(r, 120)); } catch (_) { /* per-row click may fail */ }
+        }
+        if (n > 0) await new Promise(r => setTimeout(r, 400));
+    } catch (_) { /* best-effort only */ }
+}
+
+/**
  * Parse .deals-list__item for WIN/LOSS/DRAW, profit/loss, and payout %.
  * @param {object} page - Puppeteer page
  * @param {number} limit - Max items to return
@@ -825,6 +847,8 @@ async function getBalanceFromDOM(page) {
 async function parseDealsListResult(page, limit = 5, selectorOverride = null) {
     const sel = selectorOverride || SEL.dealsListItem || '.deals-list__item';
     try {
+        // Expand rows first so the detailed view (.price-info__prices) renders open/close prices.
+        await expandClosedDealRowsBestEffort(page, Math.max(3, Math.min(8, limit)));
         return await page.evaluate((selector, maxItems) => {
             const els = document.querySelectorAll(selector);
             const out = [];
@@ -925,17 +949,37 @@ async function parseDealsListResult(page, limit = 5, selectorOverride = null) {
                     if (priceM[2]) exitPrice = parseFloat(priceM[2]);
                 }
 
+                // Rich prices (preferred): the expanded row exposes labeled Open/Closing prices in
+                // .price-info__prices-item — the broker's actual open/close. Prefer them over the fuzzy
+                // compact-text regex above whenever present. (Compact rows omit prices entirely.)
+                const fullEl = el.querySelector('.deals-list__item-full') || el;
+                const priceItems = Array.from(fullEl.querySelectorAll('.price-info__prices-item, [class*="price-info__prices-item"]'))
+                    .map(node => (node.textContent || '').replace(/\s+/g, ' ').trim());
+                const parsePriceLabel = (re) => {
+                    const t = priceItems.find(x => re.test(x));
+                    if (!t) return null;
+                    const cleaned = t.split(':').slice(1).join(':').replace(/,/g, '').replace(/[^\d.+-]/g, '');
+                    const n = parseFloat(cleaned);
+                    return Number.isFinite(n) ? n : null;
+                };
+                const richEntry = parsePriceLabel(/open\s*price\s*:/i);
+                const richExit = parsePriceLabel(/clos(?:e|ing)\s*price\s*:/i);
+                if (richEntry != null) entryPrice = richEntry;
+                if (richExit != null) exitPrice = richExit;
+                const hasRichPrices = richEntry != null && richExit != null;
+
                 out.push({
                     result: result || 'UNKNOWN',
                     profitLoss,
                     payout,
-                    rawText: text.slice(0, 120),
+                    rawText: text.slice(0, 200),
                     asset,
                     direction,
                     inferredAmount,
                     closeTimeHHMM,
                     entryPrice,
-                    exitPrice
+                    exitPrice,
+                    hasRichPrices
                 });
             }
             return out;
@@ -1086,8 +1130,6 @@ async function syncLiveTradeResultsFromDOM(page, database, options = {}) {
         let matchedIdx = -1;
         const expirySec = expirySeconds; // already resolved above — was ?? 65 (wrong for 15m)
         const expectedAmount = options.tradeAmount ?? defaultAmount;
-        const orderSignalTs = order.signal_timestamp > 1e12 ? Math.floor(order.signal_timestamp / 1000) : order.signal_timestamp;
-        const orderExpectedClose = orderSignalTs + expirySec;
         const candidates = [];
         for (let j = 0; j < deals.length; j++) {
             if (usedDealIndices.has(j)) continue;
@@ -1102,12 +1144,21 @@ async function syncLiveTradeResultsFromDOM(page, database, options = {}) {
                     score += Math.max(0, 50 - Math.min(diff, 50));
                 }
                 if (d.closeTimeHHMM) {
-                    const expDate = new Date(orderExpectedClose * 1000);
-                    const expMins = expDate.getUTCHours() * 60 + expDate.getUTCMinutes();
-                    const dealMins = d.closeTimeHHMM.h * 60 + d.closeTimeHHMM.m;
-                    const delta = Math.min(Math.abs(dealMins - expMins), Math.abs(dealMins - expMins + 1440), Math.abs(dealMins - expMins - 1440));
-                    // Only allow matches within 1 minute. An old trade from 2 mins ago should NOT match.
-                    if (delta <= 1) score += Math.max(0, 25 - Math.min(delta, 25));
+                    // Anchor on the order's REAL execution time (last_update_at, written as UTC ISO at
+                    // placement), NOT the broker-feed signal_timestamp. Then format the expected close in
+                    // LOCAL time (getHours/getMinutes) so it compares like-for-like with the deals-list
+                    // close time, which the browser renders in its local tz. This removes the
+                    // feed(UTC+2) vs display(local, UTC-5) ~7h mismatch that made this score never fire.
+                    const placeMs = Date.parse(order.last_update_at) ||
+                        (order.created_at ? Date.parse(String(order.created_at).replace(' ', 'T') + 'Z') : NaN);
+                    if (placeMs) {
+                        const expDate = new Date(placeMs + expirySec * 1000);
+                        const expMins = expDate.getHours() * 60 + expDate.getMinutes();   // LOCAL — matches deals-list
+                        const dealMins = d.closeTimeHHMM.h * 60 + d.closeTimeHHMM.m;
+                        const delta = Math.min(Math.abs(dealMins - expMins), Math.abs(dealMins - expMins + 1440), Math.abs(dealMins - expMins - 1440));
+                        // ±2 min absorbs execution delay + minute rounding; older trades fall outside → 0.
+                        if (delta <= 2) score += Math.max(0, 25 - Math.min(delta, 25));
+                    }
                 }
                 candidates.push({ deal: d, idx: j, score });
             }
@@ -1140,9 +1191,9 @@ async function syncLiveTradeResultsFromDOM(page, database, options = {}) {
             const parsed = matchedDeal;
             const inferred = inferAmountFromDeal(parsed, expectedAmount);
             const amount = (inferred != null && inferred > 0) ? inferred : (expectedAmount ?? defaultAmount);
-            const exitTs = Math.floor(Date.now() / 1000);
             const notes = (order.status_reason || '').includes('dry') ? 'dry-run' : 'live-execution';
-            const entryTs = inferEntryTimestamp(order);
+            const entryTs = inferEntryTimestamp(order);              // real UTC: actual placement (last_update_at)
+            const exitTs = entryTs + expirySeconds;                  // real-UTC settlement (was Date.now() = sync time)
             const minConsecutive = options.minConsecutiveWinsForTrading ?? 2;
             const result = parsed.result || 'UNKNOWN';
             const profitLoss = (result === 'LOSS' && (parsed.profitLoss == null || parsed.profitLoss === 0))
@@ -1151,22 +1202,27 @@ async function syncLiveTradeResultsFromDOM(page, database, options = {}) {
             const priceM = (order.status_reason || '').match(/entry_price=([\d.]+)/);
             const entryPrice = priceM ? parseFloat(priceM[1]) : (matchedDeal.entryPrice || null);
 
-            // Database-backed Price Fallback (if DOM parsing failed)
+            // Database-backed price fallback (only when rich DOM prices were absent).
+            // Candles are stored in the BROKER FEED clock (~2h ahead of real UTC), so candle lookups
+            // MUST anchor on signal_timestamp (feed) — never Date.now() (real UTC), which is ~2h off
+            // the candle clock and never matches. Entry = signal bar; exit = +expiry, mirroring the
+            // validation's arr[p+3] convention (signal_timestamp + expirySeconds, all feed clock).
             let finalEntryPrice = entryPrice;
             let finalExitPrice = parsed.exitPrice || null;
 
             if (!finalEntryPrice || !finalExitPrice) {
-                // Try to find candles within ±30s of the timestamps
-                // Support offset matching for UTC vs Local discrepancies
+                const sigTs = order.signal_timestamp > 1e12 ? Math.floor(order.signal_timestamp / 1000) : order.signal_timestamp;
+                const exitCandleTs = sigTs + expirySeconds;          // feed clock, same as candles
+
                 const entryCandle = !finalEntryPrice ? await database.get(
-                    'SELECT close FROM candles WHERE asset = ? AND (ABS(timestamp - ?) < 35 OR ABS(timestamp - (? + 21600)) < 35) ORDER BY ABS(timestamp - ?) LIMIT 1',
-                    [order.asset, order.signal_timestamp, order.signal_timestamp, order.signal_timestamp]
+                    'SELECT close FROM candles WHERE asset = ? AND ABS(timestamp - ?) < 35 ORDER BY ABS(timestamp - ?) LIMIT 1',
+                    [order.asset, sigTs, sigTs]
                 ) : null;
                 if (entryCandle) finalEntryPrice = entryCandle.close;
 
                 const exitCandle = !finalExitPrice ? await database.get(
-                    'SELECT close FROM candles WHERE asset = ? AND (ABS(timestamp - ?) < 35 OR ABS(timestamp - (? + 21600)) < 35) ORDER BY ABS(timestamp - ?) LIMIT 1',
-                    [order.asset, exitTs, exitTs, exitTs]
+                    'SELECT close FROM candles WHERE asset = ? AND ABS(timestamp - ?) < 35 ORDER BY ABS(timestamp - ?) LIMIT 1',
+                    [order.asset, exitCandleTs, exitCandleTs]
                 ) : null;
                 if (exitCandle) finalExitPrice = exitCandle.close;
             }

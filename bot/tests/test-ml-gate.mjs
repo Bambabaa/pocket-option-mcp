@@ -26,7 +26,7 @@ const { evaluateGate, getStats, recordEvaluation } = mlGate;
 async function loadRows() {
   return new Promise((resolve, reject) => {
     const sqlite3 = sqlite3Module.verbose();
-    const db = new sqlite3.Database('data/agent.db', (err) => {
+    const db = new sqlite3.Database('data/trading_data_5-04_6.db', (err) => {
       if (err) reject(err);
       db.all(`
         SELECT c.timestamp, c.asset, c.open, c.high, c.low, c.close, c.volume,
