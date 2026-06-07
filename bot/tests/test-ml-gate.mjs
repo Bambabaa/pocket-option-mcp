@@ -56,18 +56,26 @@ function buildAssetSeries(rows) {
   return { byAsset, posByKey };
 }
 
-// ── Direction: fade the recent 3-bar move (same-asset, gap-safe) ──────────
-function determineDirection(sig, byAsset, posByKey) {
+// ── Direction (same-asset, gap-safe) — model-aware, mirrors pocket-option-bot.js
+//   mode='fade'   (LOGREG): bet against the 3-bar move  → up→PUT, down→CALL
+//   mode='follow' (TREE)  : bet with the 3-bar move     → up→CALL, down→PUT
+function determineDirection(sig, byAsset, posByKey, mode = 'fade') {
   const arr = byAsset.get(sig.asset);
   const p = posByKey.get(`${sig.asset}|${sig.timestamp}`);
   if (arr == null || p == null || p < 3) return null;   // not enough history
   const recentMove = sig.close - arr[p - 3].close;       // SAME asset, 3 bars back
   if (recentMove === 0) return null;                     // flat → ambiguous
-  return recentMove > 0 ? 'PUT' : 'CALL';                // fade it
+  const fade = recentMove > 0 ? 'PUT' : 'CALL';
+  if (mode === 'follow') return fade === 'PUT' ? 'CALL' : 'PUT';
+  return fade;
 }
+
+// model → direction mode (matches the deployed bot)
+const MODE_FOR = (model) => (model === 'tree' ? 'follow' : 'fade');
 
 // ── CSV with per-asset outcome lookups ──────────────────────────────────────
 function convertToCSV(signals, model, byAsset, posByKey) {
+  const mode = MODE_FOR(model);
   const headers = [
     'timestamp', 'asset', 'open', 'high', 'low', 'close',
     'bb_upper', 'bb_lower', 'cci_20', 'stc_value', 'stoch_k', 'stoch_d',
@@ -87,7 +95,7 @@ function convertToCSV(signals, model, byAsset, posByKey) {
     const score = model === 'tree' ? sig.tree_score : sig.logreg_score;
     const arr = byAsset.get(sig.asset);
     const p = posByKey.get(`${sig.asset}|${sig.timestamp}`);
-    const direction = determineDirection(sig, byAsset, posByKey);
+    const direction = determineDirection(sig, byAsset, posByKey, mode);
     const recentMove = (p != null && p >= 3) ? sig.close - arr[p - 3].close : null;
 
     // SAME-asset forward bars by position (gap-safe; never crosses assets)
@@ -131,13 +139,13 @@ function convertToCSV(signals, model, byAsset, posByKey) {
 }
 
 // ── WR helper (per-asset, by horizon) ──────────────────────────────────────
-function winRate(signals, byAsset, posByKey, stepsAhead) {
+function winRate(signals, byAsset, posByKey, stepsAhead, mode = 'fade') {
   const outs = [];
   for (const sig of signals) {
     const arr = byAsset.get(sig.asset);
     const p = posByKey.get(`${sig.asset}|${sig.timestamp}`);
     if (arr == null || p == null) continue;
-    const dir = determineDirection(sig, byAsset, posByKey);
+    const dir = determineDirection(sig, byAsset, posByKey, mode);
     if (!dir) continue;
     const fut = (p + stepsAhead < arr.length) ? arr[p + stepsAhead] : null;
     if (!fut) continue;
@@ -190,15 +198,16 @@ async function runTest() {
   console.log(`Consensus (both agree):     ${stats.consensus_approved} approved (${stats.consensus_approval_rate})`);
   console.log('\n═══════════════════════════════════════════════════════════\n');
 
-  // realized WR per horizon, correct per-asset direction
-  for (const [label, sigs] of [['TREE', treeApproved], ['LOGREG', lrApproved]]) {
-    const w5 = winRate(sigs, byAsset, posByKey, 1);
-    const w10 = winRate(sigs, byAsset, posByKey, 2);
-    const w15 = winRate(sigs, byAsset, posByKey, 3);
+  // realized WR per horizon, model-aware direction (TREE=follow, LOGREG=fade)
+  for (const [label, sigs, model] of [['TREE', treeApproved, 'tree'], ['LOGREG', lrApproved, 'logreg']]) {
+    const mode = MODE_FOR(model);
+    const w5 = winRate(sigs, byAsset, posByKey, 1, mode);
+    const w10 = winRate(sigs, byAsset, posByKey, 2, mode);
+    const w15 = winRate(sigs, byAsset, posByKey, 3, mode);
     const fmt = (w) => w.wr == null ? 'N/A' : `${w.wr.toFixed(1)}% (n=${w.n})`;
-    console.log(`${label} realized WR — 5m: ${fmt(w5)}  10m: ${fmt(w10)}  15m: ${fmt(w15)}`);
+    console.log(`${label} (${mode}) realized WR — 5m: ${fmt(w5)}  10m: ${fmt(w10)}  15m: ${fmt(w15)}`);
     // direction split
-    const dirs = sigs.map(s => determineDirection(s, byAsset, posByKey)).filter(Boolean);
+    const dirs = sigs.map(s => determineDirection(s, byAsset, posByKey, mode)).filter(Boolean);
     const calls = dirs.filter(d => d === 'CALL').length;
     console.log(`   direction split: CALL=${calls}  PUT=${dirs.length - calls}  (skipped=${sigs.length - dirs.length})`);
   }
