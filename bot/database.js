@@ -348,7 +348,7 @@ class TradingDatabase {
                        high = excluded.high,
                        low = excluded.low,
                        close = excluded.close,
-                       volume = excluded.volume`;
+                       volume = MAX(candles.volume, excluded.volume)`;
 
         try {
             const result = await this.run(sql, [asset, timestamp, open, high, low, close, volume]);

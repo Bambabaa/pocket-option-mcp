@@ -642,12 +642,17 @@ async function processWebSocketMessage(payload, page) {
                 .reverse()
                 .filter(c => c[0] % STATE.PERIOD === 0);
 
-            // Process history data
+            // Process history data — also tally tick volume per candle period from the raw
+            // history ticks (PO sends no per-candle volume; tick count is the only proxy).
+            const histVolByPeriod = {};
             if (data.history && Array.isArray(data.history)) {
                 for (const [tstamp, value] of data.history) {
                     const rawTimestamp = parseInt(parseFloat(tstamp));
                     const timestamp = rawTimestamp;  // DB layer handles timezone conversion
-                    const candle = [timestamp, value, value, value, value];
+                    const pStart = Math.floor(timestamp / STATE.PERIOD) * STATE.PERIOD;
+                    histVolByPeriod[pStart] = (histVolByPeriod[pStart] || 0) + 1; // tick volume per period
+                    const volume = 0;
+                    const candle = [timestamp, value, value, value, value, volume]; // [timestamp, open, close, high, low, volume]
 
                     // Update candle based on value
                     candle[2] = value; // close
@@ -675,6 +680,7 @@ async function processWebSocketMessage(payload, page) {
                 const high = candle[3];
                 const low = candle[4];
                 const close = candle[2];
+                const volume = histVolByPeriod[candle[0]] || 0; // tick volume from history window (partial; older bars = 0)
 
                 // Skip flat candles (incomplete candles with no price movement)
                 if (open === high && high === low && low === close) {
@@ -689,7 +695,7 @@ async function processWebSocketMessage(payload, page) {
                         high,
                         low,
                         close,
-                        0 // volume (not available yet)
+                        volume
                     );
                     storedCandles++;
                 } catch (error) {
@@ -850,7 +856,7 @@ async function processWebSocketMessage(payload, page) {
                             currentCandle.high,
                             currentCandle.low,
                             currentCandle.close,
-                            0
+                            tickCount // tick volume: # WS ticks aggregated this bar (PO sends no real volume)
                         );
                     } catch (err) {
                         // ignore duplicates
