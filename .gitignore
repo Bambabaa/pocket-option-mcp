@@ -20,3 +20,4 @@ data/trading_data_v1.db
 data/trading_data_v1.db
 *.db
 *.db
+bot/research/thrust_gate/__pycache__/export_xgb_gate.cpython-314.pyc
