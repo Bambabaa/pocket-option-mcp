@@ -21,8 +21,14 @@ from scipy.special import expit
 
 FEATURES = ["Delta_Hist","Div_MACD","Prox_MACD","K_Decay","V_Exh","Z_ROC"]
 EXPIRY, LOOKBACK = 3, 3
-OOS_AUC = {"logreg": 0.5129, "gb_stumps": 0.5985}   # from purged CV
+OOS_AUC = {"logreg": 0.5133, "gb_stumps": 0.5321}   # from purged CV (orthogonal_macd.py, re-run 2026-06-07)
 GATE = 0.65   # default research gate (0.85 produced ~0 fires for these features)
+
+# Portable paths (was hardcoded to /home/claude). Resolve relative to this file.
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+AGENT_DB = os.path.join(REPO, "data", "agent.db")
+OUT = lambda f: os.path.join(HERE, f)
 
 def engineer(g):
     d=g.sort_values("timestamp").reset_index(drop=True).copy()
@@ -44,7 +50,7 @@ def engineer(g):
     return d
 
 def main():
-    con=sqlite3.connect("/home/claude/agent.db")
+    con=sqlite3.connect(f"file:{AGENT_DB}?mode=ro", uri=True)   # read-only: no SQLite write/corruption
     df=pd.read_sql("SELECT asset,timestamp,open,high,low,close FROM candles ORDER BY asset,timestamp",con); con.close()
     feat=pd.concat([engineer(g) for _,g in df.groupby("asset")],ignore_index=True)
     feat=feat.dropna(subset=FEATURES+["Target_Reversal"]).reset_index(drop=True)
@@ -94,7 +100,7 @@ def main():
         "status":"RESEARCH_SHADOW",   # not validated for live; OOS AUC below 0.636 ceiling
         "note":"OOS AUC below oscillator-stack ceiling (0.636). Shadow/log only."
     }
-    json.dump(params,open("/home/claude/outputs/macd_gate_params.json","w"),indent=2)
+    json.dump(params,open(OUT("macd_gate_params.json"),"w"),indent=2)
 
     # ---- fixtures for JS parity (real feature vectors + model probas) ----
     idx=np.linspace(0,len(X)-1,600).astype(int)
@@ -103,14 +109,14 @@ def main():
     for i in idx:
         fixtures.append({"features":{f:float(feat.iloc[i][f]) for f in FEATURES},
                          "logreg":float(proba_lr[i]),"gb":float(proba_gb[i])})
-    json.dump(fixtures,open("/home/claude/outputs/macd_gate_fixtures.json","w"))
+    json.dump(fixtures,open(OUT("macd_gate_fixtures.json"),"w"))
     # also a feature-parity fixture: full per-asset OHLC for one asset + its computed features
     a="EURUSD"; one=df[df.asset==a].sort_values("timestamp").reset_index(drop=True)
     fe=engineer(one)
     feat_fix={"asset":a,
               "bars":one[["timestamp","open","high","low","close"]].to_dict("records"),
               "expected":fe.dropna(subset=FEATURES)[["timestamp"]+FEATURES].to_dict("records")}
-    json.dump(feat_fix,open("/home/claude/outputs/macd_feature_fixtures.json","w"))
+    json.dump(feat_fix,open(OUT("macd_feature_fixtures.json"),"w"))
     print(f"  exported params + {len(fixtures)} score fixtures + feature fixtures ({a})")
     print("Saved macd_gate_params.json")
 

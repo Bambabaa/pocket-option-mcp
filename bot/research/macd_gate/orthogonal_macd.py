@@ -21,6 +21,12 @@ FEATURES = ["Delta_Hist","Div_MACD","Prox_MACD","K_Decay","V_Exh","Z_ROC"]
 EXPIRY, LOOKBACK = 3, 3
 THRESHOLDS = [0.60,0.65,0.70,0.75,0.80,0.85]
 
+# Portable paths (was hardcoded to /home/claude). Resolve relative to this file.
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+AGENT_DB = os.path.join(REPO, "data", "agent.db")
+OUT = lambda f: os.path.join(HERE, f)
+
 def wilson(k,n,z=1.96):
     if n==0: return (float("nan"),)*2
     p=k/n; d=1+z*z/n; c=(p+z*z/(2*n))/d
@@ -82,7 +88,7 @@ def md_table(rows):
     return "\n".join(out)
 
 def main():
-    con=sqlite3.connect("/home/claude/agent.db")
+    con=sqlite3.connect(f"file:{AGENT_DB}?mode=ro", uri=True)   # read-only: no SQLite write/corruption
     df=pd.read_sql("SELECT asset,timestamp,open,high,low,close FROM candles ORDER BY asset,timestamp",con); con.close()
     print(f"Loaded {len(df):,} bars, {df.asset.nunique()} assets")
     feat=pd.concat([engineer(g) for _,g in df.groupby("asset")],ignore_index=True)
@@ -119,8 +125,8 @@ def main():
         a=results[name]["auc"]; delta=a-0.636
         verdict="BREAKS ceiling" if delta>0.005 else ("matches" if abs(delta)<=0.005 else "below")
         print(f"  {name}: AUC {a:.4f}  (Δ {delta:+.4f} → {verdict})")
-    json.dump(results,open("/home/claude/outputs/orthogonal_macd_results.json","w"),indent=2,default=str)
-    feat[["asset","timestamp"]+FEATURES+["Target_Reversal"]].to_pickle("/home/claude/macd_kinetic_feat.pkl")
+    json.dump(results,open(OUT("orthogonal_macd_results.json"),"w"),indent=2,default=str)
+    feat[["asset","timestamp"]+FEATURES+["Target_Reversal"]].to_pickle(OUT("macd_kinetic_feat.pkl"))
     print("\nSaved orthogonal_macd_results.json + macd_kinetic_feat.pkl")
     return results, feat
 
