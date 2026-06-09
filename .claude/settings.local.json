@@ -53,7 +53,10 @@
       "Bash(tee research/phase0_r0_output.log)",
       "Bash(tee research/phase0_r2_output.log)",
       "Bash(tee research/phase0_r3_output.log)",
-      "Bash(tee research/phase0_r6_output.log)"
+      "Bash(tee research/phase0_r6_output.log)",
+      "Bash(PYTHONIOENCODING=utf-8 python tick_features.py)",
+      "Bash(PYTHONIOENCODING=utf-8 python separability_probe.py tick_features)",
+      "Bash(echo \"EXIT $?\")"
     ]
   },
   "enableAllProjectMcpServers": true,
