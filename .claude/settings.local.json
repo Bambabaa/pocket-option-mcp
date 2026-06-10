@@ -56,7 +56,11 @@
       "Bash(tee research/phase0_r6_output.log)",
       "Bash(PYTHONIOENCODING=utf-8 python tick_features.py)",
       "Bash(PYTHONIOENCODING=utf-8 python separability_probe.py tick_features)",
-      "Bash(echo \"EXIT $?\")"
+      "Bash(echo \"EXIT $?\")",
+      "Bash(python bot/research/ml4t/skills/alpha-factor-eval/scripts/alpha_eval.py --factor \"abs\\(stoch_k - stoch_d\\)\" --name Stoch_Divergence)",
+      "Bash(python bot/research/ml4t/skills/alpha-factor-eval/scripts/alpha_eval.py --factor \"d\\(stc_value, 1\\)\" --name STC_Momentum)",
+      "Bash(sed -n '1,14p')",
+      "Bash(python bot/research/ml4t/skills/alpha-factor-eval/scripts/alpha_eval.py --factor \"rsi_14\")"
     ]
   },
   "enableAllProjectMcpServers": true,
