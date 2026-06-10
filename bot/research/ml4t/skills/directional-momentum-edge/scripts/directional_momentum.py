@@ -40,7 +40,7 @@ except Exception:
     pass
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_lib"))
-from po_data import load, FEATS, make_folds   # schema-adaptive across both DB layouts
+from po_data import (load, make_folds, engineer_families, family_cols, FAMILIES)  # schema-adaptive
 
 def labels(df, k, n, bar_sec):
     """Per asset: recent-trend sign s, forward move sign, ATR-normed continuation.
@@ -92,91 +92,96 @@ def main():
     valid = df["cont"].notna() & df["fwd_dir"].notna() & (df["s"] != 0)
     df = df[valid].copy()
     horizon_sec, emb_sec = args.horizon*60, args.embargo*bar_sec
+    ts = df["timestamp"]
+    Xall, registry = engineer_families(df)               # all 32 indicators -> family-tagged features
 
-    X = df[FEATS].astype(float); ts = df["timestamp"]
-    oof_state = pd.Series(np.nan, index=df.index)   # predicted state
-    oof_prob  = pd.Series(np.nan, index=df.index)   # prob of predicted state
-    true_state = pd.Series(np.nan, index=df.index)  # realized state (train terciles applied to test)
-
-    for tr_t, te_t in make_folds(ts.values, args.folds):
-        te_start = te_t.min()
-        tr = (ts < te_start) & (ts + horizon_sec < te_start - emb_sec)
-        te = ts.isin(te_t)
-        if tr.sum() < 100 or te.sum() < 30:
-            continue
-        lo, hi = df.loc[tr, "cont"].quantile([1/3, 2/3])     # terciles fit on TRAIN only
-        ytr = state_from_cont(df.loc[tr, "cont"].values, lo, hi)
-        true_state.loc[df.index[te]] = state_from_cont(df.loc[te, "cont"].values, lo, hi)
-        med = X[tr].median()
-        sc = StandardScaler().fit(X[tr].fillna(med))
-        clf = LogisticRegression(penalty="l2", C=0.5, max_iter=2000,
-                                 class_weight="balanced")  # multinomial is the lbfgs default
-        clf.fit(sc.transform(X[tr].fillna(med)), ytr)
-        P = clf.predict_proba(sc.transform(X[te].fillna(med)))
-        # align to classes present in train
-        cls = clf.classes_
-        pred_idx = P.argmax(1)
-        oof_state.loc[df.index[te]] = cls[pred_idx]
-        oof_prob.loc[df.index[te]]  = P[np.arange(len(P)), pred_idx]
-
-    m = oof_state.notna()
-    d = df[m].copy()
-    d["pred"] = oof_state[m]; d["pred_p"] = oof_prob[m]; d["true"] = true_state[m]
+    def run(cols):
+        """Purged walk-forward for one feature set -> (acc, cov, wr, n, per-state wr)."""
+        X = Xall[cols].astype(float)
+        oof_state = pd.Series(np.nan, index=df.index); oof_prob = pd.Series(np.nan, index=df.index)
+        true_state = pd.Series(np.nan, index=df.index)
+        for _, te_t in make_folds(ts.values, args.folds):
+            te_start = te_t.min()
+            tr = (ts < te_start) & (ts + horizon_sec < te_start - emb_sec)
+            te = ts.isin(te_t)
+            if tr.sum() < 100 or te.sum() < 30:
+                continue
+            lo, hi = df.loc[tr, "cont"].quantile([1/3, 2/3])      # terciles fit on TRAIN only
+            ytr = state_from_cont(df.loc[tr, "cont"].values, lo, hi)
+            true_state.loc[df.index[te]] = state_from_cont(df.loc[te, "cont"].values, lo, hi)
+            med = X[tr].median()
+            sc = StandardScaler().fit(X[tr].fillna(med))
+            clf = LogisticRegression(penalty="l2", C=0.5, max_iter=2000, class_weight="balanced")
+            clf.fit(sc.transform(X[tr].fillna(med)), ytr)
+            P = clf.predict_proba(sc.transform(X[te].fillna(med)))
+            cls = clf.classes_; pred_idx = P.argmax(1)
+            oof_state.loc[df.index[te]] = cls[pred_idx]
+            oof_prob.loc[df.index[te]]  = P[np.arange(len(P)), pred_idx]
+        m = oof_state.notna()
+        d = df[m].copy(); d["pred"] = oof_state[m]; d["pred_p"] = oof_prob[m]; d["true"] = true_state[m]
+        acc = float((d["pred"] == d["true"]).mean()) if len(d) else np.nan
+        bet = d[d["pred"] != 1]
+        if args.min_prob > 0:
+            bet = bet[bet["pred_p"] >= args.min_prob]
+        side = np.where(bet["pred"] == 2, bet["s"], -bet["s"])
+        win = (np.sign(bet["fwd_dir"]) == side)
+        cov = len(bet)/len(d) if len(d) else 0.0
+        wr = float(win.mean()) if len(bet) else np.nan
+        per = {}
+        for st, nm in [(2,"gain_with_trend"),(0,"decay_against_trend")]:
+            sub = bet[bet["pred"]==st]
+            if len(sub):
+                sside = np.where(sub["pred"]==2, sub["s"], -sub["s"])
+                per[nm] = (len(sub), float((np.sign(sub["fwd_dir"])==sside).mean()))
+        return dict(n=len(d), acc=acc, cov=cov, wr=wr, per=per)
 
     print(f"\n# Directional-Momentum Edge — horizon {args.horizon}m, trend-k {args.k}b")
-    print(f"features: {len(FEATS)} indicators   rows scored OOF: {len(d)}   "
-          f"break-even WR {breakeven*100:.1f}%\n")
+    print(f"all 32 indicators engineered into {len(registry)} family-tagged features   "
+          f"break-even WR {breakeven*100:.1f}%")
+    print("Sectioned by family (never a single indicator). Each family run standalone + all together.\n")
 
-    # diagnostic: can the model predict state at all?
-    acc = float((d["pred"] == d["true"]).mean())
-    print(f"3-class state prediction accuracy: {acc*100:.1f}%  (random = 33.3%)")
-    # confusion-lite: predicted-state distribution
-    dist = d["pred"].value_counts(normalize=True).reindex([0,1,2]).fillna(0)
-    print(f"predicted mix — decay {dist[0]*100:.0f}% / stable {dist[1]*100:.0f}% / gain {dist[2]*100:.0f}%\n")
+    # per-family ablation: each family alone, then all combined
+    order = list(FAMILIES) + ["all"]
+    res = {fam: run(family_cols(registry, fam)) for fam in order}
 
-    # betting rule: gain(2)->with trend(side=s); decay(0)->against(side=-s); stable(1)->skip
-    bet = d[d["pred"] != 1].copy()
-    if args.min_prob > 0:
-        bet = bet[bet["pred_p"] >= args.min_prob]
-    side = np.where(bet["pred"] == 2, bet["s"], -bet["s"])          # +1 call, -1 put
-    win = (np.sign(bet["fwd_dir"]) == side).astype(float)
-    cov = len(bet)/len(d) if len(d) else 0.0
-    wr = float(win.mean()) if len(bet) else np.nan
+    print("| family | #feats | rows | state-acc (vs 33.3) | coverage | OOS WR | vs break-even |")
+    print("|---|---|---|---|---|---|---|")
+    for fam in order:
+        r = res[fam]; nf = len(family_cols(registry, fam))
+        wrs = "nan" if not np.isfinite(r["wr"]) else f"{r['wr']*100:.1f}%"
+        clr = "✓" if (np.isfinite(r["wr"]) and r["wr"] > breakeven and r["cov"] >= args.min_coverage) else ""
+        print(f"| {fam} | {nf} | {r['n']} | {r['acc']*100:.1f}% | {r['cov']*100:.1f}% | {wrs} | {clr} |")
 
-    print("## Betting rule: predicted gain→with-trend, decay→against-trend, stable→skip")
-    print(f"taken {len(bet)} / {len(d)}  (coverage {cov*100:.1f}%)   OOS WR {('nan' if not np.isfinite(wr) else f'{wr*100:.1f}%')}"
-          f"   break-even {breakeven*100:.1f}%")
+    # per-state split for the combined model (which direction, if any, carries anything)
+    rall = res["all"]
+    if rall["per"]:
+        print("\nall-families, by predicted state:")
+        for nm,(n_,w_) in rall["per"].items():
+            print(f"   {nm}: {n_} bets, WR {w_*100:.1f}%")
 
-    # WR split by predicted state
-    for st, nm in [(2,"gain→CALL/with-trend"),(0,"decay→against-trend")]:
-        sub = bet[bet["pred"]==st]
-        if len(sub):
-            sside = np.where(sub["pred"]==2, sub["s"], -sub["s"])
-            swr = float((np.sign(sub["fwd_dir"])==sside).mean())
-            print(f"   {nm}: {len(sub)} bets, WR {swr*100:.1f}%")
-
-    profitable = np.isfinite(wr) and wr > breakeven and cov >= args.min_coverage
-    if profitable:
-        verdict = (f"PROFITABLE — predicted-momentum betting clears break-even OOS "
-                   f"(WR {wr*100:.1f}% > {breakeven*100:.1f}% on {cov*100:.1f}% coverage). "
-                   "Confirm cross-regime + cost detail, then freeze.")
-    elif acc > 0.36:
-        verdict = (f"PREDICTABLE-BUT-UNPROFITABLE — state predicted slightly above chance "
-                   f"({acc*100:.1f}%) but WR {('nan' if not np.isfinite(wr) else f'{wr*100:.1f}%')} "
-                   f"does not clear break-even. The momentum structure exists but is too weak to pay "
-                   "the payout deficit; revisit with abstention (--min-prob) or stronger features.")
+    # integrated verdict — requires a FAMILY (a group, not one indicator) to clear break-even
+    winners = [f for f in order if np.isfinite(res[f]["wr"]) and res[f]["wr"] > breakeven
+               and res[f]["cov"] >= args.min_coverage]
+    best_acc = max((res[f]["acc"] for f in order if np.isfinite(res[f]["acc"])), default=np.nan)
+    if winners:
+        verdict = ("PROFITABLE — family/families clearing break-even OOS: "
+                   + ", ".join(f"{f} (WR {res[f]['wr']*100:.1f}% @ {res[f]['cov']*100:.0f}%)" for f in winners)
+                   + ". Confirm on another regime + cost detail, then freeze.")
+    elif np.isfinite(best_acc) and best_acc > 0.36:
+        verdict = (f"PREDICTABLE-BUT-UNPROFITABLE — best family state-acc {best_acc*100:.1f}% > 33.3%, "
+                   "but no family clears break-even WR. Structure exists, too weak for the payout deficit.")
     else:
-        verdict = (f"NO EDGE — forward momentum state is ~unpredictable from the indicators "
-                   f"(accuracy {acc*100:.1f}% ≈ random) and WR does not clear break-even. "
-                   "Consistent with the project-wide near-unpredictability; H0 holds for this target.")
+        verdict = (f"NO EDGE — no family predicts forward momentum state above chance "
+                   f"(best acc {best_acc*100:.1f}% ≈ 33.3%) and none clears break-even. "
+                   "H0 holds across trend, momentum, volatility AND breakout — not a single-indicator call.")
     print(f"\n## Verdict: {verdict}")
-    print("\nOne-regime result — even PROFITABLE owes cross-regime replication (May agent.db / other "
-          "snapshots) before any freeze-export.")
+    print("\nFamily-sectioned + purged, but verify on a second regime before any freeze-export.")
 
     if args.json:
         with open(args.json,"w") as f:
-            json.dump(dict(horizon=args.horizon, k=args.k, n_scored=len(d), state_acc=acc,
-                           coverage=cov, wr=wr, breakeven=breakeven, verdict=verdict), f, indent=2,
+            json.dump(dict(horizon=args.horizon, k=args.k, breakeven=breakeven,
+                           families={f: {kk: res[f][kk] for kk in ("n","acc","cov","wr")} for f in order},
+                           verdict=verdict), f, indent=2,
                       default=lambda o: None if isinstance(o,float) and not np.isfinite(o) else o)
         print(f"\nJSON → {args.json}")
 

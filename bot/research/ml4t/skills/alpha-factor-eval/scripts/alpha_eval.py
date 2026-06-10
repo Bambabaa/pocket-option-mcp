@@ -27,7 +27,7 @@ Examples:
     "d(cci_20, 2)/2"              CCI velocity
 """
 from __future__ import annotations
-import argparse, json, sys, re, sqlite3
+import argparse, json, sys, os
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -37,49 +37,8 @@ try:  # Windows consoles default to cp1252; the report uses unicode (→ ✓ ρ 
 except Exception:
     pass
 
-# ---- indicator columns we expose to the factor expression -------------------
-IND_COLS = [
-    "sma_10","sma_20","sma_50","rsi_14","stoch_k","stoch_d","stoch_prev_d",
-    "bb_upper","bb_middle","bb_lower","bb_width_bps","stc_value","stc_signal",
-    "stc_prev","stc_delta","cci_20","ema_12","ema_26","macd_macd","macd_signal",
-    "macd_hist","kc_upper","kc_middle","kc_lower","adx_14","adx_plus_di",
-    "adx_minus_di","williams_14","atr_14","atr_pct","psar","psar_bull",
-]
-
-def load(db_path: str) -> pd.DataFrame:
-    """Read indicators joined to candle close, read-only. One row per (asset,ts)."""
-    uri = f"file:{db_path}?mode=ro&immutable=1"
-    con = sqlite3.connect(uri, uri=True)
-    try:
-        cols = ",".join(f"i.{c}" for c in IND_COLS)
-        df = pd.read_sql_query(
-            f"""SELECT i.asset, i.timestamp, c.close, {cols}
-                FROM indicators i JOIN candles c
-                  ON c.asset=i.asset AND c.timestamp=i.timestamp
-                ORDER BY i.asset, i.timestamp""", con)
-    finally:
-        con.close()
-    return df
-
-def build_factor(df: pd.DataFrame, expr: str) -> pd.Series:
-    """Evaluate a factor expression per asset. `d(col,k)` = per-asset k-bar diff."""
-    out = []
-    for asset, g in df.groupby("asset", sort=False):
-        g = g.sort_values("timestamp")
-        env = {c: g[c].astype(float) for c in IND_COLS if c in g}
-        env["close"] = g["close"].astype(float)
-        env["abs"] = np.abs
-        env["np"] = np
-        def d(col, k):  # per-asset lagged difference
-            return col - col.shift(k)
-        env["d"] = d
-        try:
-            val = eval(expr, {"__builtins__": {}}, env)  # noqa: S307 (sandboxed env)
-        except Exception as e:
-            sys.exit(f"ERROR evaluating factor '{expr}': {e}")
-        s = pd.Series(np.asarray(val, dtype=float), index=g.index)
-        out.append(s)
-    return pd.concat(out).reindex(df.index)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_lib"))
+from po_data import load, build_factor   # schema-adaptive across both DB layouts
 
 def forward_returns(df: pd.DataFrame, bar_minutes, bar_sec: int):
     """Forward return over n bars on the 5m candle, per asset, off candle CLOSE —

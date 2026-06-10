@@ -40,67 +40,10 @@ try:
 except Exception:
     pass
 
-IND_COLS = [
-    "sma_10","sma_20","sma_50","rsi_14","stoch_k","stoch_d","stoch_prev_d",
-    "bb_upper","bb_middle","bb_lower","bb_width_bps","stc_value","stc_signal",
-    "stc_prev","stc_delta","cci_20","ema_12","ema_26","macd_macd","macd_signal",
-    "macd_hist","kc_upper","kc_middle","kc_lower","adx_14","adx_plus_di",
-    "adx_minus_di","williams_14","atr_14","atr_pct","psar","psar_bull",
-]
-# features the meta-model sees (levels like sma/ema/bb/kc/psar are non-stationary
-# price -> excluded; keep bounded oscillators / widths / normalized quantities)
-META_FEATS = ["rsi_14","stoch_k","stoch_d","stoch_prev_d","bb_width_bps","stc_value",
-              "stc_signal","stc_prev","stc_delta","cci_20","macd_hist","adx_14",
-              "adx_plus_di","adx_minus_di","williams_14","atr_pct","psar_bull"]
-
-def load(db_path: str):
-    con = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
-    try:
-        cols = ",".join(f"i.{c}" for c in IND_COLS)
-        df = pd.read_sql_query(
-            f"""SELECT i.asset, i.timestamp, c.close, {cols}
-                FROM indicators i JOIN candles c
-                  ON c.asset=i.asset AND c.timestamp=i.timestamp
-                ORDER BY i.asset, i.timestamp""", con)
-        try:
-            sig = pd.read_sql_query("SELECT asset, timestamp, direction FROM signals", con)
-        except Exception:
-            sig = pd.DataFrame(columns=["asset","timestamp","direction"])
-    finally:
-        con.close()
-    return df, sig
-
-def build_factor(df, expr):
-    out = []
-    for _, g in df.groupby("asset", sort=False):
-        g = g.sort_values("timestamp")
-        env = {c: g[c].astype(float) for c in IND_COLS if c in g}
-        env["close"] = g["close"].astype(float)
-        env["abs"], env["np"] = np.abs, np
-        env["d"] = lambda col, k: col - col.shift(k)
-        try:
-            val = eval(expr, {"__builtins__": {}}, env)  # noqa: S307
-        except Exception as e:
-            sys.exit(f"ERROR evaluating factor '{expr}': {e}")
-        out.append(pd.Series(np.asarray(val, dtype=float), index=g.index))
-    return pd.concat(out).reindex(df.index)
-
-def forward_return(df, mins, bar_sec):
-    n = (mins * 60) // bar_sec
-    fr = pd.Series(np.nan, index=df.index)
-    for _, g in df.groupby("asset", sort=False):
-        g = g.sort_values("timestamp")
-        close, ts = g["close"].astype(float), g["timestamp"]
-        ret = close.shift(-n) / close - 1.0
-        fr.loc[g.index] = ret.where(ts.shift(-n) - ts == n * bar_sec).values
-    return fr
-
-def make_folds(times, n_folds):
-    uniq = np.unique(times)
-    cut = len(uniq) // (n_folds + 1)
-    for tb in np.array_split(uniq[cut:], n_folds):
-        if len(tb):
-            yield uniq[uniq < tb[0]], tb
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_lib"))
+from po_data import (load, load_signals, build_factor, forward_return, make_folds,
+                     META_FEATS)  # schema-adaptive across both DB layouts
 
 def primary_events(df, sig, args, bar_sec):
     """Return a frame of primary signals: index, side ('call'/'put'). One row per bar
@@ -185,7 +128,7 @@ def main():
     if (args.horizon * 60) % bar_sec: sys.exit(f"ERROR: horizon {args.horizon}m not a whole bar multiple.")
     breakeven = 1.0 / (1.0 + args.payout)
 
-    df, sig = load(args.db)
+    df = load(args.db); sig = load_signals(args.db)
     fwd = forward_return(df, args.horizon, bar_sec)
     ev = primary_events(df, sig, args, bar_sec)
     pname = "bot signals" if args.primary == "signals" else f"`{args.primary}` (>{args.neutral}→{args.top_side})"

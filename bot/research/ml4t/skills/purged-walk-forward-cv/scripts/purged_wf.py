@@ -36,67 +36,9 @@ try:
 except Exception:
     pass
 
-# ── shared core (mirrors alpha-factor-eval; kept identical so a candidate flows through) ──
-IND_COLS = [
-    "sma_10","sma_20","sma_50","rsi_14","stoch_k","stoch_d","stoch_prev_d",
-    "bb_upper","bb_middle","bb_lower","bb_width_bps","stc_value","stc_signal",
-    "stc_prev","stc_delta","cci_20","ema_12","ema_26","macd_macd","macd_signal",
-    "macd_hist","kc_upper","kc_middle","kc_lower","adx_14","adx_plus_di",
-    "adx_minus_di","williams_14","atr_14","atr_pct","psar","psar_bull",
-]
-
-def load(db_path: str) -> pd.DataFrame:
-    con = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
-    try:
-        cols = ",".join(f"i.{c}" for c in IND_COLS)
-        df = pd.read_sql_query(
-            f"""SELECT i.asset, i.timestamp, c.close, {cols}
-                FROM indicators i JOIN candles c
-                  ON c.asset=i.asset AND c.timestamp=i.timestamp
-                ORDER BY i.asset, i.timestamp""", con)
-    finally:
-        con.close()
-    return df
-
-def build_factor(df: pd.DataFrame, expr: str) -> pd.Series:
-    out = []
-    for _, g in df.groupby("asset", sort=False):
-        g = g.sort_values("timestamp")
-        env = {c: g[c].astype(float) for c in IND_COLS if c in g}
-        env["close"] = g["close"].astype(float)
-        env["abs"], env["np"] = np.abs, np
-        env["d"] = lambda col, k: col - col.shift(k)
-        try:
-            val = eval(expr, {"__builtins__": {}}, env)  # noqa: S307
-        except Exception as e:
-            sys.exit(f"ERROR evaluating factor '{expr}': {e}")
-        out.append(pd.Series(np.asarray(val, dtype=float), index=g.index))
-    return pd.concat(out).reindex(df.index)
-
-def forward_return(df: pd.DataFrame, mins: int, bar_sec: int) -> pd.Series:
-    """Single-horizon forward return over n contiguous bars, per asset, off close."""
-    n = (mins * 60) // bar_sec
-    fr = pd.Series(np.nan, index=df.index)
-    for _, g in df.groupby("asset", sort=False):
-        g = g.sort_values("timestamp")
-        close, ts = g["close"].astype(float), g["timestamp"]
-        ret = close.shift(-n) / close - 1.0
-        ret = ret.where(ts.shift(-n) - ts == n * bar_sec)
-        fr.loc[g.index] = ret.values
-    return fr
-
-# ── purged walk-forward ──────────────────────────────────────────────────────
-def make_folds(times: np.ndarray, n_folds: int):
-    """Sequential expanding-train folds over UNIQUE sorted timestamps.
-    Test blocks tile the back portion; train is everything strictly before."""
-    uniq = np.unique(times)
-    # reserve the first ~1/(n+1) of history as the minimum initial train window
-    cut = len(uniq) // (n_folds + 1)
-    test_blocks = np.array_split(uniq[cut:], n_folds)
-    for tb in test_blocks:
-        if len(tb) == 0:
-            continue
-        yield uniq[uniq < tb[0]], tb           # (train_times, test_times)
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_lib"))
+from po_data import load, build_factor, forward_return, make_folds  # schema-adaptive
 
 def run(df, factor, fwd, mins, bar_sec, n_folds, embargo):
     horizon_sec = (mins * 60)                   # label looks this far forward

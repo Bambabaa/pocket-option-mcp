@@ -42,11 +42,22 @@ Because `cont` uses `close[t+n]`, the state is **not known at bar t** — the mo
 from the indicators available at t. This is what makes a positive result tradeable and forecloses the
 slope-of-its-own-indicator leakage that doomed the prior study.
 
-## Features — all the indicators
+## Features — all 32 indicators, ENGINEERED and SECTIONED BY FAMILY
 
-The full bounded/stationary indicator set (oscillators, STC value/signal/delta, MACD hist, BB width,
-ADX/DI, ATR%, psar_bull). Raw price levels (sma/ema/bb/kc/psar absolute) are excluded as
-non-stationary. Per fold: train-median imputation + train-fit standardization (causal).
+All 32 indicators contribute, but each is **engineered into stationary form** (ATR-normalized
+distances/spreads, deltas, ratios) so the model can't just fit the raw price level — and each
+engineered feature is **tagged with exactly one family**, so the study runs as a **per-family
+ablation**. No single indicator can carry a verdict; a result must come from a family (a group).
+
+| Family | What it captures | Built from |
+|---|---|---|
+| **trend** | where price sits vs its anchors, and how the anchors stack | (close−SMA10/20/50)/ATR, (close−EMA12/26)/ATR, EMA12−EMA26, SMA spreads, (close−PSAR)/ATR, PSAR-bull, MACD−signal |
+| **momentum** | oscillators and their motion | RSI(+Δ), Stoch %K/%D/(K−D), STC value/Δ/(value−signal), CCI, Williams %R, MACD-hist(+Δ) |
+| **volatility** | how wide / how stretched within the envelope | BB width(+Δ), %B, ATR%(+Δ), squeeze=BBwidth/KCwidth, (close−KC mid)/ATR |
+| **breakout** | directional thrust / expansion starting | ADX(+Δ), +DI−−DI, %B extremes, BB-width expansion, squeeze-release |
+
+The script runs each family **standalone** and then **all together**, so you see each family's own
+edge and whether combining helps. Per fold: train-median imputation + train-fit standardization (causal).
 
 ## How to run
 
@@ -64,24 +75,28 @@ python bot/research/ml4t/skills/directional-momentum-edge/scripts/directional_mo
 
 ## How to read the output
 
-1. **3-class state prediction accuracy vs 33.3% random** — the diagnostic. If this is ≈ 33%, the
-   indicators cannot tell gain from decay from stable, and nothing downstream can be profitable. This
-   is the single most informative line.
-2. **Predicted mix** — sanity that the model isn't collapsing to one class.
-3. **Betting rule line** — coverage (fraction not skipped) and OOS WR vs break-even. Plus a per-state
-   split (gain→with-trend WR, decay→against-trend WR) so you can see if one direction carries any
-   edge even when the blend doesn't.
+The output is a **per-family table** — one row per family (trend / momentum / volatility / breakout)
+plus an `all` row:
 
-### Verdict tiers
+- **state-acc (vs 33.3)** — can that family's features predict the 3-class forward state above the
+  random floor? If every family sits at ~33%, the indicators hold no momentum-state information and
+  nothing downstream can be profitable. This is the most informative column.
+- **coverage** — fraction of bars the betting rule trades (non-stable predictions).
+- **OOS WR vs break-even** — the only profitability test. The ✓ column marks a family that clears
+  break-even at ≥ min-coverage.
 
-- **PROFITABLE** — OOS WR clears break-even at ≥ min-coverage. The signal exists; confirm cross-regime
-  and freeze (export skill).
-- **PREDICTABLE-BUT-UNPROFITABLE** — state accuracy meaningfully above chance (> ~36%) but WR below
-  break-even. Real structure, too weak to pay the payout deficit; try `--min-prob` abstention or
-  richer features before giving up.
-- **NO EDGE** — accuracy ≈ random and WR below break-even. Forward momentum state is unpredictable
-  from the indicators; H0 holds for this target. (This is the current result on `trading_data.db`:
-  ~32–34% accuracy and 47–50% WR across all of 5/10/15/20m, holding under abstention.)
+Then a per-state split for the combined model (gain→with-trend WR, decay→against-trend WR) so a
+one-sided edge isn't hidden by averaging.
+
+### Verdict tiers (integrated across families — never one indicator)
+
+- **PROFITABLE** — at least one **family** clears break-even OOS at ≥ min-coverage. Names the
+  family/families. Confirm on another regime and freeze.
+- **PREDICTABLE-BUT-UNPROFITABLE** — best family state-acc meaningfully > 33.3% but no family clears
+  break-even. Real structure, too weak for the payout deficit; try `--min-prob` abstention.
+- **NO EDGE** — no family beats chance and none clears break-even. H0 holds **across all four
+  families**, not as a single-indicator call. (Current result on `trading_data.db`: every family
+  33.7–34.4% acc, WR 46–49%, all horizons.)
 
 ## What a NO EDGE result actually means (it's not a dead end)
 
