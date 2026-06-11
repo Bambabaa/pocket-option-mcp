@@ -136,6 +136,22 @@ for a fair surrogate.
   Deploy the CONSENSUS as the high-conviction tier: ~62% OOP, both components native to the bot.
   Status: strongest result of the project; n~148 consensus (z≈1.6 vs break-even) — confirm forward.
 
+## Addendum 4 — consensus survival / expiry selection (Stage 5)
+
+`momentum-persistence/scripts/consensus_survival.py` pipes the Q1 consensus events (heuristic ∧
+p_decay gate) into a fade-WR-by-expiry survival curve, stratified by onset driver. On June Q1 (n=148,
+out-of-period):
+
+- **5m expiry is a LOSS (52.0%) across every split** — the reversal hasn't completed in one bar. The
+  default expiry is **10m** (62.2%), not 5m. (The original fire-fast instinct entered too early.)
+- **Optimal expiry depends on the driver** (fast/slow hypothesis confirmed, shifted +1 bar):
+  ATR-shock onsets (atr_pct_d) peak at 10m (66.2%) and decay by 15m; stoch-grind onsets (stoch_kd)
+  keep rising to 15m (64.9%). → vol-shock trades 10m, divergence-grind trades 15m.
+- **The turn sticks**: of events fading at 5m, 90.9% still fading at 10m, 80.5% at 15m — no quick
+  round-trip; the risk is entering before the turn, not a snap-back.
+- Caveat: strata ~74 each; "5m is bad" is robust, the 10m-vs-15m driver split needs forward confirm.
+- `decay_onset.py --export-full` now also carries fwd_5m/10m/15m_ret for this mapping.
+
 ## Reproduce
 
 ```

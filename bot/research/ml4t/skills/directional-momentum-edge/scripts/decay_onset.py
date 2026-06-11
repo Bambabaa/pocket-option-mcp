@@ -222,6 +222,8 @@ def main():
         full.insert(1, "side", np.where(bull_exh.loc[o], "bullish_exhaustion", "bearish_exhaustion"))
         full["p_decay"] = oof_all.reindex(o).values
         full["p_decay_pct"] = oof_pct_all.reindex(o).values
+        for m in (5, 10, 15):                  # forward returns for Stage-5 survival mapping
+            full[f"fwd_{m}m_ret"] = forward_return(df, m, args.bar_sec).loc[o].values
         full["target_decay_realized"] = yo.values
         full.to_csv(args.export_full, index=False)
         print(f"export-full → {args.export_full}   ({len(full)} rows, {full.shape[1]} cols)")
