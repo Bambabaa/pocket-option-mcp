@@ -50,7 +50,8 @@ except Exception:
     pass
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_lib"))
-from po_data import load, engineer_families, family_cols, make_folds, FAMILIES
+from po_data import (load, load_ohlcv, forward_return, engineer_families,
+                     family_cols, make_folds, FAMILIES)
 
 def main():
     ap = argparse.ArgumentParser()
@@ -63,14 +64,18 @@ def main():
     ap.add_argument("--embargo", type=int, default=5)
     ap.add_argument("--payout", type=float, default=0.8)
     ap.add_argument("--gate-pct", type=float, default=75, help="per-fold OOF percentile gate (75 = top quartile)")
+    ap.add_argument("--export", default=None,
+                    help="write onset rows (OHLCV + family features + p_decay + forward returns) to this CSV")
     args = ap.parse_args()
     if args.bar_sec < 300: sys.exit("ERROR: bar-sec below 300s floor.")
     n = (args.horizon * 60) // args.bar_sec
     breakeven = 1.0 / (1.0 + args.payout)
 
-    frames = []
+    frames, ohlcv_frames = [], []
     for i, p in enumerate([q.strip() for q in args.db.split(",") if q.strip()]):
         d = load(p); d["asset"] = d["asset"] + f"@{i}"; frames.append(d)
+        if args.export:
+            v = load_ohlcv(p); v["asset"] = v["asset"] + f"@{i}"; ohlcv_frames.append(v)
     df = pd.concat(frames, ignore_index=True)
     X, registry = engineer_families(df)
 
@@ -119,6 +124,7 @@ def main():
             cols = family_cols(registry, fam)
         Xf = Xo[cols].astype(float)
         oof = pd.Series(np.nan, index=o); gated = pd.Series(False, index=o)
+        oof_pct = pd.Series(np.nan, index=o)   # per-fold percentile of p̂ (cross-fold comparable)
         for _, te_t in make_folds(to.values, args.folds):
             te_start = te_t.min()
             tr = (to < te_start) & (to + horizon_sec < te_start - emb)
@@ -131,6 +137,7 @@ def main():
             clf.fit(sc.transform(Xf[tr].fillna(med)), yo[tr])
             p = clf.predict_proba(sc.transform(Xf[te].fillna(med)))[:, 1]
             oof.loc[Xf.index[te]] = p
+            oof_pct.loc[Xf.index[te]] = pd.Series(p).rank(pct=True).values * 100
             gated.loc[Xf.index[te]] = p >= np.percentile(p, args.gate_pct)   # dynamic per-fold gate
         m = oof.notna()
         auc = roc_auc_score(yo[m], oof[m]) if yo[m].nunique() > 1 else np.nan
@@ -140,6 +147,9 @@ def main():
         print(f"| {fam} | {auc:.3f} | {int(gm.sum())} | "
               f"{'—' if not np.isfinite(gwr) else f'{gwr*100:.1f}%'} | {'✓' if ok else ''} |")
         results[fam] = dict(auc=auc, gated_n=int(gm.sum()), gated_wr=gwr, clears=ok)
+        if fam == "all":
+            oof_all = oof.copy()          # the model verdict exported as p_decay
+            oof_pct_all = oof_pct.copy()  # its per-fold percentile (use THIS for thresholds)
 
     # verdict per the spec's pass criterion
     vm, al = results.get("volatility+momentum", {}), results.get("all", {})
@@ -164,6 +174,42 @@ def main():
     if np.isfinite(tr_d.get("auc", np.nan)) and np.isfinite(vm.get("auc", np.nan)) \
        and tr_d["auc"] > vm["auc"] + 0.01:
         print("⚠ trend family out-ranks volatility+momentum — regime-following bleed, treat with suspicion.")
+
+    # ── unified onset export for offline EDA / Stage-5 duration analysis ──────
+    if args.export:
+        ohlcv = pd.concat(ohlcv_frames, ignore_index=True)
+        exp = pd.DataFrame(index=o)
+        # event metadata
+        exp["timestamp"] = df.loc[o, "timestamp"].values
+        exp["asset"] = df.loc[o, "asset"].str.replace(r"@\d+$", "", regex=True).values
+        exp["side"] = np.where(bull_exh.loc[o], "bullish_exhaustion", "bearish_exhaustion")
+        # raw price action (volume == tick count in this project)
+        key = df.loc[o, ["asset", "timestamp"]]
+        oh = key.merge(ohlcv, on=["asset", "timestamp"], how="left").set_index(o)
+        for c in ("open", "high", "low", "close"):
+            exp[c] = oh[c].values
+        exp["tick_volume"] = oh["volume"].values
+        # family features, mapped to the spec'd export names
+        feat_map = {                      # export name -> engineered column
+            "kc_bb_ratio": "v_squeeze", "bb_width_bps": "v_bb_width", "atr_pct": "v_atr_pct",
+            "d_sma50": "t_close_sma50", "ema_12_26_ratio": "t_ema_spread",
+            "stc_delta": "m_stc_delta", "stoch_diff": "m_stoch_kd", "cci_20": "m_cci",
+            "macd_hist_accel": "m_macd_hist_d", "psar_bull_flag": "t_psar_bull",
+        }
+        for name, col in feat_map.items():
+            exp[name] = X.loc[o, col].values
+        # the model verdict (out-of-fold; NaN where the row fell in the initial train window).
+        # p_decay_pct = per-fold percentile rank of p_decay — probability scales shift with
+        # training size across folds, so threshold on THIS column for offline EDA, not p_decay.
+        exp["p_decay"] = oof_all.reindex(o).values
+        exp["p_decay_pct"] = oof_pct_all.reindex(o).values
+        # ground truth: forward simple returns for Stage-5 duration analysis
+        for m in (5, 10, 15):
+            exp[f"fwd_{m}m_ret"] = forward_return(df, m, args.bar_sec).loc[o].values
+        exp["target_decay_realized"] = yo.values
+        exp.to_csv(args.export, index=False)
+        print(f"\nexport → {args.export}   ({len(exp)} onset rows, "
+              f"{exp['p_decay'].notna().sum()} with OOF p_decay)")
 
 if __name__ == "__main__":
     main()

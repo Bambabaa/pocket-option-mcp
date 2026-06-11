@@ -86,6 +86,17 @@ def load(db_path: str) -> pd.DataFrame:
         df["atr_pct"] = np.where(df["close"].abs() > 0, df["atr_14"] / df["close"] * 100.0, np.nan)
     return df
 
+def load_ohlcv(db_path: str) -> pd.DataFrame:
+    """Raw candles (OHLC + volume) for export/EDA joins. Read-only.
+    Note: volume is the tick count per candle in this project."""
+    con = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    try:
+        return pd.read_sql_query(
+            "SELECT asset, timestamp, open, high, low, close, volume FROM candles "
+            "ORDER BY asset, timestamp", con)
+    finally:
+        con.close()
+
 def load_signals(db_path: str) -> pd.DataFrame:
     """Bot signals if the schema has them, else empty. Read-only."""
     con = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
