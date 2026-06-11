@@ -60,7 +60,13 @@
       "Bash(python bot/research/ml4t/skills/alpha-factor-eval/scripts/alpha_eval.py --factor \"abs\\(stoch_k - stoch_d\\)\" --name Stoch_Divergence)",
       "Bash(python bot/research/ml4t/skills/alpha-factor-eval/scripts/alpha_eval.py --factor \"d\\(stc_value, 1\\)\" --name STC_Momentum)",
       "Bash(sed -n '1,14p')",
-      "Bash(python bot/research/ml4t/skills/alpha-factor-eval/scripts/alpha_eval.py --factor \"rsi_14\")"
+      "Bash(python bot/research/ml4t/skills/alpha-factor-eval/scripts/alpha_eval.py --factor \"rsi_14\")",
+      "Bash(python bot/research/ml4t/skills/momentum-persistence/scripts/momentum_persistence.py)",
+      "Bash(python bot/research/ml4t/skills/momentum-persistence/scripts/momentum_persistence.py --db agent/data/agent_FXSB.db)",
+      "Bash(sed -n '/onsets/p;/## A/,/Verdict/p')",
+      "Bash(python bot/research/ml4t/skills/momentum-persistence/scripts/momentum_persistence.py --db agent/data/agent_FXSB.db --confluence 5)",
+      "Bash(python bot/research/ml4t/skills/momentum-persistence/scripts/momentum_persistence.py --model tree)",
+      "Bash(python bot/research/ml4t/skills/decay-gate-replication/scripts/decay_gate.py --db \"data/trading_data_5-02.db,data/trading_data_5-03.db,data/trading_data00.db,data/trading_data.db\" --inspect)"
     ]
   },
   "enableAllProjectMcpServers": true,
