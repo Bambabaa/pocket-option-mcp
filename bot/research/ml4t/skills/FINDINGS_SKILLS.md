@@ -94,6 +94,26 @@ winning leaf conditions explicitly (transparent rule, not "trust the tree"), rec
 per-training-size (percentile, not fixed 0.85), re-derive the payout floor from OOS precision
 (~56–61%, not the in-sample 0.97 leaves), and shadow-validate forward on live data.
 
+## Addendum 2 — tier strategies & the conditional Decay Onset Evaluator
+
+- **3-tier heuristic scaling** (`tiered-entry-eval/scripts/tier_eval.py`): as specified (20% extreme
+  / 50% pivot / 30% trend-confirmation) it bleeds — blended EV −0.11 to −0.14 per stake. Only the
+  tier-1 extreme clears on Apr–May (57.7%/56.7% @10m); tiers 2–3 (continuation) lose 45–50%
+  everywhere. The later the entry, the worse the WR. Allocation is inverted for this market.
+- **Monolithic P(up) θ-ladder** (`ml_tier_eval.py`): θ=0.52/0.56 sit at/below the 55.6% break-even
+  (a calibrated 52% tier loses by construction). θ-corrected it looked spectacular on Apr–May
+  (GBM 62.2% on 4,124 @θ0.60, monotone calibration) — and **collapsed out-of-period** (June AUC
+  0.494, calibration flat, top-confidence bucket 48.7%). Directional confidence does not transfer;
+  decay-target confidence does. The most instructive false positive of the project.
+- **Decay Onset Evaluator** (`directional-momentum-edge/scripts/decay_onset.py` — Stage-4 refactor:
+  exhaustion pre-mask → conditional P(decay) → family ablation → per-fold percentile gate):
+  mask depth is the control variable. FXSB: 2 ATR/1.05 squeeze = 4% kept, base 51.7%, AUC 0.50,
+  FAILS; 4 ATR/1.20 = 0.9% kept, base 52.6%, **vol+momentum gated 57.1% (n=539) PASSES**; June at
+  the same mask: base 53.6% (n=179, too few to model). Monotone depth→edge gradient both regimes.
+  Caveat: each pass is individually weak (z ≈ 0.7–1.4); the LEARNED pocket (decay-gate tree:
+  79.5%/61.4%) remains stronger than any hand-written mask — the onset definition should come from
+  leaf-rule extraction, with this conditional architecture on top.
+
 ## Reproduce
 
 ```
