@@ -66,6 +66,8 @@ def main():
     ap.add_argument("--gate-pct", type=float, default=75, help="per-fold OOF percentile gate (75 = top quartile)")
     ap.add_argument("--export", default=None,
                     help="write onset rows (OHLCV + family features + p_decay + forward returns) to this CSV")
+    ap.add_argument("--export-full", default=None,
+                    help="write onset rows with ALL 36 engineered family features (for surrogate fitting)")
     args = ap.parse_args()
     if args.bar_sec < 300: sys.exit("ERROR: bar-sec below 300s floor.")
     n = (args.horizon * 60) // args.bar_sec
@@ -210,6 +212,19 @@ def main():
         exp.to_csv(args.export, index=False)
         print(f"\nexport → {args.export}   ({len(exp)} onset rows, "
               f"{exp['p_decay'].notna().sum()} with OOF p_decay)")
+
+    if args.export_full:
+        # all 36 engineered family features + side + model verdict + target, for a
+        # FAIR surrogate (same features the model saw). Directional sign kept raw —
+        # surrogate_extract side-normalizes.
+        full = X.loc[o].copy()
+        full.insert(0, "timestamp", df.loc[o, "timestamp"].values)
+        full.insert(1, "side", np.where(bull_exh.loc[o], "bullish_exhaustion", "bearish_exhaustion"))
+        full["p_decay"] = oof_all.reindex(o).values
+        full["p_decay_pct"] = oof_pct_all.reindex(o).values
+        full["target_decay_realized"] = yo.values
+        full.to_csv(args.export_full, index=False)
+        print(f"export-full → {args.export_full}   ({len(full)} rows, {full.shape[1]} cols)")
 
 if __name__ == "__main__":
     main()

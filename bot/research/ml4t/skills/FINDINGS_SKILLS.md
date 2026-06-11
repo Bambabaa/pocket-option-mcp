@@ -114,6 +114,28 @@ per-training-size (percentile, not fixed 0.85), re-derive the payout floor from 
   79.5%/61.4%) remains stronger than any hand-written mask — the onset definition should come from
   leaf-rule extraction, with this conditional architecture on top.
 
+## Addendum 3 — surrogate extraction (interpretable proxy of the decay-onset model)
+
+`directional-momentum-edge/scripts/surrogate_extract.py` over the onset CSVs: shallow DecisionTree
+(depth 2-3) → human-readable rule, winner/loser separation, and an OUT-OF-SAMPLE disagreement matrix
+(ML_Signal = p_decay_pct gate vs Heuristic_Signal = surrogate tree; surrogate fit on a temporal train
+slice, scored on held-out + cross-period June). `decay_onset.py --export-full` dumps all 36 features
+for a fair surrogate.
+
+- **Curated 10-feature export is too thin to surrogate**: consensus quadrant FAILS (June Q1 45.3%),
+  edge appears irreducibly in the model (black-box Q2 66.4%). Misleading — the export dropped the
+  decisive feature.
+- **Fair 36-feature surrogate**: consensus (rule ∧ ML) **spikes to 62.2% out-of-period June**
+  (n=148, base 50.8%); held-out FXSB Q1 56.2%. Depth-3 rule importance v_bb_width 0.53,
+  v_atr_pct_d 0.25, m_stoch_kd 0.22 — a volatility-width × ATR-acceleration × stoch-divergence
+  confluence (the missing ingredient vs the curated export was **v_atr_pct_d**, ATR%-acceleration).
+- **ML gate is NOT removable**: heuristic-fires-alone (Q1∪Q3) = 54.7% June, sub-break-even; the ML
+  separates Q1 (62.2%) from Q3 (52.1%) by ~10pts — it filters noise the rule alone is fooled by.
+- **Deployable artifact**: shallow rule (transparent onset gate) ∧ frozen L2-logistic p_decay (the
+  decay-onset "all" model — hand-ports to ml_gate_params.json like ml-gate.js, no Python runtime).
+  Deploy the CONSENSUS as the high-conviction tier: ~62% OOP, both components native to the bot.
+  Status: strongest result of the project; n~148 consensus (z≈1.6 vs break-even) — confirm forward.
+
 ## Reproduce
 
 ```
