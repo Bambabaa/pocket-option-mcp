@@ -65,7 +65,7 @@ def normalize(d: pd.DataFrame) -> pd.DataFrame:
 
 FEATS = SYM + [c + "_dir" for c in DIR] + ["psar_intact"]
 
-META = {"timestamp", "side", "p_decay", "p_decay_pct", "target_decay_realized"}
+META = {"timestamp", "asset", "side", "p_decay", "p_decay_pct", "target_decay_realized"}
 
 def load_full(raw: pd.DataFrame):
     """Full 36-feature mode: use every engineered feature the MODEL saw, raw, plus a

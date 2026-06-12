@@ -219,7 +219,8 @@ def main():
         # surrogate_extract side-normalizes.
         full = X.loc[o].copy()
         full.insert(0, "timestamp", df.loc[o, "timestamp"].values)
-        full.insert(1, "side", np.where(bull_exh.loc[o], "bullish_exhaustion", "bearish_exhaustion"))
+        full.insert(1, "asset", df.loc[o, "asset"].str.replace(r"@\d+$", "", regex=True).values)
+        full.insert(2, "side", np.where(bull_exh.loc[o], "bullish_exhaustion", "bearish_exhaustion"))
         full["p_decay"] = oof_all.reindex(o).values
         full["p_decay_pct"] = oof_pct_all.reindex(o).values
         for m in (5, 10, 15):                  # forward returns for Stage-5 survival mapping

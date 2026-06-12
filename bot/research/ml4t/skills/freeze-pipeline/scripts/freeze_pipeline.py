@@ -43,7 +43,7 @@ OUT_DIR    = os.path.join(ROOT, "bot", "research", "tests")
 OUT_PARAMS = os.path.join(OUT_DIR, "ml_gate_params.json")
 OUT_PARITY = os.path.join(OUT_DIR, "parity_test_cases.json")
 
-META = {"timestamp", "side", "p_decay", "p_decay_pct", "target_decay_realized"}
+META = {"timestamp", "asset", "side", "p_decay", "p_decay_pct", "target_decay_realized"}
 ML_PCT, MIN_Q1, BAR_SEC, EXPIRY_MIN = 75, 100, 300, 10
 # onset mask used to BUILD the FXSB export (must match decay_onset --stretch-atr/--squeeze-min)
 STRETCH_ATR, SQUEEZE_MIN = 4.0, 1.20

@@ -35,7 +35,7 @@ try:
 except Exception:
     pass
 
-META = {"timestamp", "side", "p_decay", "p_decay_pct", "target_decay_realized"}
+META = {"timestamp", "asset", "side", "p_decay", "p_decay_pct", "target_decay_realized"}
 HORIZONS = [5, 10, 15]            # the export carries fwd_5m/10m/15m_ret
 
 def load_full(path):
