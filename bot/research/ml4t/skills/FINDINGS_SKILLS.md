@@ -152,6 +152,30 @@ out-of-period):
 - Caveat: strata ~74 each; "5m is bad" is robust, the 10m-vs-15m driver split needs forward confirm.
 - `decay_onset.py --export-full` now also carries fwd_5m/10m/15m_ret for this mapping.
 
+## Addendum 5 — freeze, native JS gate, triple-proof, expiry sweep (deployment)
+
+The decay-onset consensus was frozen and ported to a runtime-Python-free native gate. Full writeup:
+`bot/research/tests/TEST_REPORT.md`.
+
+- **Freeze** (`freeze-pipeline/scripts/freeze_pipeline.py` → `bot/research/tests/ml_gate_params.json`,
+  schema `static-decay-gate/v2`): data-driven, nothing hardcoded. Key 1 = side-normalized shallow-tree
+  confluence (`v_bb_width>13.85`, `v_atr_pct>0.0282`, `m_stoch_kd>-20.42 [×side]`); Key 2 = L2-logistic
+  `p_decay ≥ 0.5698` (75th pct). JSON carries the onset mask + a `compute` formula per threshold so a
+  JS bot fires blindly. Heuristic thresholds grid-searched on OOS (in-sample-to-search ceiling).
+- **Native gate** (`bot/research/tests/test_gate.js`, `evaluateOnset`) — two keys from the JSON, no
+  Python at runtime.
+- **Three proofs**: (1) logistic parity `test_parity.js` — 100/100 within 1e-9, **max drift 1.7e-16**;
+  (2) feature port `test_db_runner.js` on FXSB — onset-set 2532==2532, **feature parity 0.000e+0** over
+  278k bars (JS engineer_families == Python exactly); (3) OOS realized — **51 Q1 trades, fade-WR 64.7%**
+  on the out-of-period June pool (>55.6% break-even).
+- **Expiry sweep** (`directional-momentum-edge/scripts/expiry_sweep.py`, 5–30m): Q1 consensus **peaks
+  10–15m and fades by 25–30m** (longer ≠ better). FXSB Q1 62.4% @10m (in-sample); June OOS 64.7% @10m.
+  Driver split confirmed across 6 horizons: **vol-shock (atr_pct_d) → 10m (63.3%)**, **stoch-grind
+  (stoch_kd) → 15m (64.7%)**; bearish→10m (64.2%), bullish→15m (60.6%).
+- **Status**: port proven exact three ways; OOS edge real but thin (n=51, z≈1.3) and consistent with
+  the surrogate (62.2%) and decay-gate (61.4%) June numbers. Backtesting exhausted — forward shadow
+  validation is the only remaining step before sizing.
+
 ## Reproduce
 
 ```
@@ -161,4 +185,8 @@ python $S/purged-walk-forward-cv/scripts/purged_wf.py --factor "rsi_14" --horizo
 python $S/meta-labeling/scripts/meta_label.py --primary "rsi_14" --neutral 50 --top-side put --horizon 10
 python $S/directional-momentum-edge/scripts/directional_momentum.py --horizon 10 --db ...
 python $S/momentum-persistence/scripts/momentum_persistence.py --db ... [--confluence 5] [--model tree]
+python $S/directional-momentum-edge/scripts/expiry_sweep.py --csv $S/directional-momentum-edge/exports/onsets_fxsb_4.0_full.csv
+python $S/freeze-pipeline/scripts/freeze_pipeline.py          # → bot/research/tests/*.json
+node bot/research/tests/test_parity.js                        # logistic parity <1e-9
+node bot/research/tests/test_db_runner.js                     # FXSB feature port + WR
 ```

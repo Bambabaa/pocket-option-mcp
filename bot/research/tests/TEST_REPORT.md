@@ -1,8 +1,8 @@
-# Two-Key Decay Gate — Deployment & Validation Report
+# Two-Key Decay Gate — Test Report
 
 This directory is the **deployment home** of the decay-onset trading signal: the frozen model
 artifacts, the native JS gate, and the validation suite that proves the JS reproduces the Python
-research pipeline exactly. This report documents the signal, the artifacts, the three independent
+research pipeline exactly. This test report documents the signal, the artifacts, the three independent
 proofs, the full expiry analysis, and the deployment recipe.
 
 Research provenance: `../ml4t/README.md` (the 6-stage pipeline that discovered the edge) and
@@ -29,7 +29,7 @@ The gate fires only on those extremes, confirmed by two keys, and trades the fad
 | `test_gate.js` | native `evaluateOnset(currentFeatures)` — the gate |
 | `test_parity.js` | proves JS `p_decay` == Python to `<1e-9` |
 | `test_db_runner.js` | drives the gate over a whole SQLite DB; proves the feature port + tallies realized fade-WR |
-| `README.md` | this report |
+| `TEST_REPORT.md` | this report |
 
 Built by `../ml4t/skills/freeze-pipeline/scripts/freeze_pipeline.py` (training-time only, never at runtime).
 
@@ -159,7 +159,7 @@ No Python at runtime — `evaluateOnset` + the JSON are self-contained.
 
 ```
 bot/research/tests/
-├── README.md                 ← this report
+├── TEST_REPORT.md            ← this report
 ├── ml_gate_params.json       ← frozen static-decay-gate/v2
 ├── parity_test_cases.json    ← 100 vectors + python p_decay
 ├── test_gate.js              ← evaluateOnset() native gate
