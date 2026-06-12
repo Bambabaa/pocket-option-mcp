@@ -1,6 +1,63 @@
 {
-  "schema": "two-key-decay-gate/v1",
-  "logic": "fire when heuristic_rule ALL pass AND p_decay >= oos_threshold; then FADE the stretch",
+  "schema": "static-decay-gate/v2",
+  "logic": "for each bar compute features from raw indicators; a bar is an ONSET if all onset_mask pass (its stretch sign sets side: up=bullish\u2192PUT, down=bearish\u2192CALL); side-normalize per `center`+sign, then FIRE if all heuristic_rule pass; for the two-key gate also require ml p_decay >= oos_threshold. Trade = FADE at expiry.",
+  "bar_sec": 300,
+  "expiry_minutes": 10,
+  "direction": "fade",
+  "side_rule": "stretch (close-sma_50) sign: >0 bullish_exhaustion\u2192PUT ; <0 bearish_exhaustion\u2192CALL",
+  "onset_mask": [
+    {
+      "name": "squeeze",
+      "compute": "(bb_upper-bb_lower)/(kc_upper-kc_lower)",
+      "operator": ">",
+      "threshold": 1.2,
+      "side_normalized": false
+    },
+    {
+      "name": "stretch_atr",
+      "compute": "(close-sma_50)/atr_14",
+      "abs": true,
+      "operator": ">",
+      "threshold": 4.0,
+      "side_normalized": false,
+      "note": "sign of (close-sma_50) sets the side"
+    },
+    {
+      "name": "decel",
+      "compute": "stc_delta",
+      "operator": "<",
+      "threshold": 0.0,
+      "side_normalized": true,
+      "center": 0.0,
+      "note": "stc_delta against the stretch (folded: <0)"
+    }
+  ],
+  "heuristic_rule": [
+    {
+      "feature": "v_bb_width",
+      "compute": "bb_width_bps",
+      "operator": ">",
+      "threshold": 13.849453211652824,
+      "side_normalized": false,
+      "center": 0.0
+    },
+    {
+      "feature": "v_atr_pct",
+      "compute": "atr_pct",
+      "operator": ">",
+      "threshold": 0.0282163734410857,
+      "side_normalized": false,
+      "center": 0.0
+    },
+    {
+      "feature": "m_stoch_kd",
+      "compute": "stoch_k-stoch_d",
+      "operator": ">",
+      "threshold": -20.42134725652492,
+      "side_normalized": true,
+      "center": 0.0
+    }
+  ],
   "oos_threshold": 0.5698322419136874,
   "ml_model": {
     "features": [
@@ -159,30 +216,13 @@
       ]
     }
   },
-  "heuristic_rule": [
-    {
-      "feature": "v_bb_width",
-      "operator": ">",
-      "threshold": 13.849453211652824
-    },
-    {
-      "feature": "t_sma_20_50",
-      "operator": "<",
-      "threshold": 3.1003784707114828
-    },
-    {
-      "feature": "b_adx",
-      "operator": "<",
-      "threshold": 55.47735426079683
-    }
-  ],
   "meta": {
     "train_csv": "onsets_fxsb_4.0_full.csv",
     "oos_csv": "onsets_june_2.0_full.csv",
     "train_rows": 2532,
     "oos_rows": 874,
-    "q1_consensus_n": 102,
-    "q1_consensus_wr": 0.6666666666666666,
-    "note": "heuristic thresholds tuned ON oos \u2014 q1_wr is in-sample-to-grid-search; confirm forward"
+    "q1_consensus_n": 131,
+    "q1_consensus_wr": 0.6564885496183206,
+    "note": "heuristic thresholds tuned ON oos (folded) \u2014 q1_wr is in-sample-to-search; confirm forward"
   }
 }
