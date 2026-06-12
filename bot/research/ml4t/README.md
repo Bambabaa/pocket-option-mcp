@@ -151,6 +151,16 @@ The frozen artifacts, the native gate, and the three proofs live in `../tests/` 
 `TEST_REPORT.md`. Run `node ../tests/test_parity.js` (logistic <1e-9) and
 `node ../tests/test_db_runner.js [db] [csv]` (feature port + realized fade-WR on any DB).
 
+### Inputs probe — `microstructure-factors`  *"Is there anything in the ticks?"*
+`scripts/micro_factors.py --db <june tick dbs>`. Extracts tick features per 5-min bar from the 1s
+`prices` stream (order-flow imbalance, run-length, micro-vol, intensity, wick) and runs them through
+the IC gauntlet. Full `SKILL.md`. (Tick data is June-only; `agent_*` has none.)
+> Found: **tick-exclusive features = NOISE** — the 1s order flow doesn't predict the next bar; the
+> biggest untapped data source adds nothing. The only thing that clears is **candle-shape
+> mean-reversion** (`close_pos`, ~0.99 corr with OHLC, not ticks), cross-regime significant
+> (block IC −0.06, p=0.000) but **STABLE-IC / SUB-BREAKEVEN** (51.5% WR). The payout wall holds.
+> `po_data.load()` now also returns open/high/low so candle-shape factors run the gauntlet.
+
 ### Side-quest — `tiered-entry-eval`
 `tier_eval.py` (3-tier heuristic scaling: blended EV −0.11 to −0.14, allocation inverted for this
 market) and `ml_tier_eval.py` (monolithic P(up) θ-ladder: in-regime 62% **collapses out-of-period** —
@@ -213,6 +223,7 @@ bot/research/ml4t/
     │   └── exports/               ← onset CSVs (curated + _full 36-feature, 5–30m fwd)
     ├── momentum-persistence/      ← Stage 5   (+ consensus_survival)  (SKILL.md + refs)
     ├── freeze-pipeline/           ← Stage 7   (SKILL.md + scripts + references) → deploy
+    ├── microstructure-factors/    ← inputs probe (SKILL.md + scripts + references)
     ├── decay-gate-replication/    ← Stage 6   (script-only)
     └── tiered-entry-eval/         ← tier strategy evals (script-only)
 

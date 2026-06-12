@@ -63,7 +63,7 @@ def load(db_path: str) -> pd.DataFrame:
     con = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
     try:
         have = _table_cols(con, "indicators")
-        select = ["i.asset", "i.timestamp", "c.close"]
+        select = ["i.asset", "i.timestamp", "c.open", "c.high", "c.low", "c.close"]
         present = set()
         for canon in IND_COLS:
             srcs = _ALIASES.get(canon, [canon])
@@ -115,7 +115,8 @@ def build_factor(df: pd.DataFrame, expr: str):
     for _, g in df.groupby("asset", sort=False):
         g = g.sort_values("timestamp")
         env = {c: g[c].astype(float) for c in IND_COLS if c in g}
-        env["close"] = g["close"].astype(float)
+        for c in ("open", "high", "low", "close"):
+            if c in g: env[c] = g[c].astype(float)
         env["abs"], env["np"] = np.abs, np
         env["d"] = lambda col, k: col - col.shift(k)
         try:

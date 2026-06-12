@@ -176,6 +176,29 @@ The decay-onset consensus was frozen and ported to a runtime-Python-free native 
   the surrogate (62.2%) and decay-gate (61.4%) June numbers. Backtesting exhausted — forward shadow
   validation is the only remaining step before sizing.
 
+## Addendum 6 — microstructure factors (the untouched tick stream)
+
+`microstructure-factors/scripts/micro_factors.py` — first systematic test of the 1s `prices` tick
+stream (tick-exclusive only in the June `trading_data*` DBs; `agent_*` has none). Per 5-min bar:
+order-flow imbalance, run-length, micro-vol, tick intensity, range, wick, plus bar return / close-pos,
+run through the alpha-factor-eval IC gauntlet.
+
+- **Tick-exclusive features = NOISE.** Imbalance, run-length, micro-vol, intensity, range, spike-revert —
+  none clears block-IC even pooled across all June DBs (~19k bars). The 1s order flow does not predict
+  the next bar; the biggest untapped data source adds nothing.
+- **Only candle-shape mean-reversion clears.** `net_ret` / `close_pos` (block IC ~−0.05, p<0.01, all
+  horizons) — but they correlate **0.99** with OHLC `(close−open)/open` and `(close−low)/(high−low)`,
+  i.e. NOT microstructure. Being OHLC, they **cross-regime validate** on agent_FXSB (block IC ~−0.06,
+  p=0.000, 835 blocks). Purged-WF: **STABLE-IC / SUB-BREAKEVEN** (extreme-WR 51.5% < 55.6%, t=−13) —
+  real, bulletproof, ~4 pts short of break-even, exactly like `rsi_14`.
+- **Conclusion:** microstructure did NOT break the payout wall. Mean-reversion is now confirmed at
+  tick-aggregate, candle-shape AND indicator levels — universally ~51–53%, sub-break-even. The only
+  thing that clears remains the conditional extreme-tail consensus gate (~62%), because it *selects*
+  the strongest reversions, not because any single factor is tradeable.
+- `po_data.load()` now also returns `open/high/low`, so candle-shape factors run the whole gauntlet
+  (`purged_wf.py --factor "(close-low)/(high-low)-0.5"`). Candidate improvement: add `close_pos` as a
+  37th gate feature and re-freeze (additive, sub-break-even alone).
+
 ## Reproduce
 
 ```
