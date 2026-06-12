@@ -112,7 +112,19 @@ def main():
           f"{bull_exh.loc[o].sum()} bullish-exh / {bear_exh.loc[o].sum()} bearish-exh)")
     print(f"base decay rate (fade WR, no model): {yo.mean()*100:.1f}%   break-even {breakeven*100:.1f}%\n")
     if len(o) < 300:
-        print("Too few onsets — loosen --stretch-atr / --squeeze-min."); return
+        print("Too few onsets for modeling — loosen --stretch-atr/--squeeze-min.")
+        if args.export_full:   # still emit features+forward-returns (p_decay NaN) for the expiry sweep
+            full = X.loc[o].copy()
+            full.insert(0, "timestamp", df.loc[o, "timestamp"].values)
+            full.insert(1, "asset", df.loc[o, "asset"].str.replace(r"@\d+$", "", regex=True).values)
+            full.insert(2, "side", np.where(bull_exh.loc[o], "bullish_exhaustion", "bearish_exhaustion"))
+            full["p_decay"] = np.nan; full["p_decay_pct"] = np.nan
+            for m in (5, 10, 15, 20, 25, 30):
+                full[f"fwd_{m}m_ret"] = forward_return(df, m, args.bar_sec).loc[o].values
+            full["target_decay_realized"] = yo.values
+            full.to_csv(args.export_full, index=False)
+            print(f"export-full → {args.export_full}   ({len(full)} rows, features-only)")
+        return
 
     # 3+4. per-family ablation with per-fold percentile gating
     horizon_sec, emb = args.horizon * 60, args.embargo * args.bar_sec
@@ -223,7 +235,7 @@ def main():
         full.insert(2, "side", np.where(bull_exh.loc[o], "bullish_exhaustion", "bearish_exhaustion"))
         full["p_decay"] = oof_all.reindex(o).values
         full["p_decay_pct"] = oof_pct_all.reindex(o).values
-        for m in (5, 10, 15):                  # forward returns for Stage-5 survival mapping
+        for m in (5, 10, 15, 20, 25, 30):      # forward returns for the expiry sweep / survival mapping
             full[f"fwd_{m}m_ret"] = forward_return(df, m, args.bar_sec).loc[o].values
         full["target_decay_realized"] = yo.values
         full.to_csv(args.export_full, index=False)
