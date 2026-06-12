@@ -75,10 +75,10 @@ One shared module every script imports so results are comparable and run on **bo
 
 ---
 
-## 3. The pipeline — six stages
+## 3. The pipeline — stages
 
-Each stage asks a harder question; a hypothesis must pass one to earn the next. Skills with a full
-`SKILL.md` + `references/methodology.md` are slash-installable; the rest are script-only research tools.
+Each stage asks a harder question; a hypothesis must pass one to earn the next. Stages 1–5 and the
+freeze are full skills (`SKILL.md` + `references/methodology.md`); the rest are script-only tools.
 
 ### Stage 1 — `alpha-factor-eval`  *"Is there any signal?"*
 `scripts/alpha_eval.py --factor "<expr>"`. Information Coefficient of a factor vs forward return, with
@@ -132,6 +132,25 @@ Shallow tree → human-readable rule; winner/loser separation; **out-of-sample d
 > Found: with all 36 features the **consensus (rule ∧ ML) = 62.2% on out-of-period June** (base 50.8%);
 > the ML gate is *not* removable (heuristic-alone 54.7%); decisive feature = `v_atr_pct_d`.
 
+### Stage S2 — expiry selection (`consensus_survival.py`, `expiry_sweep.py`)
+`momentum-persistence/scripts/consensus_survival.py` (Q1 survival by driver, 5/10/15m) and
+`directional-momentum-edge/scripts/expiry_sweep.py` (fade-WR × expiry × verdict, 5–30m).
+> Found: Q1 fade-WR **peaks 10–15m and fades by 25–30m** (longer ≠ better). Driver split: vol-shock
+> (`atr_pct_d`) → **10m** (63.3%); stoch-grind (`stoch_kd`) → **15m** (64.7%). Bearish→10m, bullish→15m.
+
+### Stage 7 — `freeze-pipeline` (deployment)  *"Ship it without Python."*
+`scripts/freeze_pipeline.py` → `bot/research/tests/ml_gate_params.json` + `parity_test_cases.json`.
+Data-driven freeze of the consensus into a Two-Key `static-decay-gate/v2` JSON (heuristic confluence +
+L2-logistic `p_decay`), with a `compute` formula per threshold so a native JS gate fires blindly.
+Full `SKILL.md`.
+> Result: the native gate (`../tests/test_gate.js`) is proven to BE the Python pipeline — logistic
+> parity **1.7e-16**, feature port **0.000e+0** over 278k bars, OOS realized **64.7% (n=51)**.
+
+### Deployment & validation — `bot/research/tests/`
+The frozen artifacts, the native gate, and the three proofs live in `../tests/` with a full
+`TEST_REPORT.md`. Run `node ../tests/test_parity.js` (logistic <1e-9) and
+`node ../tests/test_db_runner.js [db] [csv]` (feature port + realized fade-WR on any DB).
+
 ### Side-quest — `tiered-entry-eval`
 `tier_eval.py` (3-tier heuristic scaling: blended EV −0.11 to −0.14, allocation inverted for this
 market) and `ml_tier_eval.py` (monolithic P(up) θ-ladder: in-regime 62% **collapses out-of-period** —
@@ -166,11 +185,13 @@ The consensus signal, both components runnable in the bot **without Python**:
    percentile**, not a fixed absolute threshold.
 3. **Trade the CONSENSUS** (rule ∧ p_decay-gate) as the high-conviction tier: ~62% out-of-period.
 
-**Pre-freeze checklist** (do not deploy size before all four):
-- [ ] Extract the surrogate leaf rule explicitly (done via `surrogate_extract.py`; lock thresholds).
-- [ ] Freeze the logistic to `ml_gate_params.json` + a `<1e-9` JS parity test (as in `ml-gate.js`).
-- [ ] Re-derive the payout floor from OOS precision (~56–62%), not in-sample leaves.
-- [ ] Forward shadow-validate the consensus on live data before risking capital.
+**Pre-sizing checklist** (status):
+- [x] Extract the surrogate leaf rule explicitly (`surrogate_extract.py`; thresholds locked).
+- [x] Freeze to `bot/research/tests/ml_gate_params.json` + `<1e-9` JS parity test (`freeze-pipeline`,
+      `test_parity.js`) — and a full-DB feature port proof (`test_db_runner.js`, 0 diff).
+- [x] Payout floor from OOS realized WR (64.7% @10m, n=51), not in-sample leaves.
+- [ ] **Forward shadow-validate** the consensus on live data before risking capital — the only
+      remaining gate (OOS n=51 is promising but thin). See `bot/research/tests/TEST_REPORT.md`.
 
 ---
 
@@ -182,16 +203,21 @@ bot/research/ml4t/
 ├── RESEARCH_PROCEDURE.md          ← original spec
 ├── FINDINGS.md                    ← prior trend-continuation study
 └── skills/
-    ├── FINDINGS_SKILLS.md         ← running results log (addenda 1–3)
+    ├── FINDINGS_SKILLS.md         ← running results log (addenda 1–5)
     ├── _lib/po_data.py            ← schema-adaptive data + family engineering
     ├── alpha-factor-eval/         ← Stage 1   (SKILL.md + scripts + references)
     ├── purged-walk-forward-cv/    ← Stage 2   (SKILL.md + scripts + references)
     ├── meta-labeling/             ← Stage 3   (SKILL.md + scripts + references)
-    ├── directional-momentum-edge/ ← Stage 4 + decay_onset + surrogate_extract
-    │   └── exports/               ← onset CSVs (curated + _full 36-feature)
-    ├── momentum-persistence/      ← Stage 5   (SKILL.md + scripts + references)
+    ├── directional-momentum-edge/ ← Stage 4   (directional_momentum + decay_onset
+    │   │                            + surrogate_extract + expiry_sweep)
+    │   └── exports/               ← onset CSVs (curated + _full 36-feature, 5–30m fwd)
+    ├── momentum-persistence/      ← Stage 5   (+ consensus_survival)  (SKILL.md + refs)
+    ├── freeze-pipeline/           ← Stage 7   (SKILL.md + scripts + references) → deploy
     ├── decay-gate-replication/    ← Stage 6   (script-only)
     └── tiered-entry-eval/         ← tier strategy evals (script-only)
+
+bot/research/tests/                ← DEPLOYMENT: TEST_REPORT.md, ml_gate_params.json,
+                                     parity_test_cases.json, test_gate/parity/db_runner.js
 ```
 
 ---
@@ -219,8 +245,20 @@ python $S/directional-momentum-edge/scripts/surrogate_extract.py --full \
        --csv $S/directional-momentum-edge/exports/onsets_fxsb_4.0_full.csv \
        --test-csv $S/directional-momentum-edge/exports/onsets_june_2.0_full.csv --depth 3
 
-# June out-of-period pool (used as the cross-period test throughout)
+# Stage S2: expiry selection
+python $S/momentum-persistence/scripts/consensus_survival.py \
+       --csv $S/directional-momentum-edge/exports/onsets_fxsb_4.0_full.csv \
+       --test-csv $S/directional-momentum-edge/exports/onsets_june_2.0_full.csv
+python $S/directional-momentum-edge/scripts/expiry_sweep.py --csv $S/directional-momentum-edge/exports/onsets_fxsb_4.0_full.csv
+
+# Stage 7: freeze → JSON, then PROVE the native gate (no Python at runtime)
+python $S/freeze-pipeline/scripts/freeze_pipeline.py          # → bot/research/tests/*.json
+node bot/research/tests/test_parity.js                        # logistic parity <1e-9
+node bot/research/tests/test_db_runner.js                     # feature port (0 diff) + in-sample WR
+
+# June out-of-period pool (the cross-period test throughout)
 JUNE="data/trading_data_5-02.db,data/trading_data_5-03.db,data/trading_data00.db,data/trading_data.db"
+node bot/research/tests/test_db_runner.js "$JUNE" none        # OOS realized fade-WR
 ```
 
 ---
