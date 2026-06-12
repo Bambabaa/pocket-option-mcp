@@ -66,7 +66,12 @@
       "Bash(sed -n '/onsets/p;/## A/,/Verdict/p')",
       "Bash(python bot/research/ml4t/skills/momentum-persistence/scripts/momentum_persistence.py --db agent/data/agent_FXSB.db --confluence 5)",
       "Bash(python bot/research/ml4t/skills/momentum-persistence/scripts/momentum_persistence.py --model tree)",
-      "Bash(python bot/research/ml4t/skills/decay-gate-replication/scripts/decay_gate.py --db \"data/trading_data_5-02.db,data/trading_data_5-03.db,data/trading_data00.db,data/trading_data.db\" --inspect)"
+      "Bash(python bot/research/ml4t/skills/decay-gate-replication/scripts/decay_gate.py --db \"data/trading_data_5-02.db,data/trading_data_5-03.db,data/trading_data00.db,data/trading_data.db\" --inspect)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git ls-remote *)",
+      "Bash(echo \"local $\\(git rev-parse --short HEAD\\) / remote $\\(git ls-remote origin -h refs/heads/main)"
     ]
   },
   "enableAllProjectMcpServers": true,
