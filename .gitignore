@@ -22,3 +22,9 @@ data/trading_data_v1.db
 *.db
 bot/research/thrust_gate/__pycache__/export_xgb_gate.cpython-314.pyc
 *.pyc
+bot/research/ml4t/skills/directional-momentum-edge/exports/agent_merged.csv
+bot/research/ml4t/skills/directional-momentum-edge/exports/cont_agent_full.csv
+bot/research/ml4t/skills/directional-momentum-edge/exports/cont_fxsb_full.csv
+bot/research/ml4t/skills/directional-momentum-edge/exports/onsets_agent_4.0_full.csv
+bot/research/ml4t/skills/directional-momentum-edge/exports/onsets_agent_4.0_full.csv
+bot/research/ml4t/skills/directional-momentum-edge/exports/cont_june_full.csv

@@ -71,7 +71,8 @@
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
       "Bash(git ls-remote *)",
-      "Bash(echo \"local $\\(git rev-parse --short HEAD\\) / remote $\\(git ls-remote origin -h refs/heads/main)"
+      "Bash(echo \"local $\\(git rev-parse --short HEAD\\) / remote $\\(git ls-remote origin -h refs/heads/main)",
+      "Bash(python bot/research/ml4t/skills/microstructure-factors/scripts/micro_factors.py --db \"data/trading_data_5-02.db,data/trading_data_5-03.db,data/trading_data00.db,data/trading_data.db\")"
     ]
   },
   "enableAllProjectMcpServers": true,

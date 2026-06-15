@@ -155,6 +155,29 @@ No Python at runtime — `evaluateOnset` + the JSON are self-contained.
 
 ---
 
+## 9. Forward validation №1 — agent.db (May 29 – Jun 12): NOT confirmed
+
+First fresh-capture shadow run (`agent/data/agent.db`, 15 FX assets, 59,805 bars, ~14 days;
+oracle `onsets_agent_4.0_full.csv`, 379 onsets, base fade 52.5%).
+
+| check | result |
+|---|---|
+| Port (onset-set / feature parity) | **379==379 / 0.000e+0 — exact** on a never-seen DB ✓ |
+| Q1 consensus fade-WR @10m | **54.4% (n=68) — below break-even** ✗ |
+| …window B Jun 2–10 (overlaps tuning pool) | 57.4% (n=54) — discount, tuning-contaminated |
+| …clean windows May 29–Jun 1 + Jun 10–12 (truly forward) | **42.9% (n=14)** |
+| p_decay calibration monotonicity | **+0.81 (June pool) → +0.28** — decile curve zigzags, lie detector fires |
+| Verdict ordering | INVERTED: Abstention 60.7% (n=107) > Q1 54.4% |
+
+**Reading:** the code is perfect; the edge did not show up. Not a definitive kill — a true 62% edge
+would produce ≤54.4% on n=68 roughly 10% of the time, and the clean-window n is only 14 — but every
+secondary diagnostic (calibration, verdict ordering) degraded simultaneously. **Decision: DO NOT
+SIZE. Stay in shadow.** Either the capitulation-snapback edge was regime-specific (Apr–May +
+early-June) and has decayed, or the gate needs re-freezing on recent data under the same
+out-of-period discipline. Re-evaluate when accumulated clean-window n reaches ~50.
+
+---
+
 ## 9. File map
 
 ```

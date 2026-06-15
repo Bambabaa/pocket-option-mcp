@@ -199,6 +199,31 @@ run through the alpha-factor-eval IC gauntlet.
   (`purged_wf.py --factor "(close-low)/(high-low)-0.5"`). Candidate improvement: add `close_pos` as a
   37th gate feature and re-freeze (additive, sub-break-even alone).
 
+## Addendum 7 — forward validation on agent.db (May 29 – Jun 12): NOT confirmed
+
+First true forward test of the frozen gate on a fresh capture (`agent/data/agent.db`, 15 FX assets,
+59,805 bars, ~14 days). Oracle CSV `onsets_agent_4.0_full.csv` (379 onsets, base fade 52.5%).
+
+- **Port: perfect.** JS onset-set 379==379, feature parity **0.000e+0** on a never-seen DB — the
+  deployed pipeline is mechanically exact. Whatever follows is about the *edge*, not the code.
+- **Edge: did NOT show up.** Q1 consensus fade-WR **54.4% (n=68) — below the 55.6% break-even**.
+  Sub-period split (the honest cut): window B Jun 2–10 (overlaps the threshold-tuning June pool)
+  carried it at 57.4% (n=54); the **clean windows (May 29–Jun 1 + Jun 10–12 truly-forward) = 42.9%
+  on n=14**. The same period in a different capture (June pool, 78 series) had given 64.7% — agent.db
+  (15 assets) gives 57.4%; capture/universe composition matters.
+- **Calibration degraded.** p_decay decile monotonicity collapsed from **+0.81** (June pool) to
+  **+0.28** (agent.db) — the decile curve zigzags (D6 34%, D7 63%, D10 50%); top-10% = 50.0%. The
+  overfitting lie-detector fires. And the verdict ordering INVERTED: Model Abstention 60.7% (n=107)
+  beat Q1 54.4%.
+- **Statistical honesty in both directions:** n is small (clean n=14; deciles n=38) — a true 62%
+  edge would produce ≤54.4% on n=68 about 10% of the time, so this is not a definitive kill. But the
+  burden was on the edge to appear and it didn't, while every secondary diagnostic (calibration,
+  ordering) degraded simultaneously.
+- **Verdict: DO NOT SIZE.** The gate stays in shadow. Either the capitulation-snapback edge was
+  regime-specific (Apr–May + early-June) and has decayed, or the gate needs re-freezing on recent
+  data with the same out-of-period discipline. Continue accumulating forward captures; re-evaluate
+  when clean-window n reaches ~50.
+
 ## Reproduce
 
 ```
