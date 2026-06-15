@@ -152,6 +152,39 @@ is safe.
 
 ---
 
+## E. Training defect — the logreg collapsed to a single indicator
+
+Found while debugging why the PSI trip-wire (Test A) pauses every day. Deployed logreg:
+
+```
+coef = [BB_Deviation -0.024, CCI_Velocity -0.016, Stoch_Divergence +0.593, STC_Momentum +0.010]
+intercept = -0.02   scaler_mean[Stoch_Div]=6.602  scaler_scale=6.843   trained_rows=49,515
+```
+
+`Stoch_Divergence` carries weight 0.593; the other three are ~0. **L2 (C=0.5) over-shrank a
+4-feature model down to one feature.** Solving the model's own math, logreg fires (P>=0.85)
+**iff `Stoch_Divergence >= ~26.8`**. On real data (agent.db) Stoch_Divergence mean 6.3,
+p90 17 — so 26.8 is the ~p97 tail.
+
+Consequences:
+- **The "confluence" logreg is a univariate gate** on `|stoch_k - stoch_d|` — violates the
+  project rule "never make a final verdict on one indicator" (CLAUDE.md).
+- **Pauses-every-day (Test A):** it selects the p97 tail of one oscillator-noise feature; a
+  distribution's extreme tail is its least-stationary part, so the fired population genuinely
+  lurches day to day -> PSI legitimately huge. (My pooled-all-prior reference inflates it too —
+  both true; fix = rolling reference.)
+- **No reversal edge:** "stochastic K and D far apart now" barely relates to whether a move
+  reverses -> explains agent.db decay-WR 56.7% (sub-break-even).
+
+The TREE is genuinely multivariate (split counts STC_Momentum 10, CCI 5, BB 3, Stoch 3) — its
+defect is direction (anti-predictive as reversal, ~right as continuation), not feature collapse.
+
+**Two distinct defects:** LOGREG = single-feature collapse (unstable, no edge); TREE =
+reversal-labeled (works only inverted). Test B fixes: (a) relax L2 / force multi-feature so
+logreg can't collapse; (b) re-label tree as continuation. Both validated on agent.db big n.
+
+---
+
 ## Method notes / limits
 
 - All WR/P/L broker-settled from `trades_ordered`; stored prices ignored.
