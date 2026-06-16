@@ -492,7 +492,7 @@ const STATE = {
 const indicators = new Indicators();
 
 // Initialize database — uses ../data/ so both bot and MCP server share the same directory
-const database = new TradingDatabase(path.join(__dirname, '../data/trading_data.db'));
+const database = new TradingDatabase(path.join(__dirname, '../data/trading_data_live.db'));
 
 // Pocket Option URL
 const POCKET_OPTION_URL = 'https://pocketoption.com';

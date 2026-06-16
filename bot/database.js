@@ -30,7 +30,7 @@ function getAssetOtcVariants(asset) {
 }
 
 class TradingDatabase {
-    constructor(dbPath = require('path').join(__dirname, 'data/trading_data.db')) {
+    constructor(dbPath = require('path').join(__dirname, 'data/trading_data_live.db')) {
         this.dbPath = dbPath;
         this.db = null;
     }
