@@ -1,0 +1,10 @@
+{
+  "EURUSD": {
+    "timestamp": 1779783300,
+    "close": 1.16303,
+    "signal": "SHORT",
+    "probability": 0.4163,
+    "bias": "bearish",
+    "confidence": "medium"
+  }
+}
