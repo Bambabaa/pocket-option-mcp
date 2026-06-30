@@ -75,7 +75,10 @@
       "Bash(python bot/research/ml4t/skills/microstructure-factors/scripts/micro_factors.py --db \"data/trading_data_5-02.db,data/trading_data_5-03.db,data/trading_data00.db,data/trading_data.db\")",
       "Bash(python bot/research/ml4t/skills/reversal-gate-retest/scripts/horizon_sweep.py)",
       "Bash(python bot/research/ml4t/skills/exhaustion-confluence-gate/scripts/confluence_model.py)",
-      "Bash(python -u bot/research/ml4t/skills/exhaustion-confluence-gate/scripts/trading_ml_v2.py)"
+      "Bash(python -u bot/research/ml4t/skills/exhaustion-confluence-gate/scripts/trading_ml_v2.py)",
+      "Bash(python bot/research/strategy-research/patterns/C1_bb_lower_rejection.py)",
+      "Bash(python bot/research/strategy-research/patterns/C2_bb_upper_rejection.py)",
+      "Bash(python bot/research/strategy-research/patterns/C3_bb_squeeze_expansion.py)"
     ]
   },
   "enableAllProjectMcpServers": true,
